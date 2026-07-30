@@ -267,10 +267,21 @@ impl Db {
     /// first unreadable file. Anything that gives up on a row must set `error`.
     pub fn pending_thumbnails(&self, limit: i64) -> Result<Vec<PendingFile>> {
         let conn = self.conn.lock().expect("index mutex poisoned");
+        // Images first, then videos — the `kind = 'video'` sort key.
+        //
+        // One image thumbnail takes a fraction of a second; one video takes an
+        // ffprobe plus 25 ffmpeg seeks, which on a 4K file over SMB is ~12
+        // seconds. Interleaved by mtime, a handful of videos occupy every
+        // worker and tens of thousands of images sit behind them — a real scan
+        // produced 33 thumbnails in 20 minutes while grinding through 4K MKVs.
+        //
+        // Ordering this way fills the grid with the whole image library first
+        // and leaves the videos to grind afterwards. Same total work, but the
+        // app becomes useful hours earlier.
         let mut stmt = conn.prepare(
             "SELECT id, path, kind FROM media
              WHERE thumb_path IS NULL AND error IS NULL
-             ORDER BY modified_at DESC
+             ORDER BY kind = 'video', modified_at DESC
              LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], |row| {
@@ -296,10 +307,11 @@ impl Db {
     /// while a big scan runs.
     pub fn pending_classification(&self, limit: i64) -> Result<Vec<PendingFile>> {
         let conn = self.conn.lock().expect("index mutex poisoned");
+        // Images first here too: an image is one classifier call, a video is 25.
         let mut stmt = conn.prepare(
             "SELECT id, path, kind, thumb_path FROM media
              WHERE classified_at IS NULL AND thumb_path IS NOT NULL AND error IS NULL
-             ORDER BY modified_at DESC
+             ORDER BY kind = 'video', modified_at DESC
              LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], |row| {
@@ -958,6 +970,28 @@ mod tests {
         db.remove_folder(folder).unwrap();
         assert_eq!(db.query_media(&query()).unwrap().total, 0);
         assert_eq!(db.frames_for_media(target).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn pending_queues_hand_out_images_before_videos() {
+        let (db, folder) = seeded();
+        // A video newer than every image — mtime order alone would put it first.
+        db.insert_media_batch(
+            folder,
+            &[file("/media/newest.mp4", MediaKind::Video, 9_999)],
+            1,
+        )
+        .unwrap();
+
+        let queue = db.pending_thumbnails(100).unwrap();
+        let kinds: Vec<_> = queue.iter().map(|f| f.kind).collect();
+        let first_video = kinds.iter().position(|k| *k == MediaKind::Video).unwrap();
+        let last_image = kinds.iter().rposition(|k| *k == MediaKind::Image).unwrap();
+        assert!(
+            last_image < first_video,
+            "videos must queue behind every image: one video costs ~25 ffmpeg \
+             seeks and would otherwise starve tens of thousands of images"
+        );
     }
 
     #[test]
