@@ -154,3 +154,14 @@ is how this was caught.
 **`tauri.conf.json` rejects `"//"` comment keys** inside typed objects — the
 config schema denies unknown fields. Rationale for security settings lives in
 `.ai/architecture.md` and `capabilities/default.json`'s `description` instead.
+`.oxlintrc.json` rejects them too, at both the top level and inside `rules`.
+
+**`apps/desktop` has no `test` or `typecheck` script, on purpose.** It once had
+`"test": "cargo test --locked"`, which meant `pnpm -r test` required a Rust
+toolchain. That passes on a dev machine, where cargo is on `PATH`, and fails in
+any CI job that only installed Node — which is exactly how the first CI run
+broke. The Rust checks are run by cargo directly, in their own job.
+
+**oxlint's `no-unassigned-import` is disabled for `**/main.tsx` via an override,
+not an inline comment.** The `// oxlint-disable-next-line` form did not take
+effect there; the config override does.

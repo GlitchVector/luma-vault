@@ -3,12 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "//": "Deliberately has no `test` or `typecheck` script. This workspace exists only so pnpm can run the Tauri CLI; its real code is Rust and is checked with cargo. Adding a `test` script that shells out to cargo would make `pnpm -r test` require a Rust toolchain, which is exactly what broke the first CI run.",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build",
-    "test": "cargo test --locked",
-    "typecheck": "node -e \"process.exit(0)\""
+    "build": "tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.1"
