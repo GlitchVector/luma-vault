@@ -18,7 +18,6 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use image::imageops::FilterType;
 use sha2::{Digest, Sha256};
 
 /// Longest edge of a generated thumbnail.
@@ -95,7 +94,13 @@ pub fn thumbnail_image(source: &str, thumb_root: &Path) -> Result<Thumbnail> {
     }
 
     let (thumb_width, thumb_height) = fit_within(source_width, source_height, THUMB_MAX);
-    let resized = decoded.resize(thumb_width, thumb_height, FilterType::Triangle);
+    // `thumbnail` rather than `resize`: it reduces in two stages, taking a
+    // cheap integer-ratio step down before the filtered pass, so the expensive
+    // filter runs over far fewer pixels. For the large end of a real library —
+    // 33,000 files over 1MB here, including gigapixel-upscaled PNGs — that is
+    // most of the resize cost. At 512px the output is indistinguishable from a
+    // single filtered pass, which is exactly what the method is designed for.
+    let resized = decoded.thumbnail(thumb_width, thumb_height);
 
     write_jpeg(&resized, &destination)?;
 

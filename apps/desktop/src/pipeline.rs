@@ -51,6 +51,26 @@ const PAGE: i64 = 512;
 /// on a broken NAS mount, and nobody reads past the first handful.
 const MAX_REPORTED_ERRORS: usize = 50;
 
+/// Threads for the thumbnail phase.
+///
+/// One per core, which is rayon's own default — and it is the default *because
+/// it is right here*, which was worth measuring rather than assuming.
+///
+/// The obvious reasoning says otherwise: thumbnailing a network library looks
+/// latency-bound, the process sits well below full CPU, and a thread blocked on
+/// a round trip costs nothing — so more threads should mean more requests in
+/// flight. Measured against a real SMB share, raising this to `cores * 4` (40
+/// threads) took throughput from **1.20 files/second to 0.10**, turning a
+/// 15-hour job into a 183-hour one, with CPU *dropping* from 253% to 102%.
+///
+/// SMB degrades sharply past a modest number of concurrent operations; the
+/// extra threads do not hide latency, they manufacture it. Do not raise this
+/// without measuring on the target share, and do not trust the intuition —
+/// it points the wrong way.
+fn thumbnail_threads() -> usize {
+    num_cpus::get()
+}
+
 pub struct Pipeline {
     db: Arc<Db>,
     classifier: Arc<Mutex<Option<Arc<ClassifierPool>>>>,
@@ -389,47 +409,63 @@ fn thumbnail_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
     let done = Arc::new(std::sync::atomic::AtomicI64::new(0));
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
 
+    // A dedicated pool rather than rayon's global one — see `thumbnail_threads`.
+    // Falling back to the global pool on failure keeps a thread-starved machine
+    // working rather than refusing to scan.
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(thumbnail_threads())
+        .thread_name(|i| format!("luma-thumb-{i}"))
+        .build()
+        .ok();
+
     loop {
         let batch = match pipeline.db.pending_thumbnails(PAGE) {
             Ok(batch) if !batch.is_empty() => batch,
             _ => break,
         };
 
-        batch.par_iter().for_each(|file| {
-            let result = match file.kind {
-                MediaKind::Image => thumbnail_one_image(pipeline, file),
-                MediaKind::Video => thumbnail_one_video(pipeline, file),
-            };
+        let work = || {
+            batch.par_iter().for_each(|file| {
+                let result = match file.kind {
+                    MediaKind::Image => thumbnail_one_image(pipeline, file),
+                    MediaKind::Video => thumbnail_one_video(pipeline, file),
+                };
 
-            if let Err(error) = result {
-                let message = format!("{error:#}");
-                errors
-                    .lock()
-                    .expect("errors mutex")
-                    .push(format!("{}: {message}", file.path));
-                // `mark_failed`, NOT a bare "mark classified": this queue is
-                // `thumb_path IS NULL AND error IS NULL`, so a row that fails
-                // without setting `error` comes straight back on the next
-                // iteration and the phase spins on it forever.
-                let _ = pipeline.db.mark_failed(file.id, &message, now_ms());
-            }
+                if let Err(error) = result {
+                    let message = format!("{error:#}");
+                    errors
+                        .lock()
+                        .expect("errors mutex")
+                        .push(format!("{}: {message}", file.path));
+                    // `mark_failed`, NOT a bare "mark classified": this queue is
+                    // `thumb_path IS NULL AND error IS NULL`, so a row that fails
+                    // without setting `error` comes straight back on the next
+                    // iteration and the phase spins on it forever.
+                    let _ = pipeline.db.mark_failed(file.id, &message, now_ms());
+                }
 
-            let finished = done.fetch_add(1, Ordering::SeqCst) + 1;
-            if finished % 25 == 0 {
-                let snapshot = errors.lock().expect("errors mutex").clone();
-                pipeline.publish(
-                    app,
-                    ScanProgress {
-                        phase: JobPhase::Thumbnailing,
-                        folder_id: None,
-                        done: finished,
-                        total,
-                        current: Some(file.path.clone()),
-                        errors: snapshot.into_iter().take(MAX_REPORTED_ERRORS).collect(),
-                    },
-                );
-            }
-        });
+                let finished = done.fetch_add(1, Ordering::SeqCst) + 1;
+                if finished % 25 == 0 {
+                    let snapshot = errors.lock().expect("errors mutex").clone();
+                    pipeline.publish(
+                        app,
+                        ScanProgress {
+                            phase: JobPhase::Thumbnailing,
+                            folder_id: None,
+                            done: finished,
+                            total,
+                            current: Some(file.path.clone()),
+                            errors: snapshot.into_iter().take(MAX_REPORTED_ERRORS).collect(),
+                        },
+                    );
+                }
+            });
+        };
+
+        match pool.as_ref() {
+            Some(pool) => pool.install(work),
+            None => work(),
+        }
     }
 
     let snapshot = errors.lock().expect("errors mutex").clone();
