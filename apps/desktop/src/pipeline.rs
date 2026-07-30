@@ -197,9 +197,31 @@ pub fn run_startup(pipeline: Arc<Pipeline>, app: AppHandle) {
 
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let folders = pipeline.db.list_folders().unwrap_or_default();
-        for folder in folders {
+
+        // 1. Folders that have never been scanned. Nothing else can happen for
+        //    these until they are walked, so they cannot wait.
+        for folder in folders.iter().filter(|f| f.last_scan_at.is_none()) {
             glob_phase(&pipeline, &app, folder.id, Path::new(&folder.path));
         }
+
+        // 2. Resume outstanding work BEFORE re-walking known folders.
+        //
+        //    Walking a large NAS share takes many minutes, and putting it first
+        //    means every restart sits idle for that long before producing a
+        //    single thumbnail — painful during development, and baffling to a
+        //    user who just reopened the app. Draining first means a restart
+        //    picks up exactly where it left off, immediately.
+        thumbnail_phase(&pipeline, &app);
+        classify_phase(&pipeline, &app);
+
+        // 3. Now look for anything that changed while the app was closed. The
+        //    watcher cannot see those, so this pass is the only thing that
+        //    finds them.
+        for folder in folders.iter().filter(|f| f.last_scan_at.is_some()) {
+            glob_phase(&pipeline, &app, folder.id, Path::new(&folder.path));
+        }
+
+        // 4. Whatever step 3 turned up.
         thumbnail_phase(&pipeline, &app);
         classify_phase(&pipeline, &app);
     }));
