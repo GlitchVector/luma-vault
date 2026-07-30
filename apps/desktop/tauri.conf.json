@@ -1,0 +1,70 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Luma Vault",
+  "version": "0.1.0",
+  "identifier": "net.glitchvector.luma-vault",
+  "build": {
+    "frontendDist": "../web/dist",
+    "devUrl": "http://localhost:4340",
+    "beforeDevCommand": "pnpm --filter @luma/web dev",
+    "beforeBuildCommand": "pnpm --filter @luma/web build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "Luma Vault",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 880,
+        "minHeight": 600,
+        "resizable": true,
+        "dragDropEnabled": true,
+        "theme": null
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob: luma:",
+        "media-src": "'self' blob: luma:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "object-src": "'none'",
+        "frame-src": "'none'"
+      },
+      "devCsp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'unsafe-inline' 'unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob: luma:",
+        "media-src": "'self' blob: luma:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost ws://localhost:4340 http://localhost:4340",
+        "object-src": "'none'",
+        "frame-src": "'none'"
+      },
+      "assetProtocol": {
+        "enable": false
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app", "nsis", "deb", "appimage"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "resources": {
+      "../../sidecar/classifier": "sidecar/classifier"
+    },
+    "category": "Photography",
+    "shortDescription": "Local media vault",
+    "longDescription": "Watches folders of images and videos, indexes them, classifies them locally, and renders everything in one very fast grid. Nothing leaves the machine."
+  }
+}

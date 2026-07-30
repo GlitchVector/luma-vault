@@ -1,0 +1,23 @@
+node_modules/
+dist/
+out/
+target/
+*.tsbuildinfo
+
+# Python classifier virtualenv — recreated by scripts/setup-python.sh
+venv-classifier/
+__pycache__/
+*.pyc
+
+# Runtime data: the SQLite index, generated thumbnails and extracted video
+# frames all live under the OS app-data dir, but a dev run can drop them here.
+.luma/
+apps/desktop/data/
+apps/desktop/output-data/
+
+.DS_Store
+.env
+.env.local
+
+# Tauri generated
+apps/desktop/gen/

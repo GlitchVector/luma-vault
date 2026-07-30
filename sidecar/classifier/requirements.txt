@@ -1,0 +1,12 @@
+# Pinned, not floating. The classifier is the one place where a silent upstream
+# change alters *results* rather than just breaking a build — a new nudenet
+# model revision would reclassify the whole library on the next scan without
+# anything looking wrong. Bump these deliberately, and re-run the scan when you do.
+#
+# corn-dog installed these unpinned and ended up on whatever pip resolved that
+# day; these are the versions that combination actually settled on and works.
+nudenet==3.4.2
+onnxruntime==1.22.1
+opencv-python-headless==4.12.0.88
+numpy==2.2.6
+pillow==11.3.0

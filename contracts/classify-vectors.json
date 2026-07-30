@@ -1,0 +1,133 @@
+{
+  "//": "Shared test vectors for logic that necessarily exists TWICE: once in Rust (apps/desktop/src/rating.rs, where the scan pipeline runs it) and once in TypeScript (packages/core/src/classify.ts, where the UI re-derives verdicts without a round trip). Duplicated logic drifts — so both implementations are pinned by THESE cases, and a rule change means editing this file and watching both suites fail.",
+
+  "frameVectors": [
+    {
+      "name": "no detections is sfw and nobody present",
+      "detections": [],
+      "expect": { "person": false, "sexy": false, "nude": false, "rating": "sfw", "topLabel": null }
+    },
+    {
+      "name": "a face is a person but not sexy",
+      "detections": [{ "label": "FACE_FEMALE", "score": 0.95, "box": [0.1, 0.1, 0.2, 0.2] }],
+      "expect": { "person": true, "sexy": false, "nude": false, "rating": "sfw", "topLabel": null }
+    },
+    {
+      "name": "neutral anatomy never rates, however confident",
+      "detections": [
+        { "label": "FEET_EXPOSED", "score": 0.99, "box": [0.1, 0.7, 0.2, 0.2] },
+        { "label": "BELLY_COVERED", "score": 0.99, "box": [0.3, 0.4, 0.3, 0.2] },
+        { "label": "ARMPITS_COVERED", "score": 0.97, "box": [0.2, 0.3, 0.1, 0.1] }
+      ],
+      "expect": { "person": true, "sexy": false, "nude": false, "rating": "sfw", "topLabel": null }
+    },
+    {
+      "name": "a suggestive label rates suggestive, not explicit",
+      "detections": [{ "label": "BUTTOCKS_EXPOSED", "score": 0.8, "box": [0.3, 0.4, 0.2, 0.2] }],
+      "expect": {
+        "person": true,
+        "sexy": true,
+        "nude": false,
+        "rating": "suggestive",
+        "topLabel": "BUTTOCKS_EXPOSED"
+      }
+    },
+    {
+      "name": "an explicit label rates explicit and is also sexy",
+      "detections": [
+        { "label": "FEMALE_GENITALIA_EXPOSED", "score": 0.7, "box": [0.49, 0.36, 0.16, 0.35] }
+      ],
+      "expect": {
+        "person": true,
+        "sexy": true,
+        "nude": true,
+        "rating": "explicit",
+        "topLabel": "FEMALE_GENITALIA_EXPOSED"
+      }
+    },
+    {
+      "name": "a rated label below threshold is a person but not sexy",
+      "detections": [{ "label": "FEMALE_BREAST_EXPOSED", "score": 0.4, "box": [0.2, 0.2, 0.2, 0.2] }],
+      "expect": { "person": true, "sexy": false, "nude": false, "rating": "sfw", "topLabel": null }
+    },
+    {
+      "name": "a very low detection is not even a person",
+      "detections": [{ "label": "FEMALE_BREAST_EXPOSED", "score": 0.3, "box": [0.2, 0.2, 0.2, 0.2] }],
+      "expect": { "person": false, "sexy": false, "nude": false, "rating": "sfw", "topLabel": null }
+    },
+    {
+      "name": "the top part is the highest-scoring RATED label, never a higher face",
+      "detections": [
+        { "label": "FACE_MALE", "score": 0.99, "box": [0.4, 0.05, 0.1, 0.12] },
+        { "label": "BUTTOCKS_EXPOSED", "score": 0.61, "box": [0.3, 0.5, 0.2, 0.2] }
+      ],
+      "expect": {
+        "person": true,
+        "sexy": true,
+        "nude": false,
+        "rating": "suggestive",
+        "topLabel": "BUTTOCKS_EXPOSED"
+      }
+    },
+    {
+      "name": "explicit wins over suggestive for the rating even when scored lower",
+      "detections": [
+        { "label": "BUTTOCKS_EXPOSED", "score": 0.94, "box": [0.02, 0.0, 0.94, 0.63] },
+        { "label": "ANUS_EXPOSED", "score": 0.55, "box": [0.53, 0.2, 0.09, 0.15] }
+      ],
+      "expect": {
+        "person": true,
+        "sexy": true,
+        "nude": true,
+        "rating": "explicit",
+        "topLabel": "BUTTOCKS_EXPOSED"
+      }
+    },
+    {
+      "name": "an unknown label from a newer model degrades to neutral",
+      "detections": [{ "label": "SOME_FUTURE_CLASS", "score": 0.9, "box": [0.1, 0.1, 0.1, 0.1] }],
+      "expect": { "person": true, "sexy": false, "nude": false, "rating": "sfw", "topLabel": null }
+    }
+  ],
+
+  "videoVectors": [
+    {
+      "name": "no frames means unrated with no poster",
+      "frames": [],
+      "expect": { "rating": "unrated", "sexy": false, "sexyFrameCount": 0, "posterFrameIndex": null }
+    },
+    {
+      "name": "one sexy frame makes the whole video sexy",
+      "frames": ["sfw", "sfw", "suggestive", "sfw"],
+      "expect": { "rating": "suggestive", "sexy": true, "sexyFrameCount": 1, "posterFrameIndex": 2 }
+    },
+    {
+      "name": "the most severe frame sets the video rating",
+      "frames": ["sfw", "suggestive", "explicit", "sfw"],
+      "expect": { "rating": "explicit", "sexy": true, "sexyFrameCount": 2, "posterFrameIndex": 1 }
+    },
+    {
+      "name": "posters on the FIRST sexy frame, not the most severe one",
+      "frames": ["sfw", "suggestive", "explicit"],
+      "expect": { "rating": "explicit", "sexy": true, "sexyFrameCount": 2, "posterFrameIndex": 1 }
+    },
+    {
+      "name": "an all-sfw video posters on the middle frame",
+      "frames": ["sfw", "sfw", "sfw", "sfw", "sfw"],
+      "expect": { "rating": "sfw", "sexy": false, "sexyFrameCount": 0, "posterFrameIndex": 2 }
+    },
+    {
+      "name": "an even-length sfw video posters just past the midpoint",
+      "frames": ["sfw", "sfw"],
+      "expect": { "rating": "sfw", "sexy": false, "sexyFrameCount": 0, "posterFrameIndex": 1 }
+    }
+  ],
+
+  "samplingVectors": [
+    { "name": "unknown duration yields nothing", "durationSec": 0, "expectCount": 0 },
+    { "name": "a 2s clip still gets one frame", "durationSec": 2, "expectCount": 1 },
+    { "name": "a short video skips nothing", "durationSec": 120, "expectCount": 12, "expectFirst": 0 },
+    { "name": "a long video skips its head", "durationSec": 3600, "expectCount": 60, "expectFirst": 60 },
+    { "name": "a very long video is clamped to maxFrames", "durationSec": 14400, "expectCount": 60 }
+  ]
+}

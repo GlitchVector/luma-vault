@@ -1,0 +1,35 @@
+{
+  "name": "@luma/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 4340 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --port 4340",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@luma/core": "workspace:*",
+    "@luma/ui": "workspace:*",
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-opener": "^2.5.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.16",
+    "@testing-library/react": "^16",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.1",
+    "@vitejs/plugin-react": "^5.1.0",
+    "jsdom": "^26.1.0",
+    "tailwindcss": "^4.1.16",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vitest": "^3.2.4"
+  }
+}

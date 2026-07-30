@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1,
+    "path": "/Volumes/vault/Images/pics/superb",
+    "addedAt": 1753899000000,
+    "lastScanAt": 1753900100000,
+    "available": true,
+    "mediaCount": 670
+  },
+  {
+    "id": 2,
+    "path": "/Volumes/vault/Video/clips",
+    "addedAt": 1753899500000,
+    "lastScanAt": null,
+    "available": false,
+    "mediaCount": 0
+  }
+]

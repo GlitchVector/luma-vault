@@ -1,0 +1,39 @@
+[
+  {
+    "id": 51,
+    "mediaId": 2,
+    "frameIndex": 7,
+    "timestampSec": 130.5,
+    "path": "/Users/x/Library/Application Support/net.glitchvector.luma-vault/frames/9c/9cf01a/frame_007.jpg",
+    "verdict": {
+      "person": true,
+      "sexy": true,
+      "nude": false,
+      "rating": "suggestive",
+      "topLabel": "BUTTOCKS_EXPOSED",
+      "topLabelTitle": "exposed buttocks",
+      "topScore": 0.812,
+      "detections": [
+        { "label": "BUTTOCKS_EXPOSED", "score": 0.812, "box": [0.31, 0.44, 0.22, 0.19] },
+        { "label": "FACE_FEMALE", "score": 0.964, "box": [0.4, 0.08, 0.11, 0.14] }
+      ]
+    }
+  },
+  {
+    "id": 52,
+    "mediaId": 2,
+    "frameIndex": 8,
+    "timestampSec": 143.0,
+    "path": "/Users/x/Library/Application Support/net.glitchvector.luma-vault/frames/9c/9cf01a/frame_008.jpg",
+    "verdict": {
+      "person": false,
+      "sexy": false,
+      "nude": false,
+      "rating": "sfw",
+      "topLabel": null,
+      "topLabelTitle": null,
+      "topScore": 0.0,
+      "detections": []
+    }
+  }
+]

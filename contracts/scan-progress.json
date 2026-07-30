@@ -1,0 +1,29 @@
+[
+  {
+    "phase": "globbing",
+    "folderId": 1,
+    "done": 0,
+    "total": 412,
+    "current": "/Volumes/vault/Images/pics/superb",
+    "errors": []
+  },
+  {
+    "phase": "classifying",
+    "folderId": 1,
+    "done": 118,
+    "total": 670,
+    "current": "/Volumes/vault/Images/pics/superb/21006089.gif",
+    "errors": [
+      "/Volumes/vault/Images/pics/superb/broken.jpg: unsupported image format",
+      "/Volumes/vault/Video/clips/truncated.mp4: ffprobe reported no duration"
+    ]
+  },
+  {
+    "phase": "done",
+    "folderId": null,
+    "done": 670,
+    "total": 670,
+    "current": null,
+    "errors": []
+  }
+]

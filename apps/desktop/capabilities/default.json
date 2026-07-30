@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The main window. Deliberately narrow: the app reads the filesystem through its own Rust commands and the luma:// protocol, both of which enforce the watched-folder allowlist. Granting the fs plugin broad access would route around that check, so it is not granted at all — the only native file access the webview has is picking a folder to watch.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:allow-open",
+    "opener:allow-open-path",
+    "opener:allow-reveal-item-in-dir"
+  ]
+}

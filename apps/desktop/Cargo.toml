@@ -1,0 +1,71 @@
+[package]
+name = "luma-vault"
+version = "0.1.0"
+description = "Local media vault — watches folders, scans images and videos, classifies them, and renders them fast."
+authors = ["Glitch Vector"]
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+# staticlib/cdylib are what a future mobile entry point would link against;
+# rlib is what the integration tests and contract tests link against.
+name = "luma_vault_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# No `protocol-asset`: the built-in asset:// protocol is switched off in
+# tauri.conf.json because everything goes through the custom `luma://` scheme,
+# which enforces the watched-folder allowlist. Enabling both would leave an
+# unchecked path to the filesystem sitting next to the checked one.
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# bundled: ship SQLite with the binary rather than depending on whatever the
+# host has. The index is the app's own private store, so there is no reason to
+# inherit the system library's version or its build flags.
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Thumbnailing. Default features minus the formats we never read keeps the
+# binary smaller; `image` pulls a decoder per format otherwise.
+image = { version = "0.25", default-features = false, features = [
+  "jpeg",
+  "png",
+  "gif",
+  "webp",
+  "bmp",
+  "tiff",
+] }
+
+walkdir = "2"
+rayon = "1"
+notify = "6"
+notify-debouncer-full = "0.3"
+
+sha2 = "0.10"
+percent-encoding = "2"
+anyhow = "1"
+thiserror = "2"
+crossbeam-channel = "0.5"
+num_cpus = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# Tauri's default: the custom-protocol feature is switched on by `tauri build`.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

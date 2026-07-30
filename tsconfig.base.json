@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "//": "The strictness flags live HERE and nowhere else. A package tsconfig extends this and declares ONLY its genuine differences (jsx, lib, paths, types) so the settings cannot silently diverge between workspaces.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noUncheckedSideEffectImports": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "//": "No DOM lib, on purpose: an accidental window/fetch/document reference in the core must fail to typecheck.",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

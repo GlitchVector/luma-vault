@@ -1,0 +1,131 @@
+# Luma Vault
+
+A local media vault. Point it at folders of images and videos; it indexes them,
+builds thumbnails, classifies everything on your own machine, watches the
+folders for changes, and renders the whole library in one very fast grid.
+
+Nothing is uploaded. Nothing is moved or renamed. The index is a cache — delete
+it and a rescan rebuilds it.
+
+```
+┌──────────────┐   luma://   ┌───────────────────────────────┐
+│  React SPA   │ ◀────────── │  Tauri 2 / Rust               │
+│  (apps/web)  │   invoke    │  index · scan · thumbs · ffmpeg│
+└──────────────┘ ──────────▶ └──────────────┬────────────────┘
+                                            │ stdin/stdout JSON lines
+                                   ┌────────▼─────────┐
+                                   │ NudeNet workers  │
+                                   │ (Python sidecar) │
+                                   └──────────────────┘
+```
+
+## Quick start
+
+```bash
+pnpm install
+pnpm setup:python      # creates venv-classifier and verifies the model loads
+pnpm dev:desktop       # builds the Rust shell and opens the app
+```
+
+`setup:python` needs Python 3.11–3.13 and, for video, `ffmpeg` on PATH
+(`brew install ffmpeg`). Both are checked and reported rather than assumed — if
+either is missing the app still indexes and thumbnails, it just does not rate
+anything, and says so in the status bar.
+
+## How a folder becomes a grid
+
+Adding a folder starts a three-phase background pipeline. Each phase's work
+queue is a *database query* — "rows with no thumbnail", "rows with no verdict" —
+so the whole thing is restartable: quit halfway through a 50,000-file scan,
+reopen, and it resumes exactly where it stopped.
+
+1. **Glob.** Walk the tree, skipping VCS directories, dot-files and Synology's
+   `@eaDir` thumbnail mirrors. New files are inserted; rows whose file has
+   vanished are dropped. Existing rows are left untouched, so a rescan is cheap
+   and a backup tool rewriting mtimes cannot wipe your library's verdicts.
+2. **Thumbnail.** Every file gets a 512px JPEG — unconditionally, even when the
+   source is smaller. Videos are probed with `ffprobe`, sampled on an interval,
+   and their frames extracted with `ffmpeg`; the middle frame becomes a
+   provisional poster so the video appears in the grid immediately.
+3. **Classify.** Thumbnails (never the multi-megapixel originals) go to a pool
+   of persistent Python workers running NudeNet. Images get one verdict. Videos
+   get one per sampled frame, rolled up.
+
+### How a video is rated
+
+Sampled on a 10-second interval, clamped to 60 frames, skipping the first 60 and
+last 45 seconds of anything longer than 7 minutes — logos and credits are
+representative of nothing.
+
+**If any sampled frame is sexy, the whole video is sexy.** A max, not a vote: one
+explicit frame in an hour still makes the video explicit, because the flag
+answers "can this be on screen", not "how much of it".
+
+The poster follows the same rule — the **first** sexy frame if there is one, so
+the tile shows what earned the flag; otherwise the **middle** frame, so an SFW
+video still gets a representative tile.
+
+## Why the grid is fast
+
+No virtualization, no masonry library, no windowing. Three structural choices do
+the work:
+
+- **Tiles are sized before anything loads.** Dimensions come from the index,
+  recorded at scan time, so the whole wall lays out in one pass and nothing
+  shifts as images arrive.
+- **Offscreen tiles mount no `<img>` at all** — not a lazy `src`, no element.
+  Ten thousand empty sized divs are cheap; ten thousand decoded bitmaps are not.
+  A single shared `IntersectionObserver` drives every tile.
+- **Local files stream through a custom `luma://` scheme.** No base64 (33%
+  inflation, a JSON parse and a React state update per image, and no browser
+  cache), no local HTTP server, no blob URLs.
+
+Layout itself is `flex-wrap`: the browser's line-breaking algorithm places every
+tile in one C++ pass, which is what a JavaScript masonry would do in many.
+
+## Security posture
+
+- The `luma://` handler serves a file only if it is inside a **watched folder**
+  or the app's own derived-data directories. Both sides are canonicalized, so
+  `..` and symlinks cannot escape.
+- The CSP forbids the page from reaching any remote origin. That is what makes
+  the allowlist meaningful: even a compromised page has nowhere to send what it
+  reads.
+- The `fs` plugin is **not** granted to the webview. Its only native file access
+  is the folder picker. Granting it would route around the allowlist.
+- Every `ffmpeg`/`ffprobe` invocation passes an argv array, never an
+  interpolated shell string.
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `packages/core` | Pure domain: zod schemas, label weights, rating rules. No I/O, no DOM (enforced by its tsconfig). |
+| `packages/ui` | App-agnostic React kit. No Tauri, no native imports. |
+| `apps/web` | The SPA. All native access confined to `src/lib/native.ts`. |
+| `apps/desktop` | Tauri 2 shell: index, scanner, thumbnails, ffmpeg, classifier pool, protocol, watcher. |
+| `sidecar/classifier` | The persistent NudeNet worker and its pinned requirements. |
+| `contracts` | Golden fixtures that *are* the wire format, checked from both languages. |
+
+Libraries are consumed as source (`exports: "./src/index.ts"`, no build step), so
+there is no build graph to orchestrate and no stale `dist` to debug.
+
+## Checks
+
+```bash
+pnpm lint && pnpm -r typecheck && pnpm -r test   # TypeScript
+cargo clippy --manifest-path apps/desktop/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path apps/desktop/Cargo.toml
+```
+
+The rating rules exist in **two** languages — Rust runs them during a scan, the
+UI re-derives them without a round trip. Both are driven by
+`contracts/classify-vectors.json`, so changing a rule fails two suites at once.
+That is deliberate; see `.ai/architecture.md`.
+
+## Prior art
+
+This is the successor to a long line of attempts at the same idea. The
+architecture and monorepo conventions come from `dth-character-studio`, the
+Python/NudeNet integration from `corn-dog`, and the grid from `viewer-net`. What
+changed, and why, is written down in `.ai/gotchas.md`.

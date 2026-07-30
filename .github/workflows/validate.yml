@@ -1,0 +1,123 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch makes the in-flight run obsolete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.7.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Test
+        run: pnpm -r test
+
+      - name: Build the SPA
+        run: pnpm --filter @luma/web build
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # Tauri's Linux build needs the webkit stack even for `cargo check`,
+      # because tauri-build resolves the system webview at compile time.
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop
+
+      # tauri-build refuses to run when frontendDist is missing, and the Rust
+      # job deliberately does not install Node just to satisfy that check.
+      - name: Stub the frontend dist
+        run: |
+          mkdir -p apps/web/dist
+          echo '<!doctype html><title>ci</title>' > apps/web/dist/index.html
+
+      - name: Clippy
+        run: cargo clippy --locked --manifest-path apps/desktop/Cargo.toml --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --manifest-path apps/desktop/Cargo.toml
+
+  classifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the classifier requirements
+        run: pip install -r sidecar/classifier/requirements.txt
+
+      # The worker's own self-check: can it import everything and load the model?
+      - name: Self-check
+        run: python sidecar/classifier/classify_worker.py --check
+
+      # An end-to-end protocol test against a generated image. Proves the
+      # handshake, the request/response framing, index alignment on failure and
+      # clean shutdown — without asserting anything about the model's output.
+      - name: Protocol smoke test
+        run: |
+          python - <<'PY'
+          from PIL import Image
+          Image.new("RGB", (320, 240), (128, 128, 128)).save("/tmp/probe.jpg")
+          PY
+          printf '{"id":1,"cmd":"ping"}\n{"id":2,"cmd":"classify","paths":["/tmp/probe.jpg","/tmp/missing.jpg"]}\n{"cmd":"shutdown"}\n' \
+            | python sidecar/classifier/classify_worker.py > /tmp/out.jsonl
+          python - <<'PY'
+          import json, sys
+          lines = [json.loads(line) for line in open("/tmp/out.jsonl") if line.strip()]
+          kinds = [line.get("type") for line in lines]
+          assert kinds[0] == "ready", f"expected a ready handshake, got {kinds}"
+          assert "pong" in kinds, f"ping was not answered: {kinds}"
+          result = next(line for line in lines if line.get("type") == "result")
+          assert len(result["results"]) == 2, "one result per path, always"
+          assert result["results"][0]["ok"] is True, result["results"][0]
+          assert result["results"][1]["ok"] is False, "a missing file must fail in place"
+          for detection in result["results"][0]["detections"]:
+              x, y, w, h = detection["box"]
+              assert all(0.0 <= v <= 1.0 for v in (x, y, w, h)), f"box not normalised: {detection}"
+          print("classifier protocol OK")
+          PY

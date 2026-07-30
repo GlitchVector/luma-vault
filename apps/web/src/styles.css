@@ -1,0 +1,65 @@
+@import 'tailwindcss';
+
+/* @luma/ui lives outside this app's tree, so Tailwind's automatic source
+   detection does not see its class names and the kit renders unstyled without
+   this line. */
+@source '../../../packages/ui/src/**/*.{ts,tsx}';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #09090b;
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The webview is a desktop app window: selecting the chrome and rubber-banding
+   the whole page both read as bugs rather than features. */
+body {
+  overscroll-behavior: none;
+}
+
+button,
+select {
+  user-select: none;
+}
+
+@keyframes luma-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+/* A thin, dark scrollbar; the default light one is jarring against the grid. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.3 0.01 280);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.4 0.02 280);
+  background-clip: content-box;
+}
