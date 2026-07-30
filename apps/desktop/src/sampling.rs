@@ -22,7 +22,12 @@ impl Default for SamplingOptions {
     fn default() -> Self {
         Self {
             interval_sec: 10.0,
-            max_frames: 60,
+            // The setting that dominates scan time: 1,700 videos is 42,500
+            // classifications at 25 and over 100,000 at 60. Past roughly four
+            // minutes every video hits this clamp and the interval stretches,
+            // so long videos get exactly this many frames spread evenly rather
+            // than proportionally more. Mirrored in sampling.ts.
+            max_frames: 25,
             skip_start_sec: 60.0,
             skip_end_sec: 45.0,
             short_video_sec: 420.0,

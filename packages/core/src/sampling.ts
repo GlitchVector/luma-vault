@@ -28,7 +28,14 @@ export interface SamplingOptions {
 
 export const DEFAULT_SAMPLING: SamplingOptions = {
   intervalSec: 10,
-  maxFrames: 60,
+  /**
+   * The hard ceiling on frames per video, and the setting that dominates scan
+   * time: a library of 1,700 videos is 42,500 classifications at 25, and more
+   * than 100,000 at 60. Above roughly four minutes every video hits this clamp
+   * and the interval stretches, so long videos get exactly this many frames
+   * spread evenly rather than proportionally more.
+   */
+  maxFrames: 25,
   skipStartSec: 60,
   skipEndSec: 45,
   shortVideoSec: 420,

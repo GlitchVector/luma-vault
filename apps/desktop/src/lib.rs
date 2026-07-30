@@ -272,11 +272,13 @@ pub fn run() {
                 watcher,
             });
 
-            // Anything left unfinished by the last session resumes now. The
-            // pipeline's work queue is a database query, so there is nothing to
-            // replay — it simply asks what still has no thumbnail or verdict.
+            // Re-walk every folder, then resume anything the last session left
+            // unfinished. The pipeline's work queue is a database query, so
+            // there is nothing to replay — it simply asks what still has no
+            // thumbnail or verdict. The walk is what catches files added or
+            // removed while the app was closed, which the watcher cannot see.
             let handle = app.handle().clone();
-            std::thread::spawn(move || pipeline::run_pending(pipeline, handle));
+            std::thread::spawn(move || pipeline::run_startup(pipeline, handle));
 
             Ok(())
         })

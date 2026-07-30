@@ -189,5 +189,16 @@ fn sampling_vectors_agree_with_the_typescript_core() {
                 "timestamp {stamp} out of range in: {name}"
             );
         }
+
+        if case["expectEvenlySpaced"].as_bool() == Some(true) {
+            let gaps: Vec<f64> = stamps.windows(2).map(|pair| pair[1] - pair[0]).collect();
+            let first = gaps[0];
+            for gap in &gaps {
+                assert!(
+                    (gap - first).abs() < 1e-6,
+                    "gaps are not even in: {name} (expected {first}, saw {gap})"
+                );
+            }
+        }
     }
 }

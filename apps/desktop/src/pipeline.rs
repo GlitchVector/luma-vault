@@ -179,8 +179,51 @@ pub fn run_scan(pipeline: Arc<Pipeline>, app: AppHandle, folder_id: i64, root: P
     );
 }
 
+/// Re-walk every watched folder, then drain the pipeline. Run once at startup.
+///
+/// The watcher only sees changes while the app is running, so anything added,
+/// removed or replaced while it was closed is invisible until something walks
+/// the tree again. Without this, a folder could sit in the index untouched
+/// forever — including one that has never been scanned at all.
+///
+/// The walk is cheap relative to what follows: inserts are
+/// `ON CONFLICT DO NOTHING`, so a rescan of an unchanged library is a directory
+/// traversal and a few thousand no-op inserts, and it never disturbs an
+/// existing row's thumbnail or verdict.
+pub fn run_startup(pipeline: Arc<Pipeline>, app: AppHandle) {
+    if pipeline.busy.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let folders = pipeline.db.list_folders().unwrap_or_default();
+        for folder in folders {
+            glob_phase(&pipeline, &app, folder.id, Path::new(&folder.path));
+        }
+        thumbnail_phase(&pipeline, &app);
+        classify_phase(&pipeline, &app);
+    }));
+
+    if outcome.is_err() {
+        eprintln!("[luma] startup scan panicked; the library is still consistent");
+    }
+
+    pipeline.busy.store(false, Ordering::SeqCst);
+    pipeline.publish(
+        &app,
+        ScanProgress {
+            phase: JobPhase::Done,
+            folder_id: None,
+            done: 0,
+            total: 0,
+            current: None,
+            errors: Vec::new(),
+        },
+    );
+}
+
 /// Thumbnail + classify everything outstanding, without re-walking any folder.
-/// Used on startup and after watcher events.
+/// Used after watcher events and by the retry command.
 pub fn run_pending(pipeline: Arc<Pipeline>, app: AppHandle) {
     if pipeline.busy.swap(true, Ordering::SeqCst) {
         return;
@@ -214,6 +257,28 @@ pub fn run_pending(pipeline: Arc<Pipeline>, app: AppHandle) {
 // ---------------------------------------------------------------------------
 
 fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &Path) {
+    // An unreachable root is not an empty folder. Walking one returns nothing,
+    // and the prune below would then read "every file has been deleted" and
+    // wipe the folder's entire index. Unplugging a NAS must not cost you your
+    // library, so bail before doing any work.
+    if !root.is_dir() {
+        pipeline.publish(
+            app,
+            ScanProgress {
+                phase: JobPhase::Globbing,
+                folder_id: Some(folder_id),
+                done: 0,
+                total: 0,
+                current: None,
+                errors: vec![format!(
+                    "{} is not reachable — skipped, and its index was left untouched",
+                    root.display()
+                )],
+            },
+        );
+        return;
+    }
+
     pipeline.publish(
         app,
         ScanProgress {
@@ -249,10 +314,22 @@ fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &
     // paths we already have in memory.
     let known: std::collections::HashSet<&str> = files.iter().map(|f| f.path.as_str()).collect();
     if let Ok(indexed) = pipeline.db.media_paths_in_folder(folder_id) {
-        for path in indexed {
-            if !known.contains(path.as_str()) {
-                let _ = pipeline.db.delete_media_by_path(&path);
-                thumbs::forget_derived(&pipeline.thumb_root, &pipeline.frame_root, &path);
+        // Second guard, for the case `is_dir()` cannot catch: a share that is
+        // mounted but empty because it has not finished coming up, or a
+        // permission failure that made the walk yield nothing. Deleting
+        // thousands of rows is never the right response to finding zero files.
+        if !is_prune_trustworthy(files.len(), indexed.len()) {
+            errors.push(format!(
+                "{} returned no files but has {} indexed — nothing was pruned",
+                root.display(),
+                indexed.len()
+            ));
+        } else {
+            for path in indexed {
+                if !known.contains(path.as_str()) {
+                    let _ = pipeline.db.delete_media_by_path(&path);
+                    thumbs::forget_derived(&pipeline.thumb_root, &pipeline.frame_root, &path);
+                }
             }
         }
     }
@@ -622,4 +699,43 @@ pub fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Whether a walk result is trustworthy enough to delete rows from.
+///
+/// "Found nothing where there used to be something" is what an unmounted share,
+/// a half-mounted share and a permission failure all look like — and it is
+/// indistinguishable from a genuinely emptied folder. Deleting thousands of
+/// rows is never the right response to that ambiguity: the cost of being wrong
+/// is a wiped library, while the cost of skipping a legitimate prune is some
+/// stale rows that the next successful scan cleans up.
+fn is_prune_trustworthy(walked: usize, indexed: usize) -> bool {
+    walked > 0 || indexed == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_prune_trustworthy;
+
+    #[test]
+    fn a_normal_walk_prunes() {
+        assert!(is_prune_trustworthy(500, 520), "some files gone is normal");
+        assert!(is_prune_trustworthy(500, 500));
+        assert!(is_prune_trustworthy(1, 9_000), "even a drastic drop, if real");
+    }
+
+    #[test]
+    fn an_empty_walk_over_a_populated_index_never_prunes() {
+        assert!(
+            !is_prune_trustworthy(0, 1),
+            "an unmounted share must not wipe the index"
+        );
+        assert!(!is_prune_trustworthy(0, 40_000));
+    }
+
+    #[test]
+    fn an_empty_walk_over_an_empty_index_is_fine() {
+        // Nothing to delete, so there is no ambiguity to be careful about.
+        assert!(is_prune_trustworthy(0, 0));
+    }
 }

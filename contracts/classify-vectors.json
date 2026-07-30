@@ -127,7 +127,14 @@
     { "name": "unknown duration yields nothing", "durationSec": 0, "expectCount": 0 },
     { "name": "a 2s clip still gets one frame", "durationSec": 2, "expectCount": 1 },
     { "name": "a short video skips nothing", "durationSec": 120, "expectCount": 12, "expectFirst": 0 },
-    { "name": "a long video skips its head", "durationSec": 3600, "expectCount": 60, "expectFirst": 60 },
-    { "name": "a very long video is clamped to maxFrames", "durationSec": 14400, "expectCount": 60 }
+    { "name": "a long video skips its head", "durationSec": 3600, "expectCount": 25, "expectFirst": 60 },
+    { "name": "a very long video is clamped to maxFrames", "durationSec": 14400, "expectCount": 25 },
+    {
+      "name": "anything past the clamp gets exactly 25 evenly spread frames",
+      "durationSec": 7200,
+      "expectCount": 25,
+      "expectFirst": 60,
+      "expectEvenlySpaced": true
+    }
   ]
 }

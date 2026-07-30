@@ -42,6 +42,7 @@ const VECTORS = JSON.parse(
     durationSec: number
     expectCount: number
     expectFirst?: number
+    expectEvenlySpaced?: boolean
   }>
 }
 
@@ -105,6 +106,11 @@ describe('sampling vectors (shared with apps/desktop/src/sampling.rs)', () => {
       for (const stamp of stamps) {
         expect(stamp).toBeGreaterThanOrEqual(0)
         expect(stamp).toBeLessThan(testCase.durationSec)
+      }
+
+      if (testCase.expectEvenlySpaced) {
+        const gaps = stamps.slice(1).map((stamp, index) => stamp - stamps[index]!)
+        for (const gap of gaps) expect(gap).toBeCloseTo(gaps[0]!, 6)
       }
     })
   }

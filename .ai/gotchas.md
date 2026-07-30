@@ -119,6 +119,22 @@ count and fills the library with 100px duplicates of everything.
 away thumbnails and verdicts for an entire library the first time a backup tool
 rewrites mtimes.
 
+**An unreachable folder must never be pruned from.** `glob_phase` deletes rows
+for files the walk did not find, and an unmounted NAS looks exactly like a
+folder whose every file was deleted — so without a guard, unplugging a drive
+wipes its entire index. Two guards: `root.is_dir()` before any work, and
+`is_prune_trustworthy(walked, indexed)`, which refuses to prune when a walk
+found nothing but the index holds something. The second catches the cases
+`is_dir()` cannot — a share that is mounted but not yet populated, or a
+permission failure. The cost of being wrong in one direction is a wiped library;
+in the other, some stale rows the next good scan cleans up.
+
+**Startup re-walks every folder, it does not only drain the queues.** The
+watcher sees nothing while the app is closed, so a folder that gained or lost
+files in the meantime would stay wrong indefinitely. `run_startup` globs every
+folder and then drains; `run_pending` (queues only) is for watcher events and
+the retry command.
+
 **Symlinks are not followed.** A loop would walk forever.
 
 ## Video
