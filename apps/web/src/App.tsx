@@ -59,6 +59,7 @@ export function App() {
           onAdd={() => void actions.addFolder()}
           onRemove={(id) => void actions.removeFolder(id)}
           onRescan={(id) => void actions.rescanFolder(id)}
+          onRetryFailed={() => void actions.retryFailed(query.folderId)}
         />
 
         <main className="flex min-w-0 flex-1 flex-col">

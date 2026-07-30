@@ -158,6 +158,26 @@ async fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, Strin
     state.db.stats().map_err(stringify)
 }
 
+/// Clear recorded failures and reprocess them.
+///
+/// Failures are usually permanent, but not always: an unmounted share or a
+/// missing ffmpeg fails everything it touches, and after fixing that the user
+/// needs a way to say "try again" short of removing and re-adding the folder.
+#[tauri::command(async)]
+async fn retry_failed(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    folder_id: Option<i64>,
+) -> Result<usize, String> {
+    let cleared = state.db.clear_errors(folder_id).map_err(stringify)?;
+    if cleared > 0 {
+        let pipeline = Arc::clone(&state.pipeline);
+        let handle = app.clone();
+        std::thread::spawn(move || pipeline::run_pending(pipeline, handle));
+    }
+    Ok(cleared)
+}
+
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
@@ -274,6 +294,7 @@ pub fn run() {
             media_frames,
             media_by_id,
             library_stats,
+            retry_failed,
             scan_progress,
             process_pending,
             environment,

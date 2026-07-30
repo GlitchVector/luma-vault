@@ -9,6 +9,7 @@ interface FolderSidebarProps {
   onAdd: () => void
   onRemove: (id: number) => void
   onRescan: (id: number) => void
+  onRetryFailed: () => void
 }
 
 export function FolderSidebar({
@@ -19,6 +20,7 @@ export function FolderSidebar({
   onAdd,
   onRemove,
   onRescan,
+  onRetryFailed,
 }: FolderSidebarProps) {
   return (
     <aside className="flex w-60 shrink-0 flex-col gap-3 border-r border-white/5 bg-zinc-950/60 p-3">
@@ -110,6 +112,24 @@ export function FolderSidebar({
               <dt>Pending</dt>
               <dd className="text-right tabular-nums text-amber-300">
                 {stats.pending.toLocaleString()}
+              </dd>
+            </>
+          ) : null}
+          {/* A skipped file is otherwise invisible — the library is just
+              quietly smaller than the folder. Say so, and offer a retry, since
+              a whole batch can fail for one fixable reason. */}
+          {stats.failed > 0 ? (
+            <>
+              <dt>Skipped</dt>
+              <dd className="text-right">
+                <button
+                  type="button"
+                  onClick={onRetryFailed}
+                  title="These files could not be read. Click to try them again."
+                  className="tabular-nums text-red-300 underline decoration-dotted underline-offset-2 hover:text-red-200"
+                >
+                  {stats.failed.toLocaleString()}
+                </button>
               </dd>
             </>
           ) : null}

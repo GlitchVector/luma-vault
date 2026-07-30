@@ -160,6 +160,8 @@ export const libraryStatsSchema = z.object({
   classified: z.number(),
   pending: z.number(),
   sexy: z.number(),
+  /** Files the pipeline gave up on, with a reason recorded on the row. */
+  failed: z.number(),
 })
 export type LibraryStats = z.infer<typeof libraryStatsSchema>
 

@@ -188,6 +188,9 @@ pub struct LibraryStats {
     pub classified: i64,
     pub pending: i64,
     pub sexy: i64,
+    /// Files the pipeline gave up on, with a reason recorded on the row.
+    /// Surfaced so a shrunken library is explained rather than just smaller.
+    pub failed: i64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

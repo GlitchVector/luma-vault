@@ -116,9 +116,20 @@ export async function mediaById(id: number): Promise<MediaItem | null> {
 
 export async function libraryStats(): Promise<LibraryStats> {
   if (!isTauri()) {
-    return { folders: 0, images: 0, videos: 0, classified: 0, pending: 0, sexy: 0 }
+    return { folders: 0, images: 0, videos: 0, classified: 0, pending: 0, sexy: 0, failed: 0 }
   }
   return libraryStatsSchema.parse(await invoke('library_stats'))
+}
+
+/**
+ * Clear recorded failures and reprocess them. Returns how many were cleared.
+ *
+ * Worth offering because a failure is not always permanent: an unmounted share
+ * or a missing ffmpeg fails everything it touches at once.
+ */
+export async function retryFailed(folderId: number | null = null): Promise<number> {
+  if (!isTauri()) return 0
+  return z.number().parse(await invoke('retry_failed', { folderId }))
 }
 
 // ---------------------------------------------------------------------------

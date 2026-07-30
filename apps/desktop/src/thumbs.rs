@@ -65,8 +65,19 @@ pub fn derived_path(root: &Path, source: &str, suffix: &str) -> PathBuf {
 pub fn thumbnail_image(source: &str, thumb_root: &Path) -> Result<Thumbnail> {
     let destination = derived_path(thumb_root, source, ".jpg");
 
-    let decoded = image::open(source)
-        .with_context(|| format!("cannot decode image {source}"))?;
+    let decoded = match image::open(source) {
+        Ok(decoded) => decoded,
+        Err(rust_error) => {
+            // The `image` crate cannot read HEIC or AVIF, which is most of a
+            // modern iPhone library. Rather than declaring those unsupported,
+            // fall back to ffmpeg — already a dependency for video, and it
+            // decodes both. A machine without ffmpeg still gets the original,
+            // more accurate error.
+            return crate::video::thumbnail_via_ffmpeg(source, &destination, THUMB_MAX)
+                .with_context(|| format!("cannot decode image {source} ({rust_error})"));
+        }
+    };
+
     let source_width = decoded.width();
     let source_height = decoded.height();
 

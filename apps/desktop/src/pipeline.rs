@@ -303,13 +303,16 @@ fn thumbnail_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
             };
 
             if let Err(error) = result {
+                let message = format!("{error:#}");
                 errors
                     .lock()
                     .expect("errors mutex")
-                    .push(format!("{}: {error:#}", file.path));
-                // Mark it done so a permanently broken file is not retried on
-                // every single pass forever.
-                let _ = pipeline.db.mark_unclassifiable(file.id, now_ms());
+                    .push(format!("{}: {message}", file.path));
+                // `mark_failed`, NOT a bare "mark classified": this queue is
+                // `thumb_path IS NULL AND error IS NULL`, so a row that fails
+                // without setting `error` comes straight back on the next
+                // iteration and the phase spins on it forever.
+                let _ = pipeline.db.mark_failed(file.id, &message, now_ms());
             }
 
             let finished = done.fetch_add(1, Ordering::SeqCst) + 1;
@@ -502,7 +505,7 @@ fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
                             .lock()
                             .expect("errors mutex")
                             .push(format!("{}: {reason}", file.path));
-                        let _ = pipeline.db.mark_unclassifiable(file.id, now_ms());
+                        let _ = pipeline.db.mark_failed(file.id, &reason, now_ms());
                     }
                 }
             }
@@ -514,11 +517,12 @@ fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
         // 60 frames, so it is already a full unit of work for one worker.
         videos.par_iter().for_each(|file| {
             if let Err(error) = classify_one_video(pipeline, &pool, file, options) {
+                let message = format!("{error:#}");
                 errors
                     .lock()
                     .expect("errors mutex")
-                    .push(format!("{}: {error:#}", file.path));
-                let _ = pipeline.db.mark_unclassifiable(file.id, now_ms());
+                    .push(format!("{}: {message}", file.path));
+                let _ = pipeline.db.mark_failed(file.id, &message, now_ms());
             }
             report(pipeline, app, &done, 1, total, &errors, Some(file));
         });

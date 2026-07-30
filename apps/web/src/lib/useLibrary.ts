@@ -165,6 +165,11 @@ export function useLibrary() {
       async processPending() {
         await native.processPending()
       },
+      async retryFailed(folderId: number | null = null) {
+        const cleared = await native.retryFailed(folderId)
+        await refreshFolders()
+        return cleared
+      },
     }),
     [refreshFolders, reload],
   )

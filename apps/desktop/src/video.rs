@@ -127,6 +127,102 @@ pub fn probe(path: &str) -> Result<VideoInfo> {
     })
 }
 
+/// Decode a still image ffmpeg understands but the `image` crate does not.
+///
+/// This is the HEIC/AVIF path. ffmpeg is already required for video, so reusing
+/// it as a universal fallback decoder costs nothing and covers every format it
+/// knows — which is far more than any pure-Rust decoder set.
+pub fn thumbnail_via_ffmpeg(
+    source: &str,
+    destination: &Path,
+    bound: u32,
+) -> Result<crate::thumbs::Thumbnail> {
+    let ffmpeg = ffmpeg_path()
+        .ok_or_else(|| anyhow!("ffmpeg is not installed, so this format cannot be decoded"))?;
+
+    let (source_width, source_height) = probe_image_size(source)?;
+    let (thumb_width, thumb_height) = fit_within(source_width, source_height, bound);
+
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create {}", parent.display()))?;
+    }
+
+    let status = Command::new(ffmpeg)
+        .args(["-loglevel", "error", "-nostdin"])
+        .arg("-i")
+        .arg(source)
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            &format!("scale={thumb_width}:{thumb_height}"),
+            "-q:v",
+            "3",
+            "-y",
+        ])
+        .arg(destination)
+        .status()
+        .with_context(|| format!("cannot run ffmpeg on {source}"))?;
+
+    if !status.success() || !destination.is_file() {
+        bail!("ffmpeg could not decode {source}");
+    }
+
+    Ok(crate::thumbs::Thumbnail {
+        path: destination.to_path_buf(),
+        thumb_width,
+        thumb_height,
+        source_width,
+        source_height,
+    })
+}
+
+/// Dimensions of a still image, via ffprobe.
+fn probe_image_size(path: &str) -> Result<(u32, u32)> {
+    let ffprobe = ffprobe_path().ok_or_else(|| anyhow!("ffprobe not found"))?;
+
+    let output = Command::new(ffprobe)
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "default=noprint_wrappers=1",
+        ])
+        .arg(path)
+        .output()
+        .with_context(|| format!("cannot run ffprobe on {path}"))?;
+
+    if !output.status.success() {
+        bail!(
+            "ffprobe failed on {path}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut width = 0_u32;
+    let mut height = 0_u32;
+    for line in text.lines() {
+        if let Some((key, value)) = line.split_once('=') {
+            match key.trim() {
+                "width" => width = value.trim().parse().unwrap_or(0),
+                "height" => height = value.trim().parse().unwrap_or(0),
+                _ => {}
+            }
+        }
+    }
+
+    if width == 0 || height == 0 {
+        bail!("ffprobe reported no dimensions for {path}");
+    }
+    Ok((width, height))
+}
+
 pub struct ExtractedFrame {
     pub frame_index: i64,
     pub timestamp_sec: f64,

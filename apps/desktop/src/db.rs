@@ -89,7 +89,8 @@ impl Db {
                 verdict_json  TEXT,
                 rating        TEXT    NOT NULL DEFAULT 'unrated',
                 is_sexy       INTEGER NOT NULL DEFAULT 0,
-                classified_at INTEGER
+                classified_at INTEGER,
+                error         TEXT
             );
 
             CREATE TABLE IF NOT EXISTS media_frames (
@@ -111,6 +112,24 @@ impl Db {
             CREATE INDEX IF NOT EXISTS media_unthumbed   ON media(thumb_path) WHERE thumb_path IS NULL;
             CREATE INDEX IF NOT EXISTS frames_of_media   ON media_frames(media_id);
             "#,
+        )?;
+
+        // Additive migration for indexes created before `error` existed.
+        // Checked rather than blindly attempted, because a failing ALTER inside
+        // a batch would abort the rest of the migration.
+        let has_error_column = conn
+            .prepare("PRAGMA table_info(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "error");
+        if !has_error_column {
+            conn.execute_batch("ALTER TABLE media ADD COLUMN error TEXT")?;
+        }
+
+        // Partial index over exactly the rows the thumbnail queue scans.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_thumb_queue
+             ON media(modified_at DESC) WHERE thumb_path IS NULL AND error IS NULL",
         )?;
 
         Ok(())
@@ -240,11 +259,17 @@ impl Db {
     }
 
     /// Files that still need a thumbnail (and therefore dimensions).
+    ///
+    /// **`error IS NULL` is load-bearing.** This query is the thumbnail phase's
+    /// loop condition, so a row it keeps returning is a row the phase keeps
+    /// retrying. Marking a failure only as "classified" — which is what the
+    /// first version did — leaves `thumb_path` NULL and spins forever on the
+    /// first unreadable file. Anything that gives up on a row must set `error`.
     pub fn pending_thumbnails(&self, limit: i64) -> Result<Vec<PendingFile>> {
         let conn = self.conn.lock().expect("index mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT id, path, kind FROM media
-             WHERE thumb_path IS NULL
+             WHERE thumb_path IS NULL AND error IS NULL
              ORDER BY modified_at DESC
              LIMIT ?1",
         )?;
@@ -273,7 +298,7 @@ impl Db {
         let conn = self.conn.lock().expect("index mutex poisoned");
         let mut stmt = conn.prepare(
             "SELECT id, path, kind, thumb_path FROM media
-             WHERE classified_at IS NULL AND thumb_path IS NOT NULL
+             WHERE classified_at IS NULL AND thumb_path IS NOT NULL AND error IS NULL
              ORDER BY modified_at DESC
              LIMIT ?1",
         )?;
@@ -341,16 +366,49 @@ impl Db {
         Ok(())
     }
 
-    /// Marks a file as processed without a verdict, so a permanently unreadable
-    /// file is not retried forever on every pass.
-    pub fn mark_unclassifiable(&self, id: i64, now: i64) -> Result<()> {
+    /// Give up on a file, recording why.
+    ///
+    /// This is the **only** correct way to drop a row out of the pipeline: it
+    /// sets `error`, which is what both pending queues filter on. Setting just
+    /// `classified_at` leaves the row in the thumbnail queue and the phase spins
+    /// on it forever.
+    ///
+    /// The message is kept so the UI can explain a missing tile rather than
+    /// silently omitting the file.
+    pub fn mark_failed(&self, id: i64, message: &str, now: i64) -> Result<()> {
         let conn = self.conn.lock().expect("index mutex poisoned");
         conn.execute(
-            "UPDATE media SET classified_at = ?2, rating = 'unrated' WHERE id = ?1",
-            params![id, now],
+            "UPDATE media
+             SET error = ?2, classified_at = ?3, rating = 'unrated'
+             WHERE id = ?1",
+            // Truncated: an ffmpeg failure can carry kilobytes of stderr, and
+            // the whole row is read on every grid query.
+            params![id, truncate(message, 400), now],
         )?;
         Ok(())
     }
+
+    /// Clear every recorded failure so a rescan retries them.
+    ///
+    /// Failures are usually permanent (a corrupt file), but not always — an
+    /// unmounted share or a missing ffmpeg fails everything it touches, and
+    /// after fixing that the user needs a way to say "try again".
+    pub fn clear_errors(&self, folder_id: Option<i64>) -> Result<usize> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let cleared = match folder_id {
+            Some(id) => conn.execute(
+                "UPDATE media SET error = NULL, classified_at = NULL
+                 WHERE error IS NOT NULL AND folder_id = ?1",
+                params![id],
+            )?,
+            None => conn.execute(
+                "UPDATE media SET error = NULL, classified_at = NULL WHERE error IS NOT NULL",
+                [],
+            )?,
+        };
+        Ok(cleared)
+    }
+
 
     pub fn replace_frames(&self, media_id: i64, frames: &[NewFrame]) -> Result<()> {
         let mut conn = self.conn.lock().expect("index mutex poisoned");
@@ -515,7 +573,8 @@ impl Db {
                 (SELECT COUNT(*) FROM media WHERE kind = 'video'),
                 (SELECT COUNT(*) FROM media WHERE classified_at IS NOT NULL),
                 (SELECT COUNT(*) FROM media WHERE classified_at IS NULL),
-                (SELECT COUNT(*) FROM media WHERE is_sexy = 1)",
+                (SELECT COUNT(*) FROM media WHERE is_sexy = 1),
+                (SELECT COUNT(*) FROM media WHERE error IS NOT NULL)",
             [],
             |row| {
                 Ok(LibraryStats {
@@ -525,6 +584,7 @@ impl Db {
                     classified: row.get(3)?,
                     pending: row.get(4)?,
                     sexy: row.get(5)?,
+                    failed: row.get(6)?,
                 })
             },
         )
@@ -564,6 +624,20 @@ fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
         verdict: verdict_json.and_then(|json| serde_json::from_str(&json).ok()),
         classified_at: row.get(15)?,
     })
+}
+
+fn truncate(input: &str, max: usize) -> String {
+    if input.len() <= max {
+        return input.to_string();
+    }
+    // Respect char boundaries — an error message can contain a non-ASCII path.
+    let end = input
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= max)
+        .last()
+        .unwrap_or(0);
+    format!("{}…", &input[..end])
 }
 
 /// `%` and `_` are wildcards in LIKE; a filename containing either would match
@@ -782,10 +856,87 @@ mod tests {
         assert_eq!((before.images, before.videos, before.pending), (2, 1, 3));
 
         let target = db.query_media(&query()).unwrap().items[0].id;
-        db.mark_unclassifiable(target, 7).unwrap();
+        db.mark_failed(target, "unreadable", 7).unwrap();
 
         let after = db.stats().unwrap();
         assert_eq!((after.classified, after.pending), (1, 2));
+        assert_eq!(after.failed, 1);
+    }
+
+    /// The regression test for the bug that spun the first real scan at 40% CPU
+    /// for 44 minutes without finishing.
+    ///
+    /// `thumbnail_phase` loops on `pending_thumbnails` until it comes back
+    /// empty. The original failure path set only `classified_at`, leaving
+    /// `thumb_path` NULL — so an unreadable file was returned by the very next
+    /// call and the phase retried it forever, never reaching classification.
+    ///
+    /// To watch this fail, change `mark_failed` to set only `classified_at`.
+    #[test]
+    fn a_file_that_fails_thumbnailing_leaves_the_thumbnail_queue() {
+        let (db, _) = seeded();
+        let doomed = db.pending_thumbnails(100).unwrap();
+        assert_eq!(doomed.len(), 3);
+
+        for file in &doomed {
+            db.mark_failed(file.id, "cannot decode image", 1).unwrap();
+        }
+
+        assert!(
+            db.pending_thumbnails(100).unwrap().is_empty(),
+            "a failed file must not come back, or the thumbnail phase never terminates"
+        );
+        assert!(
+            db.pending_classification(100).unwrap().is_empty(),
+            "a file with no thumbnail must not reach the classifier either"
+        );
+    }
+
+    #[test]
+    fn draining_the_thumbnail_queue_terminates_when_every_file_fails() {
+        let (db, _) = seeded();
+
+        // The exact shape of the phase loop: drain a page at a time until empty.
+        let mut rounds = 0;
+        loop {
+            let batch = db.pending_thumbnails(2).unwrap();
+            if batch.is_empty() {
+                break;
+            }
+            rounds += 1;
+            assert!(rounds < 10, "the thumbnail queue is not draining");
+            for file in batch {
+                db.mark_failed(file.id, "boom", 1).unwrap();
+            }
+        }
+        assert_eq!(rounds, 2, "3 files at 2 per page is two rounds");
+    }
+
+    #[test]
+    fn failures_record_their_reason_and_can_be_retried() {
+        let (db, folder) = seeded();
+        let target = db.pending_thumbnails(1).unwrap()[0].id;
+        db.mark_failed(target, "cannot decode image", 1).unwrap();
+        assert_eq!(db.stats().unwrap().failed, 1);
+
+        let cleared = db.clear_errors(Some(folder)).unwrap();
+        assert_eq!(cleared, 1);
+        assert_eq!(db.stats().unwrap().failed, 0);
+        assert_eq!(
+            db.pending_thumbnails(100).unwrap().len(),
+            3,
+            "clearing an error must put the file back in the queue"
+        );
+    }
+
+    #[test]
+    fn a_long_error_message_is_truncated_on_a_char_boundary() {
+        let (db, _) = seeded();
+        let target = db.pending_thumbnails(1).unwrap()[0].id;
+        // Multi-byte, so a naive byte slice would panic.
+        let message = "ü".repeat(500);
+        db.mark_failed(target, &message, 1).unwrap();
+        assert_eq!(db.stats().unwrap().failed, 1);
     }
 
     #[test]

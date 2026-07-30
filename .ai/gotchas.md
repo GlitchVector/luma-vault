@@ -87,6 +87,28 @@ granting it would route around this check entirely.
 row and the derived files when a source changes, so a cached URL can never
 outlive its content.
 
+## The pipeline
+
+**A phase's work queue is its loop condition, so anything that gives up on a row
+must remove it from that queue.** This cost the first real scan 44 minutes at
+40% CPU with zero progress. `pending_thumbnails` selects
+`WHERE thumb_path IS NULL AND error IS NULL`; the original failure path called a
+`mark_unclassifiable` that set only `classified_at`, leaving `thumb_path` NULL —
+so the first unreadable file came back on the very next iteration and the phase
+retried it forever, never reaching classification.
+
+`mark_failed` is now the only way out, and it sets `error`. Pinned by
+`db::tests::a_file_that_fails_thumbnailing_leaves_the_thumbnail_queue` and
+`draining_the_thumbnail_queue_terminates_when_every_file_fails`. If you add a
+phase, its "give up" path must clear that phase's queue predicate — and the test
+for it should be written by reintroducing the bug and watching it fail.
+
+**Failures are visible and retryable.** A skipped file is otherwise invisible:
+the library is simply quieter and smaller than the folder. `LibraryStats.failed`
+surfaces the count and `retry_failed` clears the errors and reprocesses, because
+a whole batch commonly fails for one fixable reason (an unmounted share, a
+missing ffmpeg) rather than for N unrelated ones.
+
 ## Scanning
 
 **`@eaDir` is skipped.** Synology's thumbnail sidecar directory mirrors the
