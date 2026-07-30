@@ -33,6 +33,7 @@ pub const THUMB_MAX: u32 = 512;
 /// old app wrote quality 100 and produced thumbnails larger than some sources.
 const THUMB_QUALITY: u8 = 82;
 
+#[derive(Debug)]
 pub struct Thumbnail {
     pub path: PathBuf,
     pub thumb_width: u32,
@@ -168,6 +169,86 @@ mod tests {
     #[test]
     fn fit_within_survives_a_degenerate_size() {
         assert_eq!(fit_within(0, 0, 512), (512, 512));
+    }
+
+    /// The decode → resize → encode path, end to end against a real file.
+    ///
+    /// Every other test here is arithmetic; this is the one that would catch a
+    /// broken `image` feature set (a format compiled out) or an encoder that
+    /// rejects the pixel layout we hand it.
+    #[test]
+    fn generates_a_real_thumbnail_and_reuses_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("wide.png");
+        image::RgbImage::from_fn(1600, 900, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        })
+        .save(&source)
+        .expect("write the source image");
+
+        let thumb_root = dir.path().join("thumbs");
+        let source_str = source.to_string_lossy().to_string();
+
+        let first = thumbnail_image(&source_str, &thumb_root).expect("thumbnail");
+        assert_eq!((first.source_width, first.source_height), (1600, 900));
+        assert_eq!((first.thumb_width, first.thumb_height), (512, 288));
+        assert!(first.path.is_file(), "the thumbnail must actually be written");
+
+        // It really is a JPEG. Deliberately NOT asserting it is smaller than
+        // the source: a synthetic gradient PNG compresses better than any JPEG
+        // of it, so that comparison holds for photographs and fails here.
+        let bytes = std::fs::read(&first.path).unwrap();
+        assert_eq!(
+            &bytes[0..2],
+            &[0xFF, 0xD8],
+            "the thumbnail must carry a JPEG SOI marker regardless of the source format"
+        );
+        assert_eq!(
+            image::image_dimensions(&first.path).unwrap(),
+            (512, 288),
+            "the file on disk must match the reported dimensions"
+        );
+
+        // A second call reuses the existing file rather than re-encoding.
+        let before = std::fs::metadata(&first.path).unwrap().modified().unwrap();
+        let second = thumbnail_image(&source_str, &thumb_root).expect("second thumbnail");
+        assert_eq!(second.path, first.path);
+        assert_eq!(
+            std::fs::metadata(&second.path).unwrap().modified().unwrap(),
+            before,
+            "an existing thumbnail must not be rewritten"
+        );
+    }
+
+    /// A PNG with transparency must not blow up the JPEG encoder, which has no
+    /// alpha channel.
+    #[test]
+    fn flattens_transparency_instead_of_failing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("alpha.png");
+        image::RgbaImage::from_fn(800, 600, |x, _| {
+            image::Rgba([200, 100, 50, if x < 400 { 0 } else { 255 }])
+        })
+        .save(&source)
+        .expect("write the source image");
+
+        let thumb = thumbnail_image(&source.to_string_lossy(), &dir.path().join("thumbs"))
+            .expect("an RGBA source must still thumbnail");
+        assert_eq!((thumb.thumb_width, thumb.thumb_height), (512, 384));
+    }
+
+    #[test]
+    fn reports_a_readable_error_for_a_file_that_is_not_an_image() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let source = dir.path().join("not-an-image.jpg");
+        std::fs::write(&source, b"this is not a JPEG").unwrap();
+
+        let error = thumbnail_image(&source.to_string_lossy(), &dir.path().join("thumbs"))
+            .expect_err("a garbage file must fail rather than produce a blank thumbnail");
+        assert!(
+            format!("{error:#}").contains("cannot decode image"),
+            "the error should name the file: {error:#}"
+        );
     }
 
     #[test]
