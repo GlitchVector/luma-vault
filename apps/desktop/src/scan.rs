@@ -29,11 +29,27 @@ pub fn kind_of(path: &Path) -> Option<MediaKind> {
     }
 }
 
+/// Marker file that excludes a directory and everything under it.
+///
+/// The general escape hatch for the problem below: derived data that lives
+/// inside a media tree and is indistinguishable from the real thing by name or
+/// extension. Drop an empty `.lumaignore` into a directory and the scanner
+/// walks straight past it.
+pub const IGNORE_MARKER: &str = ".lumaignore";
+
 /// Directories that are never worth walking.
 ///
-/// `@eaDir` is Synology's thumbnail sidecar directory and it mirrors the entire
-/// media tree with small JPEGs — walking it on a NAS share doubles the file
-/// count and fills the library with 100px duplicates of everything.
+/// These all share one property: they mirror the media tree with *derived*
+/// copies, so indexing them silently doubles or triples the library with
+/// duplicates of things already in it.
+///
+/// - `@eaDir` — Synology's thumbnail sidecar, a small JPEG per real file.
+/// - `_corndog_meta` — the sibling corn-dog project stores its extracted video
+///   frames here, roughly 73 JPEGs per video across 718 videos. Pointing this
+///   scanner at a vault root that contains it added ~52,000 frame grabs that
+///   duplicated the videos they came from.
+///
+/// Anything not on this list is excluded with `.lumaignore` instead.
 fn is_ignored_dir(name: &str) -> bool {
     matches!(
         name,
@@ -44,6 +60,7 @@ fn is_ignored_dir(name: &str) -> bool {
             | "$RECYCLE.BIN"
             | "System Volume Information"
             | ".luma"
+            | "_corndog_meta"
     ) || name == ".thumbnails"
 }
 
@@ -68,7 +85,11 @@ where
             }
             let name = entry.file_name().to_string_lossy();
             if entry.file_type().is_dir() {
-                return !is_ignored_dir(&name);
+                if is_ignored_dir(&name) {
+                    return false;
+                }
+                // One stat per directory, not per file — cheap even on SMB.
+                return !entry.path().join(IGNORE_MARKER).exists();
             }
             // Skip AppleDouble sidecars and other dot-files outright.
             !name.starts_with("._") && !name.starts_with('.')
@@ -149,7 +170,33 @@ mod tests {
     fn skips_nas_and_vcs_noise() {
         assert!(is_ignored_dir("@eaDir"));
         assert!(is_ignored_dir("node_modules"));
+        assert!(
+            is_ignored_dir("_corndog_meta"),
+            "a sibling project's extracted-frame cache is 52k derived JPEGs"
+        );
         assert!(!is_ignored_dir("Holiday 2024"));
+    }
+
+    #[test]
+    fn a_lumaignore_marker_excludes_a_directory_and_its_children() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+
+        std::fs::create_dir_all(root.join("keep")).unwrap();
+        std::fs::create_dir_all(root.join("derived/nested")).unwrap();
+        std::fs::write(root.join("keep/a.jpg"), b"x").unwrap();
+        std::fs::write(root.join("derived/frame.jpg"), b"x").unwrap();
+        std::fs::write(root.join("derived/nested/frame.jpg"), b"x").unwrap();
+        std::fs::write(root.join("derived").join(IGNORE_MARKER), b"").unwrap();
+
+        let (files, _) = walk_folder(root, |_, _| {});
+        let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
+
+        assert_eq!(
+            names,
+            vec!["a.jpg"],
+            "the marker must exclude the whole subtree, not just its own level"
+        );
     }
 
     #[test]
