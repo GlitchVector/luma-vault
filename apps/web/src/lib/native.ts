@@ -114,8 +114,10 @@ export async function pickFolder(): Promise<string | null> {
 /** Reveals a file in Finder / Explorer. */
 export async function revealInFileManager(path: string): Promise<void> {
   if (!isTauri()) return
-  const { revealItemInDir } = await import('@tauri-apps/plugin-opener')
-  await revealItemInDir(path)
+  // Via our own command rather than the opener plugin's JS API: the index
+  // stores canonicalized paths, and the Windows shell cannot resolve the
+  // extended-length form. Rust normalises it — see `paths::external_path`.
+  await invoke('reveal_item', { path })
 }
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@
 
 mod classifier;
 mod db;
+mod paths;
 mod pipeline;
 mod protocol;
 mod rating;
@@ -158,6 +159,27 @@ async fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, Strin
     state.db.stats().map_err(stringify)
 }
 
+/// Show a file in the OS file manager.
+///
+/// Goes through Rust rather than calling the opener plugin from the webview,
+/// because the index stores canonicalized paths and the Windows shell cannot
+/// resolve the extended-length form — `Shell.NameSpace` on a `\\?\UNC\` path
+/// returns nothing, so the button silently did nothing. Normalising here keeps
+/// that knowledge in one place instead of teaching the frontend about Windows
+/// path spellings.
+///
+/// It also gives the failure somewhere to go: the plugin called from JS had its
+/// rejection dropped on the floor.
+#[tauri::command(async)]
+async fn reveal_item(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let target = crate::paths::external_path(&path);
+    app.opener()
+        .reveal_item_in_dir(&target)
+        .map_err(|error| format!("cannot reveal {target}: {error}"))
+}
+
 /// Clear recorded failures and reprocess them.
 ///
 /// Failures are usually permanent, but not always: an unmounted share or a
@@ -297,6 +319,7 @@ pub fn run() {
             media_by_id,
             library_stats,
             retry_failed,
+            reveal_item,
             scan_progress,
             process_pending,
             environment,

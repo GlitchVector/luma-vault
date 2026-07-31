@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 
 use anyhow::{anyhow, bail, Context, Result};
 
+use crate::paths::external_path;
 use crate::thumbs::fit_within;
 
 /// Where to look when ffmpeg is not on PATH.
@@ -33,31 +34,6 @@ static FFPROBE: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// What Windows falls back to when PATHEXT is unset.
 const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD";
-
-/// Rewrite an indexed path into the spelling ffmpeg probes correctly.
-///
-/// The index stores canonicalized paths, which on Windows means the
-/// extended-length form: `\\?\UNC\server\share\file` for a share, `\\?\D:\dir`
-/// for a local disk. ffmpeg *opens* those fine — a normal video probes the same
-/// either way — but its format detection does not survive them. Given a file
-/// whose extension lies about its contents, the verbatim spelling makes ffmpeg
-/// trust the extension and misdecode; the plain spelling lets content probing
-/// win.
-///
-/// Measured on one real file, a GIF named `.jpg`: `width=0` and `bits 156 is
-/// invalid` through the verbatim path, a correct `540x385` through the plain
-/// one. That matters here because this fallback decoder exists precisely for
-/// the files the `image` crate rejected — mislabeled ones prominent among them.
-fn external_path(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
-        // `\\?\UNC\server\share` is the verbatim spelling of `\\server\share`.
-        format!(r"\\{rest}")
-    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
-        rest.to_string()
-    } else {
-        path.to_string()
-    }
-}
 
 /// The file names a binary can have on this platform, most likely first.
 fn executable_names(binary: &str) -> Vec<String> {
@@ -371,28 +347,6 @@ pub fn extract_frames(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_verbatim_unc_path_becomes_the_plain_share_path() {
-        // Measured: ffprobe reports width=0 for the verbatim form and 540x385
-        // for this one, on the same file.
-        assert_eq!(
-            external_path(r"\\?\UNC\jebpot\vault\Images\a.jpg"),
-            r"\\jebpot\vault\Images\a.jpg"
-        );
-    }
-
-    #[test]
-    fn a_verbatim_disk_path_loses_only_its_prefix() {
-        assert_eq!(external_path(r"\\?\D:\vault\a.mp4"), r"D:\vault\a.mp4");
-    }
-
-    #[test]
-    fn a_path_without_the_prefix_is_untouched() {
-        assert_eq!(external_path("/Users/x/vault/a.mp4"), "/Users/x/vault/a.mp4");
-        assert_eq!(external_path(r"D:\vault\a.mp4"), r"D:\vault\a.mp4");
-        assert_eq!(external_path(r"\\jebpot\vault\a.mp4"), r"\\jebpot\vault\a.mp4");
-    }
 
     #[test]
     fn looks_for_the_platform_spelling_of_a_binary() {
