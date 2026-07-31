@@ -39,8 +39,20 @@ export const MediaTile = memo(function MediaTile({ item, onOpen, showBoxes }: Me
   // Prefer the thumbnail. Animated images are the one exception: a still
   // thumbnail would throw away the animation, which for a GIF library is the
   // entire point of the file.
+  //
+  // No thumbnail yet means **no `<img>` at all**, never the original. Falling
+  // back to the full-resolution source is the specific mistake the previous
+  // generation of this app made — see the module note in `thumbs.rs`. It is
+  // invisible on a scanned library and fatal on a scanning one: with 64,000 of
+  // 66,000 rows still awaiting a thumbnail, the grid points at 3072x4608
+  // originals, each ~56MB once decoded. A screenful is over a gigabyte and
+  // scrolling kills the webview outright — Chromium raises its OOM exception
+  // (0xE0000008) and takes the whole app down with it.
+  //
+  // The wrapper is sized from the index either way, so a tile waiting for its
+  // thumbnail looks exactly like an offscreen one and the layout never shifts.
   const animated = item.kind === 'image' && isAnimatedImage(item.path)
-  const source = animated ? item.path : (item.thumbPath ?? item.path)
+  const source = animated ? item.path : item.thumbPath
 
   // Fall back to the source dimensions when a thumbnail has not been generated
   // yet, so a mid-scan tile still gets a correctly-shaped placeholder.
@@ -65,17 +77,19 @@ export const MediaTile = memo(function MediaTile({ item, onOpen, showBoxes }: Me
     >
       {inView ? (
         <>
-          <img
-            src={fileUrl(source)}
-            alt={item.name}
-            width={width}
-            height={height}
-            // Async decode keeps a large JPEG off the main thread; the browser
-            // paints the placeholder until it is ready rather than janking.
-            decoding="async"
-            className="size-full object-cover"
-            draggable={false}
-          />
+          {source ? (
+            <img
+              src={fileUrl(source)}
+              alt={item.name}
+              width={width}
+              height={height}
+              // Async decode keeps a large JPEG off the main thread; the browser
+              // paints the placeholder until it is ready rather than janking.
+              decoding="async"
+              className="size-full object-cover"
+              draggable={false}
+            />
+          ) : null}
 
           {showBoxes && verdict?.sexy
             ? verdict.topLabel && (

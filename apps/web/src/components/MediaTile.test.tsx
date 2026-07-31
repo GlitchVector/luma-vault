@@ -118,6 +118,36 @@ describe('MediaTile', () => {
       expect(tile.style.height).toBe('195px')
     })
 
+    it('mounts no image at all until a thumbnail exists, never the original', () => {
+      // Rendering the multi-megapixel source as a stand-in is what killed the
+      // webview: mid-scan that is most of the library, and a screenful of
+      // decoded originals exhausts the renderer. An unthumbnailed tile is a
+      // sized placeholder, exactly like an offscreen one.
+      render(
+        <MediaTile
+          item={{ ...item, thumbPath: null, thumbWidth: null, thumbHeight: null }}
+          onOpen={() => {}}
+          showBoxes={false}
+        />,
+      )
+
+      expect(document.querySelector('img')).toBeNull()
+    })
+
+    it('still renders an animated original, which is the one deliberate exception', () => {
+      render(
+        <MediaTile
+          item={{ ...item, path: '/media/loop.gif', name: 'loop.gif', thumbPath: null }}
+          onOpen={() => {}}
+          showBoxes={false}
+        />,
+      )
+
+      expect(document.querySelector('img')?.getAttribute('src')).toBe(
+        `luma://localhost/?path=${encodeURIComponent('/media/loop.gif')}`,
+      )
+    })
+
     it('shows a duration badge for videos', () => {
       render(
         <MediaTile

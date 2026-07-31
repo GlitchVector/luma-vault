@@ -49,6 +49,10 @@ export function useLibrary() {
   // Guards against an out-of-order response overwriting a newer one: a slow
   // query for the previous filter must not clobber the current results.
   const generation = useRef(0)
+  // How many rows are on screen right now. A ref rather than reading `items`,
+  // so `reload` does not have to be rebuilt — and re-subscribed — on every
+  // append.
+  const loaded = useRef(0)
 
   const refreshFolders = useCallback(async () => {
     const [nextFolders, nextStats] = await Promise.all([native.listFolders(), native.libraryStats()])
@@ -63,12 +67,19 @@ export function useLibrary() {
     try {
       const page = await native.queryMedia(next)
       if (ticket !== generation.current) return
-      setItems((previous) => (append ? [...previous, ...page.items] : page.items))
+      setItems((previous) => {
+        const merged = append ? [...previous, ...page.items] : page.items
+        loaded.current = merged.length
+        return merged
+      })
       setTotal(page.total)
     } catch (error) {
       if (ticket === generation.current) {
         console.error('query failed', error)
-        if (!append) setItems([])
+        if (!append) {
+          setItems([])
+          loaded.current = 0
+        }
       }
     } finally {
       if (ticket === generation.current) setLoading(false)
@@ -97,11 +108,26 @@ export function useLibrary() {
     })
   }, [items.length, total, runQuery])
 
+  /**
+   * Re-fetch what is currently on screen.
+   *
+   * Deliberately *not* "go back to page one". A scan publishes progress four
+   * times a second, so this runs every few seconds while one is going; if it
+   * truncated the grid to a single page, every tile below the fold would
+   * unmount, the end-of-list sentinel would immediately re-fire, and the grid
+   * would re-append page by page — remounting tiles whose `inView` starts
+   * `false` and painting them as empty boxes for as long as the scan lasts.
+   *
+   * Refetching the whole loaded window in one query keeps the DOM stable: the
+   * tiles are replaced in place, so nothing unmounts and nothing blanks.
+   */
   const reload = useCallback(() => {
     setQueryState((previous) => {
-      const next = { ...previous, offset: 0 }
-      void runQuery(next, false)
-      return next
+      const window = Math.max(previous.limit, loaded.current)
+      void runQuery({ ...previous, offset: 0, limit: window }, false)
+      // Leave `offset` where the next append should continue from, which is the
+      // end of the window just re-fetched — not the end of one page.
+      return { ...previous, offset: Math.max(0, window - previous.limit) }
     })
     void refreshFolders()
   }, [runQuery, refreshFolders])
