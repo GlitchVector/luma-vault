@@ -29,13 +29,45 @@ import {
 } from '@luma/core'
 import { z } from 'zod'
 
+/** The slice of Tauri's injected globals this module reads directly. */
+type TauriInternals = {
+  convertFileSrc?: (filePath: string, protocol: string) => string
+}
+
+/** Kept as a string, not an identifier — the dangling underscores are Tauri's. */
+const INTERNALS_KEY = '__TAURI_INTERNALS__'
+
+function tauriInternals(): TauriInternals | undefined {
+  if (typeof window === 'undefined') return undefined
+  return (window as unknown as Record<string, TauriInternals | undefined>)[INTERNALS_KEY]
+}
+
 export function isTauri(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+  return tauriInternals() !== undefined
 }
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke: tauriInvoke } = await import('@tauri-apps/api/core')
   return tauriInvoke<T>(command, args)
+}
+
+const SCHEME = 'luma'
+
+/**
+ * The origin the `luma://` handler answers on.
+ *
+ * WebView2 cannot register a custom URI scheme, so on Windows Tauri serves
+ * custom protocols from `http://<scheme>.localhost` instead. A literal
+ * `luma://` URL resolves to nothing there and every tile renders broken.
+ *
+ * Ask Tauri for the origin rather than re-deriving the rule from the user
+ * agent: `convertFileSrc` is the function the framework itself uses to build
+ * these URLs, so the two cannot drift. Passing an empty path yields the bare
+ * origin — `http://luma.localhost/` on Windows, `luma://localhost/` elsewhere.
+ */
+function protocolOrigin(): string {
+  const convert = tauriInternals()?.convertFileSrc
+  return convert ? convert('', SCHEME) : `${SCHEME}://localhost/`
 }
 
 /**
@@ -47,7 +79,7 @@ async function invoke<T>(command: string, args?: Record<string, unknown>): Promi
  * decoding, caching and eviction stay where they belong.
  */
 export function fileUrl(path: string): string {
-  return `luma://localhost/?path=${encodeURIComponent(path)}`
+  return `${protocolOrigin()}?path=${encodeURIComponent(path)}`
 }
 
 // ---------------------------------------------------------------------------
