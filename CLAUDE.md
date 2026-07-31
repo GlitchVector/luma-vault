@@ -56,6 +56,14 @@ cargo clippy --manifest-path apps/desktop/Cargo.toml --all-targets -- -D warning
 cargo test --manifest-path apps/desktop/Cargo.toml
 ```
 
+## Communication
+
+- Always close a response with a `TL;DR:` line (1-3 sentences). Detail and long
+  answers are fine — the TL;DR exists so the reader can skim first and read the
+  rest only if needed. It goes last, after everything else, and states the
+  outcome and anything still open. Skip it only for one-line answers, where it
+  would just repeat the response.
+
 ## Style
 
 - TypeScript strict; the flags live only in `tsconfig.base.json`.
