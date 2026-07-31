@@ -89,3 +89,18 @@ Verify the model end-to-end by hand instead:
 printf '{"id":1,"cmd":"classify","paths":["/some/image.jpg"]}\n{"cmd":"shutdown"}\n' \
   | ./venv-classifier/bin/python sidecar/classifier/classify_worker.py
 ```
+
+On Windows the venv puts the interpreter under `Scripts/`, so run the same thing
+from **Git Bash**:
+
+```bash
+printf '{"id":1,"cmd":"classify","paths":["D:/some/image.jpg"]}\n{"cmd":"shutdown"}\n' \
+  | ./venv-classifier/Scripts/python.exe sidecar/classifier/classify_worker.py
+```
+
+Not from PowerShell: piping strings to a native command there prepends a UTF-8
+BOM to the stream, and the worker answers every request with `malformed request:
+Unexpected UTF-8 BOM`. Neither `$OutputEncoding` nor `[Console]::OutputEncoding`
+suppresses it. Nothing sends a BOM in production — the Rust side writes the pipe
+itself — so this is a shell artifact, not a bug worth working around in the
+worker.

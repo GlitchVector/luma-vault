@@ -28,7 +28,8 @@ pnpm dev:desktop       # builds the Rust shell and opens the app
 ```
 
 `setup:python` needs Python 3.11–3.13 and, for video, `ffmpeg` on PATH
-(`brew install ffmpeg`). Both are checked and reported rather than assumed — if
+(`brew install ffmpeg`, or `winget install Gyan.FFmpeg` on Windows). Both are
+checked and reported rather than assumed — if
 either is missing the app still indexes and thumbnails, it just does not rate
 anything, and says so in the status bar.
 

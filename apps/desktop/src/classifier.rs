@@ -287,8 +287,9 @@ impl ClassifierPool {
 /// Find the Python interpreter that owns the classifier venv.
 ///
 /// `LUMA_PYTHON` wins so a developer can point at a system install or a conda
-/// env without touching the repo. Otherwise the convention from
-/// `scripts/setup-python.sh` applies.
+/// env without touching the repo. Otherwise the convention that
+/// `pnpm setup:python` writes applies — `bin/python` on Unix,
+/// `Scripts\python.exe` on Windows.
 pub fn resolve_python(repo_root: &Path, resource_dir: Option<&Path>) -> Option<PathBuf> {
     if let Ok(explicit) = std::env::var("LUMA_PYTHON") {
         let path = PathBuf::from(explicit);

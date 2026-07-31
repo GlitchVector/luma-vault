@@ -4,7 +4,7 @@ out/
 target/
 *.tsbuildinfo
 
-# Python classifier virtualenv — recreated by scripts/setup-python.sh
+# Python classifier virtualenv — recreated by `pnpm setup:python`
 venv-classifier/
 __pycache__/
 *.pyc
