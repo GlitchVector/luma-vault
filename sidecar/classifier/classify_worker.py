@@ -20,7 +20,8 @@ lines; every diagnostic goes to stderr.
 
 On startup, once the model is loaded, the worker emits exactly one line:
 
-    {"type": "ready", "pid": 4242, "labels": [...], "model": "320n.onnx"}
+    {"type": "ready", "pid": 4242, "labels": [...], "model": "320n.onnx",
+     "inferenceResolutions": [320, 640]}
 
 Requests:
 
@@ -52,6 +53,7 @@ at. The UI multiplies by whatever size it renders the tile at.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import sys
@@ -65,6 +67,31 @@ _PROTOCOL_OUT = sys.stdout
 sys.stdout = sys.stderr
 
 MODEL_NAME = "320n.onnx"
+
+# The detector is run once per resolution and the results merged.
+#
+# Neither pass dominates the other, which is the whole reason there are two.
+# Measured over 500 thumbnails from a real library, using the current rules:
+#
+#     flagged by 320 only    15
+#     flagged by 640 only    26
+#     flagged by both       108
+#     flagged by neither    351
+#
+# 640 finds more overall (134 vs 123), but 320 finds 15 files it misses
+# entirely — typically extreme close-ups where the subject fills the frame and
+# the downscale is what makes the shape legible. One reported file detected
+# `BUTTOCKS_COVERED` at 0.26 under 320 and *nothing at all* under 640.
+#
+# The union flags 149 of 500 against 134 for the best single pass: ~11% better
+# recall for ~1.25x the compute, because a 320 pass costs a quarter of a 640
+# one. Adding a third scale was not worth measuring against that curve.
+INFERENCE_RESOLUTIONS = (320, 640)
+
+# Boxes of the same label overlapping by more than this are the same finding
+# seen twice, once per pass. Without merging, every object detected at both
+# scales would be drawn twice in the lightbox and counted twice in a verdict.
+MERGE_IOU = 0.5
 
 # Kept in lockstep with packages/core/src/labels.ts. The worker does not rate
 # anything — it only reports raw detections — but it announces the label set on
@@ -95,10 +122,33 @@ def log(message: str) -> None:
     print(f"[luma-classifier] {message}", file=sys.stderr, flush=True)
 
 
+class ParentGone(Exception):
+    """
+    The host closed our pipe.
+
+    Not a failure — it is what every normal shutdown looks like from in here,
+    and the only correct response is to stop quietly.
+    """
+
+
 def emit(payload: dict) -> None:
     """Write one protocol line. The flush is mandatory — the reader blocks."""
-    _PROTOCOL_OUT.write(json.dumps(payload, separators=(",", ":")) + "\n")
-    _PROTOCOL_OUT.flush()
+    try:
+        _PROTOCOL_OUT.write(json.dumps(payload, separators=(",", ":")) + "\n")
+        _PROTOCOL_OUT.flush()
+    except ValueError as exc:
+        # The stream was closed underneath us mid-write.
+        raise ParentGone from exc
+    except OSError as exc:
+        # BrokenPipeError is a subclass of OSError and covers POSIX. Windows
+        # does not raise it: a pipe whose read end has closed surfaces as
+        # EINVAL, so a handler written only for BrokenPipeError never fires
+        # there. Without this the pool leaves a double traceback on stderr
+        # every time the app exits — one from the write, one from `main`
+        # trying to report the write.
+        if isinstance(exc, BrokenPipeError) or exc.errno in (errno.EPIPE, errno.EINVAL):
+            raise ParentGone from exc
+        raise
 
 
 def load_image(path: str):
@@ -125,6 +175,44 @@ def load_image(path: str):
         pil.seek(0)  # animated formats: classify the first frame
         rgb = pil.convert("RGB")
         return cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2BGR)
+
+
+def _iou(a, b) -> float:
+    """Intersection over union of two `[x, y, w, h]` pixel boxes."""
+    ax2, ay2 = a[0] + a[2], a[1] + a[3]
+    bx2, by2 = b[0] + b[2], b[1] + b[3]
+    ix = max(0.0, min(ax2, bx2) - max(a[0], b[0]))
+    iy = max(0.0, min(ay2, by2) - max(a[1], b[1]))
+    overlap = ix * iy
+    union = a[2] * a[3] + b[2] * b[3] - overlap
+    return overlap / union if union > 0 else 0.0
+
+
+def merge_passes(runs: list) -> list:
+    """
+    Fold several resolutions' detections into one set.
+
+    Greedy, highest score first: a detection is kept unless something already
+    kept has the same label and overlaps it. That keeps the more confident of
+    the two views of one object rather than averaging them into a box that
+    matches neither.
+    """
+    everything = [d for run in runs for d in run]
+    everything.sort(key=lambda d: -float(d.get("score", 0.0)))
+
+    kept: list = []
+    for candidate in everything:
+        label = candidate.get("class") or candidate.get("label")
+        box = candidate.get("box") or [0, 0, 0, 0]
+        duplicate = False
+        for existing in kept:
+            same_label = (existing.get("class") or existing.get("label")) == label
+            if same_label and _iou(box, existing.get("box") or [0, 0, 0, 0]) >= MERGE_IOU:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(candidate)
+    return kept
 
 
 def normalise(detections, width: int, height: int) -> list[dict]:
@@ -174,8 +262,9 @@ def check_environment() -> int:
         report["libraries"]["onnxruntime"] = onnxruntime.__version__
         from nudenet import NudeDetector
 
-        detector = NudeDetector()
+        detector = NudeDetector(inference_resolution=INFERENCE_RESOLUTIONS[-1])
         report["libraries"]["nudenet"] = True
+        report["inferenceResolutions"] = list(INFERENCE_RESOLUTIONS)
         report["providers"] = list(getattr(detector, "onnx_session", None).get_providers()) if getattr(
             detector, "onnx_session", None
         ) else []
@@ -196,12 +285,20 @@ def serve() -> int:
         return 1
 
     try:
-        detector = NudeDetector()
+        # One session per resolution. They share the same 12MB model file, so
+        # the second costs an ONNX session and little else.
+        detectors = [NudeDetector(inference_resolution=r) for r in INFERENCE_RESOLUTIONS]
     except Exception as exc:  # noqa: BLE001
         emit({"type": "fatal", "error": f"cannot load model: {exc}"})
         return 1
 
-    emit({"type": "ready", "pid": os.getpid(), "labels": LABELS, "model": MODEL_NAME})
+    emit({
+        "type": "ready",
+        "pid": os.getpid(),
+        "labels": LABELS,
+        "model": MODEL_NAME,
+        "inferenceResolutions": list(INFERENCE_RESOLUTIONS),
+    })
     log(f"ready (pid {os.getpid()})")
 
     for line in sys.stdin:
@@ -239,7 +336,7 @@ def serve() -> int:
                     results.append({"ok": False, "error": "cannot decode image"})
                     continue
                 height, width = img.shape[:2]
-                detections = detector.detect(img)
+                detections = merge_passes([d.detect(img) for d in detectors])
                 results.append({"ok": True, "detections": normalise(detections, width, height)})
             except Exception as exc:  # noqa: BLE001 — one bad file never kills the worker
                 log(f"failed on {path}: {type(exc).__name__}: {exc}")
@@ -256,11 +353,21 @@ def main() -> int:
         return check_environment()
     try:
         return serve()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ParentGone):
+        # The host went away. Exiting 0 keeps a normal shutdown out of the
+        # log; the pool is already tearing us down and has nobody left to
+        # tell.
+        log("host closed the pipe, exiting")
         return 0
     except Exception:  # noqa: BLE001
         traceback.print_exc(file=sys.stderr)
-        emit({"type": "fatal", "error": "unhandled worker exception"})
+        try:
+            emit({"type": "fatal", "error": "unhandled worker exception"})
+        except ParentGone:
+            # Reporting the failure failed because the pipe is gone too. The
+            # traceback above already went to stderr, which is where anyone
+            # would look; raising again here would only bury it.
+            pass
         return 1
 
 
