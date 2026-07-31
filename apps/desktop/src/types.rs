@@ -148,6 +148,13 @@ pub struct MediaFrame {
 pub enum JobPhase {
     Idle,
     Globbing,
+    /// Recording each file's dimensions, before any thumbnail exists.
+    ///
+    /// Its own phase because it is what makes the grid stable: a tile sized
+    /// from the index never moves, and until a row has dimensions it has no
+    /// size to be laid out with. Header-only reads, so it finishes in a
+    /// fraction of the time thumbnailing takes.
+    Measuring,
     Thumbnailing,
     Classifying,
     Done,

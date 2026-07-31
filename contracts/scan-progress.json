@@ -8,6 +8,14 @@
     "errors": []
   },
   {
+    "phase": "measuring",
+    "folderId": 1,
+    "done": 412,
+    "total": 670,
+    "current": "/Volumes/vault/Images/pics/superb/21006089.gif",
+    "errors": []
+  },
+  {
     "phase": "classifying",
     "folderId": 1,
     "done": 118,

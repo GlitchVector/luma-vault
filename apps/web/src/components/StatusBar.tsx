@@ -5,6 +5,7 @@ import type { Environment } from '#/lib/native.ts'
 const PHASE_LABELS: Record<ScanProgress['phase'], string> = {
   idle: 'Idle',
   globbing: 'Finding files',
+  measuring: 'Measuring images',
   thumbnailing: 'Building thumbnails',
   classifying: 'Classifying',
   done: 'Up to date',

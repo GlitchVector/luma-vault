@@ -126,6 +126,23 @@ impl Db {
             conn.execute_batch("ALTER TABLE media ADD COLUMN error TEXT")?;
         }
 
+        // Content key: what a derived file is addressed by. Nullable, and
+        // deliberately not backfilled — rows indexed before this existed keep
+        // the `thumb_path` they already recorded, so nothing regenerates. The
+        // measure phase fills the column in as it goes.
+        let has_content_key = conn
+            .prepare("PRAGMA table_info(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "content_key");
+        if !has_content_key {
+            conn.execute_batch("ALTER TABLE media ADD COLUMN content_key TEXT")?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_content_key ON media(content_key)
+             WHERE content_key IS NOT NULL",
+        )?;
+
         // Partial index over exactly the rows the thumbnail queue scans.
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS media_thumb_queue
@@ -279,7 +296,7 @@ impl Db {
         // and leaves the videos to grind afterwards. Same total work, but the
         // app becomes useful hours earlier.
         let mut stmt = conn.prepare(
-            "SELECT id, path, kind FROM media
+            "SELECT id, path, kind, content_key FROM media
              WHERE thumb_path IS NULL AND error IS NULL
              ORDER BY kind = 'video', modified_at DESC
              LIMIT ?1",
@@ -295,6 +312,7 @@ impl Db {
                     MediaKind::Image
                 },
                 thumb_path: None,
+                content_key: row.get(3)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -309,7 +327,7 @@ impl Db {
         let conn = self.conn.lock().expect("index mutex poisoned");
         // Images first here too: an image is one classifier call, a video is 25.
         let mut stmt = conn.prepare(
-            "SELECT id, path, kind, thumb_path FROM media
+            "SELECT id, path, kind, thumb_path, content_key FROM media
              WHERE classified_at IS NULL AND thumb_path IS NOT NULL AND error IS NULL
              ORDER BY kind = 'video', modified_at DESC
              LIMIT ?1",
@@ -325,9 +343,159 @@ impl Db {
                     MediaKind::Image
                 },
                 thumb_path: row.get(3)?,
+                content_key: row.get(4)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The rating rules this index's verdicts were produced by.
+    ///
+    /// Stored in SQLite's own `user_version` rather than a settings table: it
+    /// is one integer, it needs no schema, and it travels with the file.
+    pub fn rating_version(&self) -> Result<i64> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+    }
+
+    pub fn set_rating_version(&self, version: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        // PRAGMA will not take a bound parameter.
+        conn.execute_batch(&format!("PRAGMA user_version = {version}"))?;
+        Ok(())
+    }
+
+    /// Every classified row that still has the detections it was rated from.
+    ///
+    /// The queue for re-rating after a rule change. Rows with no frames cannot
+    /// be re-rated without running the model again, so they are left alone and
+    /// keep whatever verdict they have.
+    pub fn rows_with_frames(&self) -> Result<Vec<PendingFile>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT m.id, m.path, m.kind, m.thumb_path, m.content_key FROM media m
+             WHERE m.error IS NULL
+               AND EXISTS (SELECT 1 FROM media_frames f WHERE f.media_id = m.id)",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let kind: String = row.get(2)?;
+            Ok(PendingFile {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                kind: if kind == "video" {
+                    MediaKind::Video
+                } else {
+                    MediaKind::Image
+                },
+                thumb_path: row.get(3)?,
+                content_key: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// How many rows a phase has already finished, so progress can be reported
+    /// against the library rather than against one run of the app.
+    ///
+    /// Without this, `done` restarts at zero every launch while `total` shrinks
+    /// to whatever is still outstanding — so resuming a 90%-complete scan
+    /// renders as `0 / 6,000` and reads as though the work was thrown away. It
+    /// was not; the queues are `IS NULL` predicates and finished rows never
+    /// come back. This makes the display say what the index already knows.
+    pub fn completed_in_phase(&self, phase: PhaseQueue) -> Result<i64> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let sql = match phase {
+            PhaseQueue::Dimensions => {
+                "SELECT COUNT(*) FROM media WHERE width > 0 AND content_key IS NOT NULL"
+            }
+            PhaseQueue::Thumbnails => "SELECT COUNT(*) FROM media WHERE thumb_path IS NOT NULL",
+            PhaseQueue::Classification => {
+                "SELECT COUNT(*) FROM media WHERE classified_at IS NOT NULL"
+            }
+        };
+        Ok(conn.query_row(sql, [], |row| row.get(0))?)
+    }
+
+    /// Files whose shape is not known yet.
+    ///
+    /// This queue is what keeps the grid still. A tile is laid out from
+    /// `width`/`height`, so a row without them has no size — and every one that
+    /// gains a size later reflows the whole `flex-wrap` wall. Filling these
+    /// takes a header read per file rather than a decode, so the layout settles
+    /// long before the thumbnails do.
+    pub fn pending_dimensions(&self, limit: i64) -> Result<Vec<PendingFile>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        // Newest first, matching the grid's default sort: the tiles the user is
+        // actually looking at stop moving first.
+        let mut stmt = conn.prepare(
+            "SELECT id, path, kind FROM media
+             WHERE (width IS NULL OR width = 0 OR content_key IS NULL) AND error IS NULL
+             ORDER BY kind = 'video', modified_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            let kind: String = row.get(2)?;
+            Ok(PendingFile {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                kind: if kind == "video" {
+                    MediaKind::Video
+                } else {
+                    MediaKind::Image
+                },
+                thumb_path: None,
+                content_key: None,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Record a source's shape without touching anything else about the row.
+    ///
+    /// Deliberately not `mark_failed` on error: a file whose header will not
+    /// read may still thumbnail through the ffmpeg fallback, and failing it
+    /// here would deny it that chance.
+    pub fn update_dimensions(
+        &self,
+        id: i64,
+        width: i64,
+        height: i64,
+        duration_sec: Option<f64>,
+        content_key: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "UPDATE media SET width = ?2, height = ?3,
+                 duration_sec = COALESCE(?4, duration_sec),
+                 content_key = COALESCE(?5, content_key)
+             WHERE id = ?1",
+            params![id, width, height, duration_sec, content_key],
+        )?;
+        Ok(())
+    }
+
+    /// The content key recorded for a path, if the measure phase reached it.
+    pub fn content_key_for_path(&self, path: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare("SELECT content_key FROM media WHERE path = ?1")?;
+        let mut rows = stmt.query(params![path])?;
+        match rows.next()? {
+            Some(row) => Ok(row.get(0)?),
+            None => Ok(None),
+        }
+    }
+
+    /// How many rows still point at a content key.
+    ///
+    /// Content addressing means duplicates share one derived file, so this is
+    /// what makes deleting them safe: zero means the last referent is gone.
+    pub fn rows_with_content_key(&self, key: &str) -> Result<i64> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM media WHERE content_key = ?1",
+            params![key],
+            |row| row.get(0),
+        )?)
     }
 
     /// Swap a video's provisional poster for the frame the rollup chose.
@@ -678,6 +846,17 @@ pub struct PendingFile {
     /// Set only by `pending_classification` — the classifier reads the
     /// thumbnail, never the multi-megapixel original.
     pub thumb_path: Option<String>,
+    /// What derived files for this row are addressed by. `None` until the
+    /// measure phase reaches it, or when its two windows could not be read.
+    pub content_key: Option<String>,
+}
+
+/// Which phase's queue a count refers to. See [`Db::completed_in_phase`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhaseQueue {
+    Dimensions,
+    Thumbnails,
+    Classification,
 }
 
 /// Everything the thumbnail phase learns about a file in one pass.
@@ -991,6 +1170,171 @@ mod tests {
             last_image < first_video,
             "videos must queue behind every image: one video costs ~25 ffmpeg \
              seeks and would otherwise starve tens of thousands of images"
+        );
+    }
+
+    #[test]
+    fn a_rule_change_can_be_replayed_from_stored_detections() {
+        // What makes a threshold change cost seconds instead of an hour: the
+        // rows that kept their detections can be re-rated without the model.
+        use crate::types::{Detection, FrameVerdict};
+
+        let (db, _) = seeded();
+        assert_eq!(db.rating_version().unwrap(), 0, "a fresh index predates any rules");
+        assert!(db.rows_with_frames().unwrap().is_empty());
+
+        let target = db.query_media(&query()).unwrap().items[0].id;
+        db.replace_frames(
+            target,
+            &[NewFrame {
+                frame_index: 0,
+                timestamp_sec: 0.0,
+                path: "/thumbs/a.jpg".into(),
+                verdict_json: serde_json::to_string(&FrameVerdict {
+                    person: true,
+                    sexy: false,
+                    nude: false,
+                    rating: Rating::Sfw,
+                    top_label: None,
+                    top_label_title: None,
+                    top_score: 0.0,
+                    // The exact case from the reported file: a covered label
+                    // that the old 0.5 bar discarded by five thousandths.
+                    detections: vec![Detection {
+                        label: "FEMALE_GENITALIA_COVERED".into(),
+                        score: 0.495,
+                        box_: [0.3, 0.5, 0.1, 0.2],
+                    }],
+                })
+                .unwrap(),
+            }],
+        )
+        .unwrap();
+
+        let replayable = db.rows_with_frames().unwrap();
+        assert_eq!(replayable.len(), 1, "only rows that kept their detections");
+        assert_eq!(replayable[0].id, target);
+
+        // Replaying through the real rules, not a copy of them.
+        let frames = db.frames_for_media(target).unwrap();
+        let rated = crate::rating::rate_frame(
+            &frames[0].verdict.detections,
+            crate::rating::ClassifyOptions::default(),
+        );
+        assert_eq!(
+            rated.rating,
+            Rating::Suggestive,
+            "0.495 clears the 0.4 suggestive bar it used to miss"
+        );
+
+        db.set_rating_version(crate::rating::RATING_VERSION).unwrap();
+        assert_eq!(db.rating_version().unwrap(), crate::rating::RATING_VERSION);
+    }
+
+    #[test]
+    fn an_image_keeps_the_boxes_its_rollup_throws_away() {
+        // Why images get a frame row at all. The rolled-up `MediaVerdict` says
+        // *what* was found but not *where* — it has no `detections` field — so
+        // storing only the rollup left the lightbox with nothing to draw and
+        // "Show boxes" inert across every image in a library.
+        use crate::types::{Detection, FrameVerdict};
+
+        let (db, _) = seeded();
+        let target = db.query_media(&query()).unwrap().items[0].id;
+
+        let frame = FrameVerdict {
+            person: true,
+            sexy: true,
+            nude: false,
+            rating: Rating::Suggestive,
+            top_label: Some("FEMALE_BREAST_COVERED".into()),
+            top_label_title: Some("Covered chest".into()),
+            top_score: 0.87,
+            detections: vec![Detection {
+                label: "FEMALE_BREAST_COVERED".into(),
+                score: 0.87,
+                box_: [0.41, 0.08, 0.11, 0.14],
+            }],
+        };
+
+        db.replace_frames(
+            target,
+            &[NewFrame {
+                frame_index: 0,
+                timestamp_sec: 0.0,
+                path: "/thumbs/ab/cd/x.jpg".into(),
+                verdict_json: serde_json::to_string(&frame).unwrap(),
+            }],
+        )
+        .unwrap();
+
+        let frames = db.frames_for_media(target).unwrap();
+        assert_eq!(frames.len(), 1, "an image gets exactly one frame row");
+        let boxes = &frames[0].verdict.detections;
+        assert_eq!(boxes.len(), 1, "the detection must survive the round trip");
+        assert_eq!(boxes[0].box_, [0.41, 0.08, 0.11, 0.14]);
+        assert_eq!(boxes[0].label, "FEMALE_BREAST_COVERED");
+
+        // And the rollup still has no idea where anything is — which is the
+        // whole reason the frame row has to exist.
+        let rolled = crate::rating::from_single_frame(&frame);
+        let json = serde_json::to_value(&rolled).unwrap();
+        assert!(
+            json.get("detections").is_none(),
+            "a MediaVerdict carries no boxes; only the frame does"
+        );
+    }
+
+    #[test]
+    fn a_resumed_scan_counts_what_the_library_already_has() {
+        // The bug this pins: `done` restarted at zero every launch while
+        // `total` shrank to whatever was outstanding, so reopening a nearly
+        // finished library showed "0 / 2" and read as though every thumbnail
+        // had been thrown away. Nothing was lost — the display just refused to
+        // say so.
+        let (db, _) = seeded();
+        assert_eq!(db.completed_in_phase(PhaseQueue::Thumbnails).unwrap(), 0);
+
+        let target = db.query_media(&query()).unwrap().items[0].id;
+        db.update_thumbnail(
+            target,
+            &ThumbnailUpdate {
+                thumb_path: "/thumbs/a.jpg".into(),
+                thumb_width: 512,
+                thumb_height: 384,
+                width: 4000,
+                height: 3000,
+                duration_sec: None,
+            },
+        )
+        .unwrap();
+
+        let already = db.completed_in_phase(PhaseQueue::Thumbnails).unwrap();
+        let outstanding = db.pending_thumbnails(i64::MAX).unwrap().len() as i64;
+        assert_eq!(already, 1);
+        assert_eq!(
+            already + outstanding,
+            3,
+            "the denominator must stay the whole library, not the remainder"
+        );
+    }
+
+    #[test]
+    fn dimensions_are_queued_separately_and_cleared_without_a_thumbnail() {
+        // The measure phase exists so tiles have a size before they have a
+        // picture; a row it has filled must leave its queue while still
+        // awaiting a thumbnail.
+        let (db, _) = seeded();
+        assert_eq!(db.pending_dimensions(i64::MAX).unwrap().len(), 3);
+
+        let target = db.query_media(&query()).unwrap().items[0].id;
+        db.update_dimensions(target, 4000, 3000, None, Some("deadbeef")).unwrap();
+
+        assert_eq!(db.pending_dimensions(i64::MAX).unwrap().len(), 2);
+        assert_eq!(
+            db.pending_thumbnails(i64::MAX).unwrap().len(),
+            3,
+            "measuring a row must not remove it from the thumbnail queue"
         );
     }
 

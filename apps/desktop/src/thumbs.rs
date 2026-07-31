@@ -41,14 +41,74 @@ pub struct Thumbnail {
     pub source_height: u32,
 }
 
-/// Content-addressed destination for a derived file.
+/// Bytes read from each end of a file to identify it. See [`content_key`].
+const HASH_WINDOW: u64 = 64 * 1024;
+
+/// Identify a file by what it *is*, not by where it happens to live.
 ///
-/// Keyed on the absolute source path, sharded two levels deep so no directory
-/// holds more than a few hundred entries — a flat directory with 50,000 files
-/// makes every `readdir` on it slow, including the ones Finder does behind your
-/// back.
-pub fn derived_path(root: &Path, source: &str, suffix: &str) -> PathBuf {
-    let digest = Sha256::digest(source.as_bytes());
+/// Keying the cache on the absolute path means renaming a folder throws away
+/// every thumbnail under it. Keying on content survives moves, renames and
+/// copies — and makes duplicates share one thumbnail for free.
+///
+/// The identity is `size + first 64KB + last 64KB`, not the whole file and not
+/// the decoded pixels. That choice is the whole point:
+///
+/// - **Hashing every byte** would work, but the cache could only be consulted
+///   *after* reading the file — and on the library this was built for that is a
+///   6.5 MB average across a network share. The lookup would cost what the hit
+///   was meant to save.
+/// - **Hashing decoded pixels** would additionally survive re-encoding, but
+///   requires the full read *and* the decode: the entire job, paid before you
+///   may discover you did not need to do it.
+///
+/// Two reads of 64KB answer the question before either cost is incurred. The
+/// trade is that a re-encode or a metadata edit reads as a new file, which
+/// costs one regeneration — the right way round.
+pub fn content_key(path: &str) -> Result<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = std::fs::File::open(path).with_context(|| format!("cannot open {path}"))?;
+    let len = file
+        .metadata()
+        .with_context(|| format!("cannot stat {path}"))?
+        .len();
+
+    let mut hasher = Sha256::new();
+    // Length first: two files sharing both windows but differing in the middle
+    // are still distinguished whenever their sizes differ, which for truncated
+    // or padded files is the common case.
+    hasher.update(len.to_le_bytes());
+
+    let window = HASH_WINDOW.min(len) as usize;
+    let mut buffer = vec![0_u8; window];
+    file.read_exact(&mut buffer)
+        .with_context(|| format!("cannot read {path}"))?;
+    hasher.update(&buffer);
+
+    // Only worth a second read when the windows would not overlap; below that
+    // the head already covers the whole file.
+    if len > HASH_WINDOW * 2 {
+        file.seek(SeekFrom::End(-(HASH_WINDOW as i64)))
+            .with_context(|| format!("cannot seek {path}"))?;
+        file.read_exact(&mut buffer)
+            .with_context(|| format!("cannot read the tail of {path}"))?;
+        hasher.update(&buffer);
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Destination for a derived file, addressed by its source's [`content_key`].
+///
+/// Sharded two levels deep so no directory holds more than a few hundred
+/// entries — a flat directory with 50,000 files makes every `readdir` on it
+/// slow, including the ones Explorer does behind your back.
+///
+/// Hashes the key rather than slicing it, so any string is a valid argument.
+/// The cost is negligible next to what it guards: a key shorter than 24 characters
+/// would otherwise panic here, in a background thread, mid-scan.
+pub fn derived_path(root: &Path, key: &str, suffix: &str) -> PathBuf {
+    let digest = Sha256::digest(key.as_bytes());
     let hex = format!("{digest:x}");
     root.join(&hex[0..2])
         .join(&hex[2..4])
@@ -57,12 +117,36 @@ pub fn derived_path(root: &Path, source: &str, suffix: &str) -> PathBuf {
 
 /// Generate a thumbnail for an image, or return the existing one.
 ///
-/// Reuse is keyed on the path only, not on mtime: the watcher deletes the
-/// derived files when a source changes, so a surviving thumbnail is by
-/// definition still valid. That keeps the hot path a single `is_file` check
-/// instead of a `stat` plus a comparison.
-pub fn thumbnail_image(source: &str, thumb_root: &Path) -> Result<Thumbnail> {
-    let destination = derived_path(thumb_root, source, ".jpg");
+/// Reuse is keyed on the source's content, not its path or its mtime: the
+/// watcher deletes the derived files when a source changes, so a surviving
+/// thumbnail is by definition still valid. Because the key is content, a file
+/// that was merely moved, renamed, or copied lands on the thumbnail it already
+/// had, and the hot path stays a single `is_file` check.
+pub fn thumbnail_image(source: &str, key: &str, thumb_root: &Path) -> Result<Thumbnail> {
+    let destination = derived_path(thumb_root, key, ".jpg");
+
+    // Reuse is checked BEFORE the source is opened, which is the whole point of
+    // having a cache. Decoding first and checking after — which is what this did
+    // — pulls the entire original across the network to answer a question the
+    // filesystem already knew: on the library this was built for, a 6.5 MB
+    // average and a 337 MB worst case, every time a row is retried or re-queued.
+    //
+    // `image_dimensions` reads headers, not pixels, so both calls stay cheap.
+    if destination.is_file() {
+        if let (Ok((source_width, source_height)), Ok((thumb_width, thumb_height))) =
+            (image::image_dimensions(source), image::image_dimensions(&destination))
+        {
+            return Ok(Thumbnail {
+                path: destination,
+                thumb_width,
+                thumb_height,
+                source_width,
+                source_height,
+            });
+        }
+        // A truncated thumbnail from a crashed run, or a source whose header no
+        // longer reads — fall through and rebuild it the expensive way.
+    }
 
     let decoded = match image::open(source) {
         Ok(decoded) => decoded,
@@ -79,19 +163,6 @@ pub fn thumbnail_image(source: &str, thumb_root: &Path) -> Result<Thumbnail> {
 
     let source_width = decoded.width();
     let source_height = decoded.height();
-
-    if destination.is_file() {
-        if let Ok((thumb_width, thumb_height)) = image::image_dimensions(&destination) {
-            return Ok(Thumbnail {
-                path: destination,
-                thumb_width,
-                thumb_height,
-                source_width,
-                source_height,
-            });
-        }
-        // A truncated thumbnail from a crashed run — fall through and rewrite.
-    }
 
     let (thumb_width, thumb_height) = fit_within(source_width, source_height, THUMB_MAX);
     // `thumbnail` rather than `resize`: it reduces in two stages, taking a
@@ -154,15 +225,19 @@ pub fn fit_within(width: u32, height: u32, bound: u32) -> (u32, u32) {
     )
 }
 
-/// Remove the derived files for a source path, so the next pass regenerates them.
-pub fn forget_derived(thumb_root: &Path, frame_root: &Path, source: &str) {
-    let _ = std::fs::remove_file(derived_path(thumb_root, source, ".jpg"));
-    let _ = std::fs::remove_dir_all(frame_dir(frame_root, source));
+/// Remove the derived files for a content key, so the next pass regenerates them.
+///
+/// The caller must have established that no row still references the key.
+/// Content addressing means duplicates share one thumbnail, so deleting on
+/// behalf of one row would otherwise blank the tiles of its copies.
+pub fn forget_derived(thumb_root: &Path, frame_root: &Path, key: &str) {
+    let _ = std::fs::remove_file(derived_path(thumb_root, key, ".jpg"));
+    let _ = std::fs::remove_dir_all(frame_dir(frame_root, key));
 }
 
-/// Directory holding one video's extracted frames.
-pub fn frame_dir(frame_root: &Path, source: &str) -> PathBuf {
-    let digest = Sha256::digest(source.as_bytes());
+/// Directory holding one video's extracted frames, addressed by content key.
+pub fn frame_dir(frame_root: &Path, key: &str) -> PathBuf {
+    let digest = Sha256::digest(key.as_bytes());
     let hex = format!("{digest:x}");
     frame_root.join(&hex[0..2]).join(&hex[2..24])
 }
@@ -205,7 +280,8 @@ mod tests {
         let thumb_root = dir.path().join("thumbs");
         let source_str = source.to_string_lossy().to_string();
 
-        let first = thumbnail_image(&source_str, &thumb_root).expect("thumbnail");
+        let key = content_key(&source_str).expect("content key");
+        let first = thumbnail_image(&source_str, &key, &thumb_root).expect("thumbnail");
         assert_eq!((first.source_width, first.source_height), (1600, 900));
         assert_eq!((first.thumb_width, first.thumb_height), (512, 288));
         assert!(first.path.is_file(), "the thumbnail must actually be written");
@@ -227,12 +303,91 @@ mod tests {
 
         // A second call reuses the existing file rather than re-encoding.
         let before = std::fs::metadata(&first.path).unwrap().modified().unwrap();
-        let second = thumbnail_image(&source_str, &thumb_root).expect("second thumbnail");
+        let second = thumbnail_image(&source_str, &key, &thumb_root).expect("second thumbnail");
         assert_eq!(second.path, first.path);
         assert_eq!(
             std::fs::metadata(&second.path).unwrap().modified().unwrap(),
             before,
             "an existing thumbnail must not be rewritten"
+        );
+    }
+
+    #[test]
+    fn a_renamed_file_lands_on_the_thumbnail_it_already_had() {
+        // The point of content addressing: reorganising a library must not
+        // throw away the work of thumbnailing it.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let before = dir.path().join("holiday.jpg");
+        image::RgbImage::from_fn(1600, 900, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 90])
+        })
+        .save(&before)
+        .expect("write the source");
+
+        let thumb_root = dir.path().join("thumbs");
+        let before_str = before.to_string_lossy().to_string();
+        let first = thumbnail_image(&before_str, &content_key(&before_str).unwrap(), &thumb_root)
+            .expect("thumbnail");
+        let written_at = std::fs::metadata(&first.path).unwrap().modified().unwrap();
+
+        // Same bytes, different path — a move, or a rename, or a copy.
+        let after = dir.path().join("archive").join("2019-holiday.jpg");
+        std::fs::create_dir_all(after.parent().unwrap()).unwrap();
+        std::fs::rename(&before, &after).unwrap();
+        let after_str = after.to_string_lossy().to_string();
+
+        let second = thumbnail_image(&after_str, &content_key(&after_str).unwrap(), &thumb_root)
+            .expect("thumbnail after the rename");
+
+        assert_eq!(
+            second.path, first.path,
+            "a renamed file must address the thumbnail it already has"
+        );
+        assert_eq!(
+            std::fs::metadata(&second.path).unwrap().modified().unwrap(),
+            written_at,
+            "and must reuse it rather than re-encode it"
+        );
+    }
+
+    #[test]
+    fn content_keys_track_contents_rather_than_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let a = dir.path().join("a.bin");
+        let b = dir.path().join("b.bin");
+        let c = dir.path().join("c.bin");
+        // Larger than two windows, so the tail read is exercised too.
+        let body = vec![7_u8; (HASH_WINDOW * 2 + 4096) as usize];
+        std::fs::write(&a, &body).unwrap();
+        std::fs::write(&b, &body).unwrap();
+        let mut different = body.clone();
+        *different.last_mut().unwrap() = 9;
+        std::fs::write(&c, &different).unwrap();
+
+        let key_a = content_key(&a.to_string_lossy()).unwrap();
+        let key_b = content_key(&b.to_string_lossy()).unwrap();
+        let key_c = content_key(&c.to_string_lossy()).unwrap();
+
+        assert_eq!(key_a, key_b, "identical bytes under different names are one file");
+        assert_ne!(key_a, key_c, "a changed tail byte must change the key");
+    }
+
+    #[test]
+    fn a_file_shorter_than_one_window_still_keys() {
+        // The head read is `min(window, len)`, and the tail is skipped entirely
+        // below two windows — a 12-byte file must not trip either.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let tiny = dir.path().join("tiny.bin");
+        std::fs::write(&tiny, b"12 bytes ok!").unwrap();
+
+        let key = content_key(&tiny.to_string_lossy()).expect("a short file must still key");
+        assert_eq!(key.len(), 64, "a sha256 hex digest");
+
+        let empty = dir.path().join("empty.bin");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(
+            content_key(&empty.to_string_lossy()).is_ok(),
+            "an empty file must key rather than panic on a zero-length read"
         );
     }
 
@@ -248,8 +403,13 @@ mod tests {
         .save(&source)
         .expect("write the source image");
 
-        let thumb = thumbnail_image(&source.to_string_lossy(), &dir.path().join("thumbs"))
-            .expect("an RGBA source must still thumbnail");
+        let source_str = source.to_string_lossy().to_string();
+        let thumb = thumbnail_image(
+            &source_str,
+            &content_key(&source_str).expect("content key"),
+            &dir.path().join("thumbs"),
+        )
+        .expect("an RGBA source must still thumbnail");
         assert_eq!((thumb.thumb_width, thumb.thumb_height), (512, 384));
     }
 
@@ -259,8 +419,13 @@ mod tests {
         let source = dir.path().join("not-an-image.jpg");
         std::fs::write(&source, b"this is not a JPEG").unwrap();
 
-        let error = thumbnail_image(&source.to_string_lossy(), &dir.path().join("thumbs"))
-            .expect_err("a garbage file must fail rather than produce a blank thumbnail");
+        let source_str = source.to_string_lossy().to_string();
+        let error = thumbnail_image(
+            &source_str,
+            &content_key(&source_str).expect("content key"),
+            &dir.path().join("thumbs"),
+        )
+        .expect_err("a garbage file must fail rather than produce a blank thumbnail");
         assert!(
             format!("{error:#}").contains("cannot decode image"),
             "the error should name the file: {error:#}"

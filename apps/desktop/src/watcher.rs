@@ -145,9 +145,12 @@ fn handle_changes(
             };
 
             // A changed file must lose its derived data, or the grid keeps
-            // showing the old thumbnail and the old verdict forever.
+            // showing the old thumbnail and the old verdict forever. Its key
+            // has to be read before the row goes, since the key is what the
+            // derived files are addressed by.
+            let key = db.content_key_for_path(path_str).ok().flatten();
             db.delete_media_by_path(path_str).ok();
-            thumbs::forget_derived(&thumb_root, &frame_root, path_str);
+            forget_if_unreferenced(db, &thumb_root, &frame_root, key.as_deref());
 
             let entry = ScannedFile {
                 path: path_str.to_string(),
@@ -169,9 +172,12 @@ fn handle_changes(
                 touched = true;
             }
         } else if !path.exists() {
-            // Deleted, or renamed away. Either way the row is stale.
+            // Deleted, or renamed away. Either way the row is stale — but a
+            // rename is exactly the case content addressing is for, so the
+            // derived files survive if the new path already claims the key.
+            let key = db.content_key_for_path(path_str).ok().flatten();
             db.delete_media_by_path(path_str).ok();
-            thumbs::forget_derived(&thumb_root, &frame_root, path_str);
+            forget_if_unreferenced(db, &thumb_root, &frame_root, key.as_deref());
             touched = true;
         }
     }
@@ -190,4 +196,20 @@ fn owning_folder(db: &Arc<Db>, folders: &[PathBuf], path: &Path) -> Option<i64> 
         .into_iter()
         .find(|candidate| Path::new(&candidate.path) == folder.as_path())
         .map(|candidate| candidate.id)
+}
+
+/// Drop a key's derived files only once no row points at it.
+///
+/// Duplicates and renames both share a key, so an unconditional delete would
+/// blank a tile that another row is still relying on.
+fn forget_if_unreferenced(
+    db: &Db,
+    thumb_root: &Path,
+    frame_root: &Path,
+    key: Option<&str>,
+) {
+    let Some(key) = key else { return };
+    if db.rows_with_content_key(key).unwrap_or(1) == 0 {
+        thumbs::forget_derived(thumb_root, frame_root, key);
+    }
 }

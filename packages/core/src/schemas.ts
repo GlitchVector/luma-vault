@@ -130,7 +130,15 @@ export type MediaFrame = z.infer<typeof mediaFrameSchema>
 // Jobs
 // ---------------------------------------------------------------------------
 
-export const jobPhaseSchema = z.enum(['idle', 'globbing', 'thumbnailing', 'classifying', 'done'])
+export const jobPhaseSchema = z.enum([
+  'idle',
+  'globbing',
+  /** Reading each file's dimensions so the grid can size tiles before it can paint them. */
+  'measuring',
+  'thumbnailing',
+  'classifying',
+  'done',
+])
 export type JobPhase = z.infer<typeof jobPhaseSchema>
 
 /**

@@ -32,8 +32,8 @@ use rayon::prelude::*;
 use tauri::{AppHandle, Emitter};
 
 use crate::classifier::{ClassifierPool, BATCH_SIZE};
-use crate::db::{Db, NewFrame, PendingFile, ThumbnailUpdate};
-use crate::rating::{from_single_frame, rate_frame, roll_up_video, ClassifyOptions};
+use crate::db::{Db, NewFrame, PendingFile, PhaseQueue, ThumbnailUpdate};
+use crate::rating::{self, from_single_frame, rate_frame, roll_up_video, ClassifyOptions};
 use crate::sampling::{plan_frame_timestamps, SamplingOptions};
 use crate::thumbs::{self, THUMB_MAX};
 use crate::types::{JobPhase, MediaKind, ScanProgress};
@@ -53,20 +53,29 @@ const MAX_REPORTED_ERRORS: usize = 50;
 
 /// Threads for the thumbnail phase.
 ///
-/// One per core, which is rayon's own default — and it is the default *because
-/// it is right here*, which was worth measuring rather than assuming.
+/// One per core, because this phase is **CPU-bound, not latency-bound**. That
+/// is the opposite of how it looks, and the earlier reading of it was wrong in
+/// a way worth recording.
 ///
-/// The obvious reasoning says otherwise: thumbnailing a network library looks
-/// latency-bound, the process sits well below full CPU, and a thread blocked on
-/// a round trip costs nothing — so more threads should mean more requests in
-/// flight. Measured against a real SMB share, raising this to `cores * 4` (40
-/// threads) took throughput from **1.20 files/second to 0.10**, turning a
-/// 15-hour job into a 183-hour one, with CPU *dropping* from 253% to 102%.
+/// Timed per file against the real SMB library, separating the two costs:
 ///
-/// SMB degrades sharply past a modest number of concurrent operations; the
-/// extra threads do not hide latency, they manufacture it. Do not raise this
-/// without measuring on the target share, and do not trust the intuition —
-/// it points the wrong way.
+/// ```text
+/// read a 0.6 MB JPEG off the share    0.012s   (~46 MB/s)
+/// decode it                           0.400s
+/// ```
+///
+/// Reading is **3%** of the work. The share is not the bottleneck and never
+/// was; more threads cannot hide a latency that is not there. The earlier
+/// experiment here — `cores * 4` collapsing throughput from 1.20 files/second
+/// to 0.10 — was read as SMB degrading under concurrency, but 40 threads each
+/// wanting a full core on a 10-core machine is plain CPU oversubscription, and
+/// the measured CPU *drop* from 253% to 102% is what thrashing looks like.
+///
+/// The 0.400s decode above is itself a dev-build number; see the
+/// `profile.dev.package` note in `Cargo.toml`, which brings it to 0.007s. Once
+/// decoding is that cheap the balance may genuinely shift toward I/O — so if
+/// this is ever raised, measure the two costs again first rather than
+/// re-deriving from either intuition.
 fn thumbnail_threads() -> usize {
     num_cpus::get()
 }
@@ -175,6 +184,9 @@ pub fn run_scan(pipeline: Arc<Pipeline>, app: AppHandle, folder_id: i64, root: P
 
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         glob_phase(&pipeline, &app, folder_id, &root);
+        // Before thumbnails: a sized tile that never moves is worth more than a
+        // painted one that shoves the rest of the wall around when it arrives.
+        measure_phase(&pipeline, &app);
         thumbnail_phase(&pipeline, &app);
         classify_phase(&pipeline, &app);
     }));
@@ -224,13 +236,18 @@ pub fn run_startup(pipeline: Arc<Pipeline>, app: AppHandle) {
             glob_phase(&pipeline, &app, folder.id, Path::new(&folder.path));
         }
 
-        // 2. Resume outstanding work BEFORE re-walking known folders.
+        // 2. Bring existing verdicts up to the current rules first. Cheap, and
+        //    it means the grid is self-consistent before new work lands in it.
+        rerate_phase(&pipeline, &app);
+
+        // 3. Resume outstanding work BEFORE re-walking known folders.
         //
         //    Walking a large NAS share takes many minutes, and putting it first
         //    means every restart sits idle for that long before producing a
         //    single thumbnail — painful during development, and baffling to a
         //    user who just reopened the app. Draining first means a restart
         //    picks up exactly where it left off, immediately.
+        measure_phase(&pipeline, &app);
         thumbnail_phase(&pipeline, &app);
         classify_phase(&pipeline, &app);
 
@@ -369,8 +386,20 @@ fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &
         } else {
             for path in indexed {
                 if !known.contains(path.as_str()) {
+                    // Read the key before the row goes, then only drop the
+                    // derived files once nothing else points at them — under
+                    // content addressing a duplicate elsewhere shares them.
+                    let key = pipeline.db.content_key_for_path(&path).ok().flatten();
                     let _ = pipeline.db.delete_media_by_path(&path);
-                    thumbs::forget_derived(&pipeline.thumb_root, &pipeline.frame_root, &path);
+                    if let Some(key) = key {
+                        if pipeline.db.rows_with_content_key(&key).unwrap_or(1) == 0 {
+                            thumbs::forget_derived(
+                                &pipeline.thumb_root,
+                                &pipeline.frame_root,
+                                &key,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -396,15 +425,230 @@ fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &
 // Phase 2 — thumbnails (and, for videos, frame extraction)
 // ---------------------------------------------------------------------------
 
+/// Re-apply the rating rules to verdicts that predate them.
+///
+/// Runs only when `RATING_VERSION` has moved past what the index recorded, and
+/// costs no inference at all: the detections are already stored per frame, so a
+/// threshold change is arithmetic over data we have. On a 66,000-file library
+/// that is the difference between seconds and an hour of model time.
+///
+/// Rows without frames are skipped rather than guessed at — there is nothing to
+/// recompute from, and inventing a verdict would be worse than keeping a stale
+/// one that at least came from a real detection.
+fn rerate_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
+    let recorded = pipeline.db.rating_version().unwrap_or(0);
+    if recorded == rating::RATING_VERSION {
+        return;
+    }
+
+    let Ok(rows) = pipeline.db.rows_with_frames() else {
+        return;
+    };
+    if rows.is_empty() {
+        let _ = pipeline.db.set_rating_version(rating::RATING_VERSION);
+        return;
+    }
+
+    let total = rows.len() as i64;
+    eprintln!(
+        "[luma] rating rules moved {recorded} -> {}; re-rating {total} rows from stored detections",
+        rating::RATING_VERSION
+    );
+
+    let options = ClassifyOptions::default();
+    let done = Arc::new(std::sync::atomic::AtomicI64::new(0));
+
+    for row in &rows {
+        let Ok(frames) = pipeline.db.frames_for_media(row.id) else {
+            continue;
+        };
+        if frames.is_empty() {
+            continue;
+        }
+
+        // Re-rate each frame from its detections, then roll up exactly as the
+        // classify phase would. Same functions, so the two cannot drift.
+        let rated: Vec<_> = frames
+            .iter()
+            .map(|frame| rate_frame(&frame.verdict.detections, options))
+            .collect();
+
+        let verdict = match row.kind {
+            MediaKind::Image => from_single_frame(&rated[0]),
+            MediaKind::Video => roll_up_video(&rated),
+        };
+
+        let stored: Vec<NewFrame> = frames
+            .iter()
+            .zip(&rated)
+            .map(|(frame, verdict)| NewFrame {
+                frame_index: frame.frame_index,
+                timestamp_sec: frame.timestamp_sec,
+                path: frame.path.clone(),
+                verdict_json: serde_json::to_string(verdict).unwrap_or_else(|_| "{}".to_string()),
+            })
+            .collect();
+        let _ = pipeline.db.replace_frames(row.id, &stored);
+
+        // The poster follows the same rule as the rating, so a threshold change
+        // can move it — the first sexy frame may now be an earlier one.
+        if row.kind == MediaKind::Video {
+            if let Some(index) = verdict.poster_frame_index {
+                if let Some(frame) = frames.get(index as usize) {
+                    let _ = pipeline.db.update_poster(row.id, &frame.path);
+                }
+            }
+        }
+
+        let _ = pipeline.db.update_verdict(row.id, &verdict, now_ms());
+
+        let finished = done.fetch_add(1, Ordering::SeqCst) + 1;
+        if finished % 500 == 0 {
+            pipeline.publish(
+                app,
+                ScanProgress {
+                    phase: JobPhase::Classifying,
+                    folder_id: None,
+                    done: finished,
+                    total,
+                    current: Some(row.path.clone()),
+                    errors: Vec::new(),
+                },
+            );
+        }
+    }
+
+    // Only after the sweep completes: a version bump on a partial pass would
+    // strand the remainder on the old rules forever.
+    let _ = pipeline.db.set_rating_version(rating::RATING_VERSION);
+    eprintln!("[luma] re-rating complete");
+}
+
+/// Record every file's dimensions, so the grid can lay out before it can paint.
+///
+/// Runs before thumbnailing and finishes far sooner: `image_dimensions` reads a
+/// header, not pixels. Measured on the SMB library this was built against, a
+/// full read is 12ms against a 400ms decode — and the header is a fraction of
+/// the read. The whole library therefore stops moving within a minute, instead
+/// of shifting for as long as thumbnailing runs.
+///
+/// A failure here is deliberately *not* recorded as a row failure: a header the
+/// `image` crate cannot parse may still decode through the ffmpeg fallback
+/// later, and marking it failed now would deny it that chance. The row simply
+/// keeps its unknown size and the thumbnail phase fills it in.
+fn measure_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
+    let outstanding = pipeline
+        .db
+        .pending_dimensions(i64::MAX)
+        .map(|rows| rows.len() as i64)
+        .unwrap_or(0);
+    if outstanding == 0 {
+        return;
+    }
+    // Report against the library, not this run — see `completed_in_phase`.
+    let already = pipeline.db.completed_in_phase(PhaseQueue::Dimensions).unwrap_or(0);
+    let total = already + outstanding;
+
+    let done = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(thumbnail_threads())
+        .thread_name(|i| format!("luma-measure-{i}"))
+        .build()
+        .ok();
+
+    // Tracks rows this phase could not measure. Without it the queue — which is
+    // "width IS NULL", and which this phase deliberately does not fail rows out
+    // of — would hand back the same unreadable files forever.
+    let mut stuck = std::collections::HashSet::new();
+
+    loop {
+        let batch = match pipeline.db.pending_dimensions(PAGE) {
+            Ok(batch) if !batch.is_empty() => batch,
+            _ => break,
+        };
+        let batch: Vec<_> = batch.into_iter().filter(|f| !stuck.contains(&f.id)).collect();
+        if batch.is_empty() {
+            break;
+        }
+
+        let failed = Mutex::new(Vec::new());
+        let work = || {
+            batch.par_iter().for_each(|file| {
+                let measured = match file.kind {
+                    MediaKind::Image => image::image_dimensions(&file.path)
+                        .ok()
+                        .map(|(w, h)| (i64::from(w), i64::from(h), None)),
+                    MediaKind::Video => video::probe(&file.path)
+                        .ok()
+                        .map(|i| (i64::from(i.width), i64::from(i.height), Some(i.duration_sec))),
+                };
+
+                // Two 64KB reads, taken here because this phase already has the
+                // file open-ish and every later phase wants the key.
+                let key = thumbs::content_key(&file.path).ok();
+
+                match measured {
+                    Some((width, height, duration)) if width > 0 && height > 0 => {
+                        let _ = pipeline.db.update_dimensions(
+                            file.id,
+                            width,
+                            height,
+                            duration,
+                            key.as_deref(),
+                        );
+                    }
+                    _ => failed.lock().expect("failed mutex").push(file.id),
+                }
+
+                let finished = done.fetch_add(1, Ordering::SeqCst) + 1;
+                if finished % 100 == 0 {
+                    pipeline.publish(
+                        app,
+                        ScanProgress {
+                            phase: JobPhase::Measuring,
+                            folder_id: None,
+                            done: already + finished,
+                            total,
+                            current: Some(file.path.clone()),
+                            errors: Vec::new(),
+                        },
+                    );
+                }
+            });
+        };
+
+        match pool.as_ref() {
+            Some(pool) => pool.install(work),
+            None => work(),
+        }
+
+        stuck.extend(failed.into_inner().expect("failed mutex"));
+    }
+
+    pipeline.publish(
+        app,
+        ScanProgress {
+            phase: JobPhase::Measuring,
+            folder_id: None,
+            done: total,
+            total,
+            current: None,
+            errors: Vec::new(),
+        },
+    );
+}
+
 fn thumbnail_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
-    let total = pipeline
+    let outstanding = pipeline
         .db
         .pending_thumbnails(i64::MAX)
         .map(|rows| rows.len() as i64)
         .unwrap_or(0);
-    if total == 0 {
+    if outstanding == 0 {
         return;
     }
+    let already = pipeline.db.completed_in_phase(PhaseQueue::Thumbnails).unwrap_or(0);
+    let total = already + outstanding;
 
     let done = Arc::new(std::sync::atomic::AtomicI64::new(0));
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -452,7 +696,7 @@ fn thumbnail_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
                         ScanProgress {
                             phase: JobPhase::Thumbnailing,
                             folder_id: None,
-                            done: finished,
+                            done: already + finished,
                             total,
                             current: Some(file.path.clone()),
                             errors: snapshot.into_iter().take(MAX_REPORTED_ERRORS).collect(),
@@ -482,8 +726,18 @@ fn thumbnail_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
     );
 }
 
+/// The key derived files are addressed by, computed on demand if the measure
+/// phase did not get there first.
+fn key_for(file: &PendingFile) -> anyhow::Result<String> {
+    match &file.content_key {
+        Some(key) => Ok(key.clone()),
+        None => thumbs::content_key(&file.path),
+    }
+}
+
 fn thumbnail_one_image(pipeline: &Arc<Pipeline>, file: &PendingFile) -> anyhow::Result<()> {
-    let thumb = thumbs::thumbnail_image(&file.path, &pipeline.thumb_root)?;
+    let key = key_for(file)?;
+    let thumb = thumbs::thumbnail_image(&file.path, &key, &pipeline.thumb_root)?;
     pipeline.db.update_thumbnail(
         file.id,
         &ThumbnailUpdate {
@@ -505,7 +759,7 @@ fn thumbnail_one_video(pipeline: &Arc<Pipeline>, file: &PendingFile) -> anyhow::
 
     let info = video::probe(&file.path)?;
     let timestamps = plan_frame_timestamps(info.duration_sec, SamplingOptions::default());
-    let out_dir = thumbs::frame_dir(&pipeline.frame_root, &file.path);
+    let out_dir = thumbs::frame_dir(&pipeline.frame_root, &key_for(file)?);
     let frames = video::extract_frames(&file.path, &info, &timestamps, &out_dir, THUMB_MAX)?;
 
     // Persist the frame rows now, while the timestamps are known exactly.
@@ -565,14 +819,16 @@ fn thumbnail_one_video(pipeline: &Arc<Pipeline>, file: &PendingFile) -> anyhow::
 // ---------------------------------------------------------------------------
 
 fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
-    let total = pipeline
+    let outstanding = pipeline
         .db
         .pending_classification(i64::MAX)
         .map(|rows| rows.len() as i64)
         .unwrap_or(0);
-    if total == 0 {
+    if outstanding == 0 {
         return;
     }
+    let already = pipeline.db.completed_in_phase(PhaseQueue::Classification).unwrap_or(0);
+    let total = already + outstanding;
 
     let Some(pool) = pipeline.pool() else {
         pipeline.publish(
@@ -594,7 +850,9 @@ fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
     };
 
     let options = ClassifyOptions::default();
-    let done = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    // Seeded with what the library already has, so the count this phase
+    // publishes is library-wide rather than run-local.
+    let done = Arc::new(std::sync::atomic::AtomicI64::new(already));
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
 
     loop {
@@ -634,6 +892,36 @@ fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
                         let frame = rate_frame(&detections, options);
                         let verdict = from_single_frame(&frame);
                         let _ = pipeline.db.update_verdict(file.id, &verdict, now_ms());
+
+                        // Keep the frame row for images too, not just videos.
+                        //
+                        // The rolled-up `MediaVerdict` records what was found —
+                        // rating, top label, score — but not *where*: the boxes
+                        // live on the per-frame verdict and were being dropped
+                        // on the floor for every image. That left the lightbox
+                        // with nothing to draw and "Show boxes" doing nothing on
+                        // the entire image half of a library.
+                        //
+                        // An image is simply a one-frame video here, which is
+                        // why this needs no new table, no wire-format change,
+                        // and no branch in the UI: the lightbox already reads
+                        // `frames[0].verdict.detections`.
+                        if let Ok(verdict_json) = serde_json::to_string(&frame) {
+                            let _ = pipeline.db.replace_frames(
+                                file.id,
+                                &[NewFrame {
+                                    frame_index: 0,
+                                    // The classifier reads the thumbnail, so
+                                    // that is what the boxes are relative to.
+                                    // Fractions make them resolution-agnostic,
+                                    // so they still land correctly over the
+                                    // full-size original in the lightbox.
+                                    timestamp_sec: 0.0,
+                                    path: file.thumb_path.clone().unwrap_or_default(),
+                                    verdict_json,
+                                }],
+                            );
+                        }
                     }
                     Err(reason) => {
                         errors
