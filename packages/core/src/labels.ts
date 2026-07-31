@@ -112,3 +112,18 @@ export function weightOf(label: string): LabelWeight {
 export function titleOf(label: string): string {
   return isNudeNetLabel(label) ? LABEL_TITLES[label] : label.toLowerCase().replace(/_/g, ' ')
 }
+
+/**
+ * Labels whose *presence* rates, whatever the score.
+ *
+ * Mirrors `rates_on_presence` in apps/desktop/src/rating.rs — see the note
+ * there for why `FEMALE_BREAST_COVERED` and `MALE_BREAST_EXPOSED` are excluded.
+ */
+export function ratesOnPresence(label: string): boolean {
+  return (
+    label.includes('GENITALIA') ||
+    label.includes('ANUS') ||
+    label.includes('BUTTOCKS') ||
+    label === 'FEMALE_BREAST_EXPOSED'
+  )
+}

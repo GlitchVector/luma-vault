@@ -13,6 +13,19 @@
 
 use crate::types::{Detection, FrameVerdict, MediaVerdict, Rating};
 
+/// Bumped whenever the rules below change what a given set of detections rates.
+///
+/// The detections are stored per frame, so a rule change does not need the
+/// model run again — only the rollup recomputed. The app compares this against
+/// the value recorded in the index and re-rates from stored detections when
+/// they differ, which turns an hour of re-inference into a few seconds of
+/// arithmetic. Forgetting to bump it means a library keeps its old verdicts and
+/// silently disagrees with the code that produced them.
+///
+/// 2: `suggestive_min_score` lowered from 0.5 to 0.4.
+/// 3: genitalia, anus, buttocks and exposed breasts rate on presence alone.
+pub const RATING_VERSION: i64 = 3;
+
 /// Thresholds applied on top of the detector's own NMS (which already drops
 /// anything below score 0.25).
 #[derive(Debug, Clone, Copy)]
@@ -25,7 +38,20 @@ pub struct ClassifyOptions {
 impl Default for ClassifyOptions {
     fn default() -> Self {
         Self {
-            suggestive_min_score: 0.5,
+            // 0.4, not 0.5, for the *suggestive* band only.
+            //
+            // Measured against a real 66,000-file library at 640px inference:
+            // 20,978 sexy-weighted detections landed in the 0.25-0.50 band and
+            // were discarded whole. One file the user flagged carried
+            // `FEMALE_GENITALIA_COVERED` at 0.495 and rated SFW — missed by
+            // five thousandths.
+            //
+            // `..._COVERED` labels are inherently less confident than exposed
+            // anatomy: the detector is inferring a shape under fabric. Holding
+            // them to the same bar as an unambiguous exposure is what produced
+            // the miss. Explicit stays at 0.5, where a false positive is the
+            // more expensive mistake.
+            suggestive_min_score: 0.4,
             explicit_min_score: 0.5,
             person_min_score: 0.35,
         }
@@ -65,6 +91,29 @@ pub fn weight_of(label: &str) -> LabelWeight {
         // neutral means a model upgrade under-reports rather than crashing.
         _ => LabelWeight::Neutral,
     }
+}
+
+/// Labels whose *presence* rates, whatever the score.
+///
+/// Unambiguous sexual anatomy. The detector reporting genitalia, an anus, or
+/// buttocks at all is the finding; how confident it is about the box is a
+/// separate question, and one that a threshold answers badly. Measured on a
+/// real library, 4,222 such detections sat below their threshold and were
+/// discarded — including a file whose only detection was `BUTTOCKS_COVERED` at
+/// 0.26, which is exactly the case this exists for.
+///
+/// Not a licence to include everything. `FEMALE_BREAST_COVERED` is excluded on
+/// purpose: every clothed woman produces one, so presence-rating it would flag
+/// a further 1,463 files largely on the basis of someone wearing a shirt.
+/// `MALE_BREAST_EXPOSED` is excluded for the same reason — a shirtless man at a
+/// beach is not the finding this app is for. Both still rate normally once they
+/// clear their threshold.
+///
+/// "Whatever the score" means down to 0.25 in practice: the detector's own NMS
+/// drops anything below that before we ever see it.
+pub fn rates_on_presence(label: &str) -> bool {
+    label.contains("GENITALIA") || label.contains("ANUS") || label.contains("BUTTOCKS")
+        || label == "FEMALE_BREAST_EXPOSED"
 }
 
 pub fn title_of(label: &str) -> String {
@@ -112,9 +161,11 @@ pub fn rate_frame(detections: &[Detection], options: ClassifyOptions) -> FrameVe
             person = true;
         }
 
+        let presence = rates_on_presence(&detection.label);
         let rated = match weight {
-            LabelWeight::Explicit => detection.score >= options.explicit_min_score,
-            LabelWeight::Suggestive => detection.score >= options.suggestive_min_score,
+            LabelWeight::Explicit => presence || detection.score >= options.explicit_min_score,
+            LabelWeight::Suggestive => presence || detection.score >= options.suggestive_min_score,
+            // Neutral labels never rate, presence or not: a face is a face.
             LabelWeight::Neutral => false,
         };
         if !rated {
