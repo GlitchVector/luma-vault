@@ -31,20 +31,85 @@ const EXTRA_BIN_DIRS: &[&str] = &[
 static FFMPEG: OnceLock<Option<PathBuf>> = OnceLock::new();
 static FFPROBE: OnceLock<Option<PathBuf>> = OnceLock::new();
 
+/// What Windows falls back to when PATHEXT is unset.
+const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD";
+
+/// Rewrite an indexed path into the spelling ffmpeg probes correctly.
+///
+/// The index stores canonicalized paths, which on Windows means the
+/// extended-length form: `\\?\UNC\server\share\file` for a share, `\\?\D:\dir`
+/// for a local disk. ffmpeg *opens* those fine — a normal video probes the same
+/// either way — but its format detection does not survive them. Given a file
+/// whose extension lies about its contents, the verbatim spelling makes ffmpeg
+/// trust the extension and misdecode; the plain spelling lets content probing
+/// win.
+///
+/// Measured on one real file, a GIF named `.jpg`: `width=0` and `bits 156 is
+/// invalid` through the verbatim path, a correct `540x385` through the plain
+/// one. That matters here because this fallback decoder exists precisely for
+/// the files the `image` crate rejected — mislabeled ones prominent among them.
+fn external_path(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        // `\\?\UNC\server\share` is the verbatim spelling of `\\server\share`.
+        format!(r"\\{rest}")
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+/// The file names a binary can have on this platform, most likely first.
+fn executable_names(binary: &str) -> Vec<String> {
+    if !cfg!(windows) {
+        return vec![binary.to_string()];
+    }
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| DEFAULT_PATHEXT.to_string());
+    windows_names(binary, &pathext)
+}
+
+/// Windows PATH lookup is extension-driven: `ffmpeg` names no file, `ffmpeg.exe`
+/// does. Consult PATHEXT rather than hardcoding `.exe`, because that is what the
+/// shell itself does and package managers ship shims — a scoop or chocolatey
+/// `ffmpeg.cmd` is as legitimate as winget's `ffmpeg.exe`.
+///
+/// Takes PATHEXT as an argument rather than reading it, so the rule can be
+/// tested from any platform without mutating the process environment.
+fn windows_names(binary: &str, pathext: &str) -> Vec<String> {
+    let mut names: Vec<String> = pathext
+        .split(';')
+        .map(str::trim)
+        .filter(|ext| ext.starts_with('.'))
+        .map(|ext| format!("{binary}{}", ext.to_ascii_lowercase()))
+        .collect();
+
+    // Last resort: an extensionless binary on PATH is unusual on Windows, but it
+    // runs fine when invoked by full path, which is how we invoke it.
+    names.push(binary.to_string());
+    names
+}
+
 fn locate(binary: &str) -> Option<PathBuf> {
-    // `which`-style PATH lookup first.
+    let names = executable_names(binary);
+
+    // `which`-style PATH lookup first. Directory-major, matching the shell:
+    // the first directory on PATH that holds *any* spelling of the binary wins.
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
-            let candidate = dir.join(binary);
-            if candidate.is_file() {
-                return Some(candidate);
+            for name in &names {
+                let candidate = dir.join(name);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
             }
         }
     }
     for dir in EXTRA_BIN_DIRS {
-        let candidate = Path::new(dir).join(binary);
-        if candidate.is_file() {
-            return Some(candidate);
+        for name in &names {
+            let candidate = Path::new(dir).join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
     }
     None
@@ -86,7 +151,7 @@ pub fn probe(path: &str) -> Result<VideoInfo> {
             "-of",
             "default=noprint_wrappers=1",
         ])
-        .arg(path)
+        .arg(external_path(path))
         .output()
         .with_context(|| format!("cannot run ffprobe on {path}"))?;
 
@@ -120,6 +185,15 @@ pub fn probe(path: &str) -> Result<VideoInfo> {
         bail!("ffprobe reported no usable duration for {path}");
     }
 
+    if width == 0 || height == 0 {
+        // A duration but no video stream: an audio file wearing a video
+        // extension. Whole music libraries are like this — a DJ tool's `.mpg`
+        // is usually MPEG *audio*. Saying so here beats letting frame
+        // extraction run and fail later with "produced no frames", which
+        // describes the symptom and hides the cause.
+        bail!("no video stream in {path} — audio only");
+    }
+
     Ok(VideoInfo {
         duration_sec: duration,
         width,
@@ -151,7 +225,7 @@ pub fn thumbnail_via_ffmpeg(
     let status = Command::new(ffmpeg)
         .args(["-loglevel", "error", "-nostdin"])
         .arg("-i")
-        .arg(source)
+        .arg(external_path(source))
         .args([
             "-frames:v",
             "1",
@@ -193,7 +267,7 @@ fn probe_image_size(path: &str) -> Result<(u32, u32)> {
             "-of",
             "default=noprint_wrappers=1",
         ])
-        .arg(path)
+        .arg(external_path(path))
         .output()
         .with_context(|| format!("cannot run ffprobe on {path}"))?;
 
@@ -267,7 +341,7 @@ pub fn extract_frames(
                 // the difference between milliseconds and minutes on a long file.
                 .args(["-ss", &format!("{timestamp:.3}")])
                 .arg("-i")
-                .arg(path)
+                .arg(external_path(path))
                 .args(["-frames:v", "1", "-vf", &scale, "-q:v", "3", "-y"])
                 .arg(&destination)
                 .status()
@@ -292,4 +366,64 @@ pub fn extract_frames(
     }
 
     Ok(frames)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_verbatim_unc_path_becomes_the_plain_share_path() {
+        // Measured: ffprobe reports width=0 for the verbatim form and 540x385
+        // for this one, on the same file.
+        assert_eq!(
+            external_path(r"\\?\UNC\jebpot\vault\Images\a.jpg"),
+            r"\\jebpot\vault\Images\a.jpg"
+        );
+    }
+
+    #[test]
+    fn a_verbatim_disk_path_loses_only_its_prefix() {
+        assert_eq!(external_path(r"\\?\D:\vault\a.mp4"), r"D:\vault\a.mp4");
+    }
+
+    #[test]
+    fn a_path_without_the_prefix_is_untouched() {
+        assert_eq!(external_path("/Users/x/vault/a.mp4"), "/Users/x/vault/a.mp4");
+        assert_eq!(external_path(r"D:\vault\a.mp4"), r"D:\vault\a.mp4");
+        assert_eq!(external_path(r"\\jebpot\vault\a.mp4"), r"\\jebpot\vault\a.mp4");
+    }
+
+    #[test]
+    fn looks_for_the_platform_spelling_of_a_binary() {
+        let names = executable_names("ffmpeg");
+
+        if cfg!(windows) {
+            assert!(
+                names.contains(&"ffmpeg.exe".to_string()),
+                "a Windows PATH holds ffmpeg.exe, never a bare ffmpeg: {names:?}"
+            );
+        } else {
+            assert_eq!(names, vec!["ffmpeg".to_string()]);
+        }
+    }
+
+    // The Windows rule is checked from every platform on purpose: CI is Linux,
+    // and a regression here is invisible until someone runs the app on Windows
+    // and is told to install the ffmpeg they already have.
+    #[test]
+    fn the_windows_spelling_prefers_exe_and_keeps_pathext_order() {
+        let names = windows_names("ffmpeg", DEFAULT_PATHEXT);
+
+        assert_eq!(names, ["ffmpeg.com", "ffmpeg.exe", "ffmpeg.bat", "ffmpeg.cmd", "ffmpeg"]);
+    }
+
+    #[test]
+    fn the_windows_spelling_lowercases_pathext_and_drops_its_junk() {
+        // PATHEXT is conventionally uppercase and often carries a trailing
+        // separator or a stray entry; neither may produce a bogus candidate.
+        let names = windows_names("ffprobe", ".EXE; .CMD ;;bogus");
+
+        assert_eq!(names, ["ffprobe.exe", "ffprobe.cmd", "ffprobe"]);
+    }
 }
