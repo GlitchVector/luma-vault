@@ -63,6 +63,23 @@ tempfile = "3"
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
+# Dependencies are optimized even in a dev build; this crate is not.
+#
+# `tauri dev` builds with the dev profile, and an unoptimized pure-Rust image
+# decoder is not slow by a little. Measured on this library's own files, over
+# the share it actually lives on:
+#
+#   decode a 0.6 MB JPEG   dev 0.400s   release 0.007s   — 57x
+#
+# At 66,000 files that is the difference between a scan you wait days for and
+# one you wait minutes for, and it made the thumbnail phase look network-bound
+# when reading the file was only 3% of the cost.
+#
+# `package."*"` covers dependencies only, so `luma-vault` itself stays at
+# opt-level 0 and incremental rebuilds of the app's own code stay fast.
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 codegen-units = 1
 lto = true
