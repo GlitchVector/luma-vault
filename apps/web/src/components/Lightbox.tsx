@@ -79,7 +79,17 @@ export function Lightbox({ mediaId, onClose, onStep }: LightboxProps) {
         </Button>
       </header>
 
-      <div className="relative flex min-h-0 flex-1 items-center justify-center p-4">
+      {/* Clicking the backdrop closes. `onClick` on this container rather than
+          the overlay root so the header's buttons are not covered, and the
+          target check rather than a bare handler so a click that lands on the
+          image, the video, a nav arrow or a detection box does not close it —
+          only one that hits the empty space around them. */}
+      <div
+        className="relative flex min-h-0 flex-1 items-center justify-center p-4"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) onClose()
+        }}
+      >
         {item.kind === 'video' ? (
           // The original file streams straight through the protocol handler;
           // there is no transcode step and no temporary file.
@@ -114,8 +124,23 @@ export function Lightbox({ mediaId, onClose, onStep }: LightboxProps) {
                       width: `${detection.box[2] * 100}%`,
                       height: `${detection.box[3] * 100}%`,
                     }}
-                    title={`${detection.label} ${Math.round(detection.score * 100)}%`}
-                  />
+                  >
+                    {/* The raw label, not the friendly title: a box overlay is a
+                        diagnostic view, and `FEMALE_GENITALIA_COVERED 49%` says
+                        exactly why a file rated the way it did. Sits above the
+                        box, except near the top edge where it would be clipped
+                        out of the image and is tucked inside instead. */}
+                    <span
+                      className="absolute left-0 whitespace-nowrap rounded-sm bg-amber-400/90 px-1 text-[10px] font-medium leading-snug text-black"
+                      style={
+                        detection.box[1] < 0.05
+                          ? { top: 0 }
+                          : { bottom: '100%', marginBottom: '1px' }
+                      }
+                    >
+                      {detection.label} {Math.round(detection.score * 100)}%
+                    </span>
+                  </span>
                 ))
               : null}
           </div>
