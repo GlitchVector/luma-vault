@@ -9,13 +9,14 @@
 
 export {
   NUDENET_LABELS,
+  ANIME_LABELS,
   LABEL_WEIGHTS,
   LABEL_TITLES,
-  isNudeNetLabel,
+  isRatedLabel,
   weightOf,
   titleOf,
 } from './labels.ts'
-export type { NudeNetLabel, LabelWeight } from './labels.ts'
+export type { NudeNetLabel, AnimeLabel, RatedLabel, LabelWeight } from './labels.ts'
 
 export {
   DEFAULT_CLASSIFY_OPTIONS,

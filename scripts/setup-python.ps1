@@ -64,6 +64,26 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Warning "  winget install Gyan.FFmpeg"
 }
 
+# The anime tagger is optional and large (~378MB), so it is downloaded rather
+# than vendored.
+$AnimeDir = Join-Path $RepoRoot "models\anime-tagger"
+$AnimeRepo = "https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main"
+if ((Test-Path "$AnimeDir\model.onnx") -and (Test-Path "$AnimeDir\selected_tags.csv")) {
+    Write-Host "==> Anime tagger already present"
+} else {
+    Write-Host "==> Downloading the anime tagger (~378MB, Apache-2.0)"
+    New-Item -ItemType Directory -Force $AnimeDir | Out-Null
+    try {
+        Invoke-WebRequest -Uri "$AnimeRepo/model.onnx" -OutFile "$AnimeDir\model.onnx.part"
+        Invoke-WebRequest -Uri "$AnimeRepo/selected_tags.csv" -OutFile "$AnimeDir\selected_tags.csv"
+        Move-Item "$AnimeDir\model.onnx.part" "$AnimeDir\model.onnx" -Force
+    } catch {
+        Remove-Item "$AnimeDir\model.onnx.part" -ErrorAction SilentlyContinue
+        Write-Warning "Could not download the anime tagger - drawn content will be rated by NudeNet alone."
+        Write-Warning "Re-run this script to retry."
+    }
+}
+
 Write-Host "==> Verifying the classifier can load its model"
 & "$VenvPath\Scripts\python.exe" $Worker --check
 if ($LASTEXITCODE -ne 0) {

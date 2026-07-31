@@ -113,7 +113,13 @@ export function Lightbox({ mediaId, onClose, onStep, showBoxes, onToggleBoxes }:
                 scale to whatever size the browser chose here with no ratio
                 bookkeeping. */}
             {showBoxes && frames[0]
-              ? frames[0].verdict.detections.map((detection) => (
+              ? frames[0].verdict.detections
+                  // The anime tagger judges the whole picture, so its findings
+                  // carry a frame-filling placeholder box rather than a located
+                  // one. Drawing that would put a rectangle round everything and
+                  // say nothing; the rating it produced is shown in the footer.
+                  .filter((detection) => !detection.label.startsWith('ANIME_'))
+                  .map((detection) => (
                   <span
                     // Position, not array index: detections are stored in a
                     // total order, so this key is stable across re-classification

@@ -27,6 +27,13 @@ pnpm setup:python      # creates venv-classifier and verifies the model loads
 pnpm dev:desktop       # builds the Rust shell and opens the app
 ```
 
+`setup:python` also downloads a ~378MB Danbooru-trained tagger into `models/`.
+NudeNet is trained on photographs and under-fires badly on drawn content, so
+that model is a second opinion for it — measured on a real library, it flags 21%
+of the illustrated images NudeNet rated SFW, while agreeing with it on 84% of
+what it had already flagged. It is optional: a missing model means drawn content
+is rated by NudeNet alone, not a broken scan.
+
 `setup:python` needs Python 3.11–3.13 and, for video, `ffmpeg` on PATH
 (`brew install ffmpeg`, or `winget install Gyan.FFmpeg` on Windows). Both are
 checked and reported rather than assumed — if

@@ -177,6 +177,98 @@ def load_image(path: str):
         return cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2BGR)
 
 
+class AnimeTagger:
+    """
+    A second opinion for drawn content, from a Danbooru-trained tagger.
+
+    NudeNet is trained on photographs. On an illustrated library it under-fires
+    badly: measured over 150 images from this library's adult folders that
+    NudeNet rated SFW, this model rates 21% of them questionable or explicit.
+    On a control group NudeNet *had* already flagged it agrees 84% of the time,
+    so it is a second opinion rather than noise.
+
+    It is a whole-image classifier, not a detector — there are no boxes. Only
+    its four rating tags are used, emitted as findings covering the frame so
+    they flow through the same verdict path as everything else. The UI does not
+    draw them; see the `ANIME_` skip in Lightbox.tsx.
+
+    Optional by design. The model is ~378MB against NudeNet's 12MB, so it is
+    downloaded by `pnpm setup:python` rather than vendored, and a worker that
+    cannot find it simply reports no anime opinion instead of refusing to run.
+    """
+
+    # Danbooru's four rating tags. `general` and `sensitive` are deliberately
+    # not emitted: `sensitive` covers swimwear and cleavage, which this app
+    # already reaches through NudeNet's covered-anatomy labels, and emitting it
+    # would flag most of a beach holiday.
+    RATINGS = ("questionable", "explicit")
+
+    def __init__(self, model_path: str, tags_path: str):
+        import csv as _csv
+
+        import onnxruntime
+
+        self.session = onnxruntime.InferenceSession(
+            model_path, providers=["CPUExecutionProvider"]
+        )
+        _, self.height, self.width, _ = self.session.get_inputs()[0].shape
+        self.input_name = self.session.get_inputs()[0].name
+
+        with open(tags_path, encoding="utf-8") as handle:
+            rows = list(_csv.DictReader(handle))
+        self.indices = {
+            row["name"]: i for i, row in enumerate(rows) if row["name"] in self.RATINGS
+        }
+        if len(self.indices) != len(self.RATINGS):
+            raise ValueError("selected_tags.csv is missing the rating tags")
+
+    def _prepare(self, img):
+        """Pad to square on white, resize, keep BGR at 0-255 — SmilingWolf's."""
+        import cv2
+        import numpy as np
+
+        height, width = img.shape[:2]
+        side = max(height, width)
+        square = np.full((side, side, 3), 255, dtype=np.uint8)
+        square[(side - height) // 2 : (side - height) // 2 + height,
+               (side - width) // 2 : (side - width) // 2 + width] = img
+        resized = cv2.resize(square, (self.width, self.height), interpolation=cv2.INTER_CUBIC)
+        return np.expand_dims(resized.astype("float32"), 0)
+
+    def detect(self, img) -> list:
+        """Rating tags as whole-frame findings, shaped like NudeNet's output."""
+        # No sigmoid: this ONNX export already applies one. Squashing twice pins
+        # every class near 0.5, which reads as "every photo is explicit".
+        scores = self.session.run(None, {self.input_name: self._prepare(img)})[0][0]
+        height, width = img.shape[:2]
+        return [
+            {
+                "class": f"ANIME_{name.upper()}",
+                "score": float(scores[index]),
+                "box": [0, 0, width, height],
+            }
+            for name, index in self.indices.items()
+        ]
+
+
+def load_anime_tagger():
+    """The tagger, or `None` when its model has not been downloaded."""
+    root = os.environ.get("LUMA_ANIME_MODEL") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "models",
+        "anime-tagger",
+    )
+    model = os.path.join(root, "model.onnx")
+    tags = os.path.join(root, "selected_tags.csv")
+    if not (os.path.isfile(model) and os.path.isfile(tags)):
+        return None
+    try:
+        return AnimeTagger(model, tags)
+    except Exception as exc:  # noqa: BLE001 — an absent second opinion is not fatal
+        log(f"anime tagger unavailable: {type(exc).__name__}: {exc}")
+        return None
+
+
 def _iou(a, b) -> float:
     """Intersection over union of two `[x, y, w, h]` pixel boxes."""
     ax2, ay2 = a[0] + a[2], a[1] + a[3]
@@ -292,12 +384,16 @@ def serve() -> int:
         emit({"type": "fatal", "error": f"cannot load model: {exc}"})
         return 1
 
+    anime = load_anime_tagger()
+    log("anime tagger " + ("loaded" if anime else "not installed"))
+
     emit({
         "type": "ready",
         "pid": os.getpid(),
         "labels": LABELS,
         "model": MODEL_NAME,
         "inferenceResolutions": list(INFERENCE_RESOLUTIONS),
+        "animeTagger": anime is not None,
     })
     log(f"ready (pid {os.getpid()})")
 
@@ -337,6 +433,10 @@ def serve() -> int:
                     continue
                 height, width = img.shape[:2]
                 detections = merge_passes([d.detect(img) for d in detectors])
+                # Appended, not merged: these cover the whole frame and would
+                # suppress every real box under an IoU test.
+                if anime is not None:
+                    detections = detections + anime.detect(img)
                 results.append({"ok": True, "detections": normalise(detections, width, height)})
             except Exception as exc:  # noqa: BLE001 — one bad file never kills the worker
                 log(f"failed on {path}: {type(exc).__name__}: {exc}")

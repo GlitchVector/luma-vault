@@ -403,6 +403,72 @@
         "rating": "sfw",
         "topLabel": null
       }
+    },
+    {
+      "name": "the anime tagger's explicit rating is explicit",
+      "detections": [
+        {
+          "label": "ANIME_EXPLICIT",
+          "score": 0.9,
+          "box": [
+            0,
+            0,
+            1,
+            1
+          ]
+        }
+      ],
+      "expect": {
+        "person": true,
+        "sexy": true,
+        "nude": true,
+        "rating": "explicit",
+        "topLabel": "ANIME_EXPLICIT"
+      }
+    },
+    {
+      "name": "its questionable rating is suggestive",
+      "detections": [
+        {
+          "label": "ANIME_QUESTIONABLE",
+          "score": 0.9,
+          "box": [
+            0,
+            0,
+            1,
+            1
+          ]
+        }
+      ],
+      "expect": {
+        "person": true,
+        "sexy": true,
+        "nude": false,
+        "rating": "suggestive",
+        "topLabel": "ANIME_QUESTIONABLE"
+      }
+    },
+    {
+      "name": "a whole-image judgement is threshold-gated, not presence-rated",
+      "detections": [
+        {
+          "label": "ANIME_EXPLICIT",
+          "score": 0.3,
+          "box": [
+            0,
+            0,
+            1,
+            1
+          ]
+        }
+      ],
+      "expect": {
+        "person": false,
+        "sexy": false,
+        "nude": false,
+        "rating": "sfw",
+        "topLabel": null
+      }
     }
   ],
   "videoVectors": [

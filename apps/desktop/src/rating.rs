@@ -24,7 +24,8 @@ use crate::types::{Detection, FrameVerdict, MediaVerdict, Rating};
 ///
 /// 2: `suggestive_min_score` lowered from 0.5 to 0.4.
 /// 3: genitalia, anus, buttocks and exposed breasts rate on presence alone.
-pub const RATING_VERSION: i64 = 3;
+/// 4: the anime tagger's rating labels are weighted.
+pub const RATING_VERSION: i64 = 4;
 
 /// Thresholds applied on top of the detector's own NMS (which already drops
 /// anything below score 0.25).
@@ -75,7 +76,11 @@ pub fn weight_of(label: &str) -> LabelWeight {
         "FEMALE_GENITALIA_EXPOSED"
         | "MALE_GENITALIA_EXPOSED"
         | "ANUS_EXPOSED"
-        | "FEMALE_BREAST_EXPOSED" => LabelWeight::Explicit,
+        | "FEMALE_BREAST_EXPOSED"
+        // Danbooru's own rating, from the anime tagger. Whole-image rather
+        // than anatomical, which is why it is not presence-rated: it is a
+        // judgement about a picture, and a judgement deserves a threshold.
+        | "ANIME_EXPLICIT" => LabelWeight::Explicit,
 
         "BUTTOCKS_EXPOSED"
         | "BELLY_EXPOSED"
@@ -84,7 +89,8 @@ pub fn weight_of(label: &str) -> LabelWeight {
         | "FEMALE_GENITALIA_COVERED"
         | "FEMALE_BREAST_COVERED"
         | "BUTTOCKS_COVERED"
-        | "ANUS_COVERED" => LabelWeight::Suggestive,
+        | "ANUS_COVERED"
+        | "ANIME_QUESTIONABLE" => LabelWeight::Suggestive,
 
         // Faces, feet, covered belly/armpits — and anything a future model
         // revision adds that we do not know yet. Degrading an unknown label to
@@ -136,6 +142,8 @@ pub fn title_of(label: &str) -> String {
         "FEET_EXPOSED" => "exposed feet",
         "FACE_FEMALE" => "female face",
         "FACE_MALE" => "male face",
+        "ANIME_QUESTIONABLE" => "drawn, suggestive",
+        "ANIME_EXPLICIT" => "drawn, explicit",
         other => return other.to_lowercase().replace('_', " "),
     };
     title.to_string()

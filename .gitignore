@@ -6,6 +6,9 @@ target/
 
 # Python classifier virtualenv — recreated by `pnpm setup:python`
 venv-classifier/
+
+# Downloaded model weights — fetched by `pnpm setup:python`, never vendored.
+models/
 __pycache__/
 *.pyc
 
