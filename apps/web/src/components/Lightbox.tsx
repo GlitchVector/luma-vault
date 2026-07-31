@@ -12,12 +12,14 @@ interface LightboxProps {
   mediaId: number
   onClose: () => void
   onStep: (delta: number) => void
+  /** Owned by the app, not this component — it is mounted per-item. */
+  showBoxes: boolean
+  onToggleBoxes: () => void
 }
 
-export function Lightbox({ mediaId, onClose, onStep }: LightboxProps) {
+export function Lightbox({ mediaId, onClose, onStep, showBoxes, onToggleBoxes }: LightboxProps) {
   const [item, setItem] = useState<MediaItem | null>(null)
   const [frames, setFrames] = useState<MediaFrame[]>([])
-  const [showBoxes, setShowBoxes] = useState(true)
 
   useEffect(() => {
     let cancelled = false
@@ -68,7 +70,7 @@ export function Lightbox({ mediaId, onClose, onStep }: LightboxProps) {
         {item.kind === 'video' ? (
           <span className="tabular-nums">{formatDuration(item.durationSec)}</span>
         ) : null}
-        <Button size="sm" onClick={() => setShowBoxes((previous) => !previous)}>
+        <Button size="sm" onClick={onToggleBoxes}>
           {showBoxes ? 'Hide boxes' : 'Show boxes'}
         </Button>
         <Button size="sm" onClick={() => void revealInFileManager(item.path)}>

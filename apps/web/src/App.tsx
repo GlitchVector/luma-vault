@@ -13,6 +13,11 @@ export function App() {
   const library = useLibrary()
   const [openId, setOpenId] = useState<number | null>(null)
   const [showBoxes, setShowBoxes] = useState(false)
+  // Lives here rather than in the Lightbox so it survives closing one. The
+  // Lightbox is mounted per-item, so local state reset the toggle every time
+  // you opened a file. Deliberately separate from `showBoxes` above, which is
+  // the grid's label pill and a different question.
+  const [showLightboxBoxes, setShowLightboxBoxes] = useState(true)
 
   const { items, query, setQuery, actions, folders, progress } = library
 
@@ -111,7 +116,13 @@ export function App() {
       <StatusBar progress={progress} environment={library.environment} />
 
       {openId !== null ? (
-        <Lightbox mediaId={openId} onClose={() => setOpenId(null)} onStep={step} />
+        <Lightbox
+          mediaId={openId}
+          onClose={() => setOpenId(null)}
+          onStep={step}
+          showBoxes={showLightboxBoxes}
+          onToggleBoxes={() => setShowLightboxBoxes((previous) => !previous)}
+        />
       ) : null}
     </div>
   )
