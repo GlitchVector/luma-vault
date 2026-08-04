@@ -26,7 +26,20 @@
       "sexyFrameCount": 1,
       "posterFrameIndex": 0
     },
-    "classifiedAt": 1753900100000
+    "classifiedAt": 1753900100000,
+    "stars": 5,
+    "generation": {
+      "tool": "Stable Diffusion",
+      "prompt": "a girl on a beach, masterpiece",
+      "negativePrompt": "bad hands, blurry",
+      "model": "someMix_v4",
+      "seed": "12345",
+      "sampler": "DPM++ 2M Karras",
+      "steps": "28",
+      "cfgScale": "7",
+      "needsSourceImage": false
+    },
+    "dupeGroup": 1
   },
   {
     "id": 2,
@@ -55,7 +68,10 @@
       "sexyFrameCount": 4,
       "posterFrameIndex": 7
     },
-    "classifiedAt": 1753900500000
+    "classifiedAt": 1753900500000,
+    "stars": null,
+    "generation": null,
+    "dupeGroup": 1
   },
   {
     "id": 3,
@@ -73,6 +89,9 @@
     "thumbHeight": null,
     "durationSec": null,
     "verdict": null,
-    "classifiedAt": null
+    "classifiedAt": null,
+    "stars": null,
+    "generation": null,
+    "dupeGroup": null
   }
 ]

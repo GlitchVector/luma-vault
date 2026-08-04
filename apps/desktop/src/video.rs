@@ -12,7 +12,29 @@ use std::sync::OnceLock;
 
 use anyhow::{anyhow, bail, Context, Result};
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::paths::external_path;
+
+/// Threads ffmpeg may use, or 0 for "however many it likes".
+///
+/// ffmpeg defaults to one thread per core, which is entirely outside the
+/// classifier pool's budget — so a throttled scan of a video folder would sit
+/// at the target for the classify phase and then blow straight past it the
+/// moment frame extraction started.
+static FFMPEG_THREADS: AtomicUsize = AtomicUsize::new(0);
+
+pub fn set_thread_limit(threads: Option<usize>) {
+    FFMPEG_THREADS.store(threads.unwrap_or(0), Ordering::Relaxed);
+}
+
+/// `-threads N`, or nothing when unthrottled.
+fn thread_args() -> Vec<String> {
+    match FFMPEG_THREADS.load(Ordering::Relaxed) {
+        0 => Vec::new(),
+        n => vec!["-threads".to_string(), n.to_string()],
+    }
+}
 use crate::thumbs::fit_within;
 
 /// Where to look when ffmpeg is not on PATH.
@@ -200,6 +222,7 @@ pub fn thumbnail_via_ffmpeg(
 
     let status = Command::new(ffmpeg)
         .args(["-loglevel", "error", "-nostdin"])
+        .args(thread_args())
         .arg("-i")
         .arg(external_path(source))
         .args([
@@ -312,6 +335,7 @@ pub fn extract_frames(
         if !destination.is_file() {
             let status = Command::new(ffmpeg)
                 .args(["-loglevel", "error", "-nostdin"])
+                .args(thread_args())
                 // -ss BEFORE -i is the fast input seek: ffmpeg jumps to the
                 // nearest keyframe instead of decoding from the start, which is
                 // the difference between milliseconds and minutes on a long file.

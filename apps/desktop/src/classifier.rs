@@ -52,6 +52,10 @@ struct WorkerResult {
     ok: bool,
     #[serde(default)]
     detections: Vec<Detection>,
+    /// Structural labels — "document" and friends. Describes what kind of
+    /// picture this is, so it deliberately never reaches the rating rules.
+    #[serde(default)]
+    tags: Vec<String>,
     #[serde(default)]
     error: Option<String>,
 }
@@ -59,6 +63,37 @@ struct WorkerResult {
 /// One file's outcome. `Err` carries the reason so the pipeline can record it
 /// as a scan error row rather than silently dropping the file.
 pub type ClassifyOutcome = std::result::Result<Vec<Detection>, String>;
+
+/// One file's structural labels, or why it could not be examined.
+pub type LabelOutcome = std::result::Result<Vec<String>, String>;
+
+/// Which models a request runs.
+///
+/// The two detectors cost wildly different amounts per file — NudeNet is a
+/// 12MB detector, the anime tagger a 378MB ViT — and only one of them is worth
+/// paying for on every file. Separating them is what lets the pipeline rate the
+/// whole library at NudeNet speed and revisit the drawn-content question after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassifyMode {
+    /// NudeNet only, at every configured resolution.
+    Detect,
+    /// The anime tagger only. Returns whole-frame `ANIME_*` findings, which the
+    /// caller merges into detections it already holds.
+    Anime,
+    /// No model at all: structural analysis of the thumbnail, returning tags
+    /// like `document`. Cheap enough to run over a whole library.
+    Label,
+}
+
+impl ClassifyMode {
+    fn wire(self) -> &'static str {
+        match self {
+            Self::Detect => "detect",
+            Self::Anime => "anime",
+            Self::Label => "label",
+        }
+    }
+}
 
 struct Worker {
     child: Child,
@@ -69,12 +104,19 @@ struct Worker {
     next_id: u64,
     python: PathBuf,
     script: PathBuf,
+    /// Carried so a respawn reproduces the worker it replaces — a throttled
+    /// worker that came back unthrottled would quietly undo the setting.
+    env: Vec<(String, String)>,
 }
 
 impl Worker {
-    fn spawn(python: &Path, script: &Path) -> Result<Self> {
-        let mut child = Command::new(python)
-            .arg(script)
+    fn spawn(python: &Path, script: &Path, env: &[(&str, &str)]) -> Result<Self> {
+        let mut command = Command::new(python);
+        command.arg(script);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Inherited, so the worker's diagnostics land in the app log rather
@@ -107,6 +149,7 @@ impl Worker {
             next_id: 1,
             python: python.to_path_buf(),
             script: script.to_path_buf(),
+            env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
         };
 
         // The worker announces itself once the model is loaded. Waiting for it
@@ -131,11 +174,16 @@ impl Worker {
         Ok(worker)
     }
 
-    fn classify(&mut self, paths: &[String]) -> Result<Vec<ClassifyOutcome>> {
+    fn send(&mut self, paths: &[String], mode: ClassifyMode) -> Result<Vec<WorkerResult>> {
         let id = self.next_id;
         self.next_id += 1;
 
-        let request = serde_json::json!({ "id": id, "cmd": "classify", "paths": paths });
+        let request = serde_json::json!({
+            "id": id,
+            "cmd": "classify",
+            "paths": paths,
+            "mode": mode.wire(),
+        });
         writeln!(self.stdin, "{request}").context("classifier stdin closed")?;
         self.stdin.flush().context("cannot flush to classifier")?;
 
@@ -171,24 +219,19 @@ impl Worker {
                 );
             }
 
-            return Ok(response
-                .results
-                .into_iter()
-                .map(|result| {
-                    if result.ok {
-                        Ok(result.detections)
-                    } else {
-                        Err(result.error.unwrap_or_else(|| "unknown error".to_string()))
-                    }
-                })
-                .collect());
+            return Ok(response.results);
         }
     }
 
     fn respawn(&mut self) -> Result<()> {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let fresh = Worker::spawn(&self.python.clone(), &self.script.clone())?;
+        let env: Vec<(&str, &str)> = self
+            .env
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let fresh = Worker::spawn(&self.python.clone(), &self.script.clone(), &env)?;
         *self = fresh;
         Ok(())
     }
@@ -217,18 +260,23 @@ impl ClassifierPool {
     /// Only the first failure is fatal: if worker 3 of 6 fails to spawn, the
     /// pool runs with what it has. A machine that is out of memory for a sixth
     /// model should still scan, just slower.
-    pub fn new(python: &Path, script: &Path, size: usize) -> Result<Self> {
+    pub fn new(
+        python: &Path,
+        script: &Path,
+        size: usize,
+        env: &[(&str, &str)],
+    ) -> Result<Self> {
         let size = size.max(1);
         let (ret, idle) = bounded::<Worker>(size);
 
-        let first = Worker::spawn(python, script).context(
+        let first = Worker::spawn(python, script, env).context(
             "the classifier could not start. Run `pnpm setup:python` to create the venv",
         )?;
         ret.send(first).expect("channel just created");
 
         let mut live = 1;
         for index in 1..size {
-            match Worker::spawn(python, script) {
+            match Worker::spawn(python, script, env) {
                 Ok(worker) => {
                     ret.send(worker).expect("channel has capacity");
                     live += 1;
@@ -249,7 +297,34 @@ impl ClassifierPool {
     /// A worker that times out or dies is killed and respawned before the slot
     /// returns to the queue, so a single bad file cannot permanently shrink the
     /// pool. The batch that hit the failure is reported as failed per-file.
-    pub fn classify(&self, paths: &[String]) -> Result<Vec<ClassifyOutcome>> {
+    pub fn classify(&self, paths: &[String], mode: ClassifyMode) -> Result<Vec<ClassifyOutcome>> {
+        Ok(self
+            .dispatch(paths, mode)?
+            .into_iter()
+            .map(|result| match result {
+                Ok(result) => Ok(result.detections),
+                Err(reason) => Err(reason),
+            })
+            .collect())
+    }
+
+    /// Structural labels for a batch of thumbnails. See [`ClassifyMode::Label`].
+    pub fn label(&self, paths: &[String]) -> Result<Vec<LabelOutcome>> {
+        Ok(self
+            .dispatch(paths, ClassifyMode::Label)?
+            .into_iter()
+            .map(|result| match result {
+                Ok(result) => Ok(result.tags),
+                Err(reason) => Err(reason),
+            })
+            .collect())
+    }
+
+    fn dispatch(
+        &self,
+        paths: &[String],
+        mode: ClassifyMode,
+    ) -> Result<Vec<std::result::Result<WorkerResult, String>>> {
         if paths.is_empty() {
             return Ok(Vec::new());
         }
@@ -259,12 +334,21 @@ impl ClassifierPool {
             .recv()
             .map_err(|_| anyhow!("classifier pool has been shut down"))?;
 
-        let outcome = worker.classify(paths);
+        let outcome = worker.send(paths, mode);
 
         match outcome {
             Ok(results) => {
                 let _ = self.ret.send(worker);
-                Ok(results)
+                Ok(results
+                    .into_iter()
+                    .map(|result| {
+                        if result.ok {
+                            Ok(result)
+                        } else {
+                            Err(result.error.unwrap_or_else(|| "unknown error".to_string()))
+                        }
+                    })
+                    .collect())
             }
             Err(error) => {
                 eprintln!("[luma] classifier worker failed ({error:#}), respawning");

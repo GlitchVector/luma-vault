@@ -19,6 +19,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
+use crate::generated::Generation;
 use crate::types::{
     Folder, LibraryStats, MediaFrame, MediaItem, MediaKind, MediaPage, MediaQuery, MediaVerdict,
     Rating, SortOrder,
@@ -103,6 +104,13 @@ impl Db {
                 UNIQUE(media_id, frame_index)
             );
 
+            CREATE TABLE IF NOT EXISTS media_tags (
+                media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                tag      TEXT    NOT NULL,
+                PRIMARY KEY (media_id, tag)
+            );
+
+            CREATE INDEX IF NOT EXISTS tags_by_tag       ON media_tags(tag, media_id);
             CREATE INDEX IF NOT EXISTS media_folder      ON media(folder_id);
             CREATE INDEX IF NOT EXISTS media_recent      ON media(modified_at DESC);
             CREATE INDEX IF NOT EXISTS media_rating      ON media(rating);
@@ -147,6 +155,217 @@ impl Db {
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS media_thumb_queue
              ON media(modified_at DESC) WHERE thumb_path IS NULL AND error IS NULL",
+        )?;
+
+        // When the anime tagger last had an opinion about this row.
+        //
+        // Its own column rather than a flag on `classified_at`, because the two
+        // passes are independent: NudeNet decides every file, the tagger only
+        // revisits the ones NudeNet called SFW. A row can be fully classified
+        // and still be waiting for its second opinion.
+        let has_anime_at = conn
+            .prepare("PRAGMA table_info(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "anime_at");
+        if !has_anime_at {
+            conn.execute_batch("ALTER TABLE media ADD COLUMN anime_at INTEGER")?;
+
+            // Backfill rows that were classified while the tagger ran inline.
+            // Their detections already carry `ANIME_*` findings, so leaving
+            // them queued would append a second copy and double-count them.
+            // Matching on the stored JSON is exact here: no other producer
+            // writes that prefix.
+            conn.execute_batch(
+                "UPDATE media SET anime_at = classified_at
+                 WHERE classified_at IS NOT NULL
+                   AND verdict_json IS NOT NULL
+                   AND EXISTS (
+                       SELECT 1 FROM media_frames f
+                       WHERE f.media_id = media.id AND f.verdict_json LIKE '%ANIME\\_%' ESCAPE '\\'
+                   )",
+            )?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_anime_queue ON media(rating)
+             WHERE anime_at IS NULL AND classified_at IS NOT NULL",
+        )?;
+
+        // Small, durable app settings. A table rather than a file beside the
+        // index so a setting cannot survive a deleted index and reappear
+        // describing a library that no longer exists.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS settings (
+                 key   TEXT NOT NULL PRIMARY KEY,
+                 value TEXT NOT NULL
+             );",
+        )?;
+
+        // Stars (1-5) and what the file says about its own generation.
+        //
+        // `stars` is a *user* judgement and deliberately separate from
+        // `rating`: one says "I like this", the other says "this is explicit".
+        // Nothing in the pipeline ever writes `stars` from a model.
+        for (column, decl) in [
+            ("stars", "INTEGER"),
+            ("prompt", "TEXT"),
+            ("generation_json", "TEXT"),
+            // Perceptual hash of the thumbnail, images only. See `dupes`.
+            ("phash", "INTEGER"),
+            // 8x8 RGB alongside it: the hash is greyscale and cannot tell two
+            // differently-lit photographs apart on its own.
+            ("colour_sig", "BLOB"),
+            // Which set of duplicates this row belongs to, or NULL for none.
+            ("dupe_group", "INTEGER"),
+        ] {
+            let present = conn
+                .prepare("PRAGMA table_info(media)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(Result::ok)
+                .any(|name| name == column);
+            if !present {
+                conn.execute_batch(&format!("ALTER TABLE media ADD COLUMN {column} {decl}"))?;
+            }
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_stars ON media(stars) WHERE stars IS NOT NULL",
+        )?;
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_dupes ON media(dupe_group, id)
+             WHERE dupe_group IS NOT NULL",
+        )?;
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_unhashed ON media(id)
+             WHERE phash IS NULL AND thumb_path IS NOT NULL AND kind = 'image'",
+        )?;
+
+        // Full-text search over filenames and prompts.
+        //
+        // **Trigram, not the default tokenizer.** The default indexes whole
+        // words, and a booru prompt is full of `1girl`, `2girls`,
+        // `moona_hoshinova` — searching "girl" against it finds 9,517 rows
+        // where a substring search finds 45,966. Trigram gives `LIKE '%x%'`
+        // semantics, which is what someone typing into a search box means.
+        //
+        // Measured on this library, 160,901 rows: `LIKE` needs 183-230ms for a
+        // count, which is far too slow to type against. Trigram answers the
+        // same queries in 0-7ms and builds once in 2.4s.
+        //
+        // `content='media'` so the text is not stored twice; the triggers below
+        // are what an external-content table requires to stay in step.
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
+                 name, prompt, content='media', content_rowid='id', tokenize='trigram'
+             )",
+        )?;
+        conn.execute_batch(
+            "CREATE TRIGGER IF NOT EXISTS media_fts_insert AFTER INSERT ON media BEGIN
+                 INSERT INTO media_fts(rowid, name, prompt) VALUES (new.id, new.name, new.prompt);
+             END;
+             CREATE TRIGGER IF NOT EXISTS media_fts_delete AFTER DELETE ON media BEGIN
+                 INSERT INTO media_fts(media_fts, rowid, name, prompt)
+                 VALUES ('delete', old.id, old.name, old.prompt);
+             END;
+             CREATE TRIGGER IF NOT EXISTS media_fts_update AFTER UPDATE ON media BEGIN
+                 INSERT INTO media_fts(media_fts, rowid, name, prompt)
+                 VALUES ('delete', old.id, old.name, old.prompt);
+                 INSERT INTO media_fts(rowid, name, prompt) VALUES (new.id, new.name, new.prompt);
+             END;",
+        )?;
+        // Backfill once, recorded by a flag rather than by inspecting the table.
+        //
+        // Counting rows does not work here and fails in the direction that
+        // looks fine: on an external-content table `SELECT count(*) FROM
+        // media_fts` is answered from `media`, so a *completely empty* index
+        // reports the full row count. The obvious guard — "rebuild when the
+        // index has fewer rows than the library" — is therefore never true, and
+        // every search silently returns nothing.
+        //
+        // The version lets a tokenizer or column change force one rebuild
+        // later; rebuilding every launch would cost 3.7s on this library.
+        let built: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key = 'fts_version'", [], |row| row.get(0))
+            .optional()?;
+        if built.as_deref() != Some(FTS_VERSION) {
+            conn.execute_batch("INSERT INTO media_fts(media_fts) VALUES ('rebuild')")?;
+            conn.execute(
+                "INSERT INTO settings(key, value) VALUES ('fts_version', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [FTS_VERSION],
+            )?;
+        }
+
+        // Ratings lifted out of a Stable Diffusion Image Browser database.
+        //
+        // Kept as their own table rather than written straight onto `media`,
+        // because an import usually happens *before* the folder it describes
+        // has been scanned — and because the files it names may not exist at
+        // all. Measured against two real databases: of 7,513 ratings, 3,042
+        // pointed at files that still existed and the rest had been deleted
+        // deliberately. Holding them here means the survivors attach to rows
+        // as those rows appear, and the others cost nothing but a row.
+        //
+        // `match_key` is the path from `outputs\` onwards, lowercased. That
+        // survives the whole tree being moved to another drive *and* the
+        // install directory being renamed, both of which had happened.
+        // Folders the scanner walks straight past.
+        //
+        // The app-managed twin of dropping a `.lumaignore` into a directory.
+        // Both exist because they suit different situations: the marker file
+        // travels with the folder and survives a reinstall, while this one can
+        // be set from the grid the moment you notice a texture pack in it —
+        // which is when you actually find out you wanted it.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS excluded_folders (
+                 path       TEXT    NOT NULL PRIMARY KEY,
+                 added_at   INTEGER NOT NULL
+             );",
+        )?;
+
+        // Which rating databases have already been read, so a scan that finds
+        // the same file again does not re-read 2 million rows every launch.
+        //
+        // Keyed on size and mtime as well as path: an Image Browser database
+        // belonging to a webui someone still uses gains ratings over time, and
+        // the point of importing automatically is that new ones arrive without
+        // being asked for.
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS imported_databases (
+                path        TEXT    NOT NULL PRIMARY KEY,
+                size_bytes  INTEGER NOT NULL,
+                modified_at INTEGER NOT NULL,
+                imported_at INTEGER NOT NULL,
+                staged      INTEGER NOT NULL
+            );
+            "#,
+        )?;
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS imported_stars (
+                match_key TEXT    NOT NULL PRIMARY KEY,
+                stars     INTEGER NOT NULL,
+                source    TEXT    NOT NULL,
+                imported_at INTEGER NOT NULL
+            );
+            "#,
+        )?;
+
+        // When this row was last examined for structural tags. Same shape as
+        // `anime_at` and for the same reason: the queue is a query, so the
+        // pass is restartable and a row is never examined twice.
+        let has_labelled_at = conn
+            .prepare("PRAGMA table_info(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "labelled_at");
+        if !has_labelled_at {
+            conn.execute_batch("ALTER TABLE media ADD COLUMN labelled_at INTEGER")?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_label_queue
+             ON media(modified_at DESC) WHERE labelled_at IS NULL AND error IS NULL",
         )?;
 
         Ok(())
@@ -266,6 +485,163 @@ impl Db {
         let conn = self.conn.lock().expect("index mutex poisoned");
         conn.execute("DELETE FROM media WHERE path = ?1", params![path])?;
         Ok(())
+    }
+
+    /// Images with a thumbnail but no perceptual hash yet.
+    ///
+    /// Images only: a video's duplicates are found by its content key, which
+    /// the scan already computed, so hashing poster frames would be work with
+    /// no question behind it.
+    pub fn pending_hashes(&self, limit: i64) -> Result<Vec<PendingFile>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, path, kind, thumb_path, content_key FROM media
+             WHERE (phash IS NULL OR colour_sig IS NULL)
+               AND thumb_path IS NOT NULL AND error IS NULL
+               AND kind = 'image'
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(PendingFile {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                kind: MediaKind::Image,
+                thumb_path: row.get(3)?,
+                content_key: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Stored as a signed integer because SQLite has no unsigned type. The bit
+    /// pattern round-trips exactly, which is all the Hamming distance needs.
+    pub fn set_fingerprint(&self, id: i64, hash: u64, colour: &[u8]) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "UPDATE media SET phash = ?2, colour_sig = ?3 WHERE id = ?1",
+            params![id, hash as i64, colour],
+        )?;
+        Ok(())
+    }
+
+    pub fn all_fingerprints(&self) -> Result<Vec<(i64, u64, Vec<u8>)>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, phash, colour_sig FROM media
+             WHERE phash IS NOT NULL AND colour_sig IS NOT NULL AND error IS NULL",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Videos that share a content key, as `(group id, row id)` pairs.
+    ///
+    /// The key is size plus a hash of the first and last 64KB, so this is an
+    /// exact match rather than a perceptual one — two videos with the same key
+    /// are the same file. Stronger than comparing sizes, which two unrelated
+    /// videos can share, and it costs nothing because the scan already
+    /// computed it.
+    pub fn video_duplicates(&self) -> Result<Vec<(i64, i64)>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT MIN(id) OVER (PARTITION BY content_key), id FROM media
+             WHERE kind = 'video' AND content_key IS NOT NULL AND error IS NULL
+               AND content_key IN (
+                   SELECT content_key FROM media
+                   WHERE kind = 'video' AND content_key IS NOT NULL AND error IS NULL
+                   GROUP BY content_key HAVING COUNT(*) > 1
+               )",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Replace every duplicate grouping in one transaction.
+    ///
+    /// Cleared first, so a row that stopped having a twin — because the other
+    /// copy was deleted, or excluded — stops being shown as one.
+    pub fn set_duplicate_groups(&self, pairs: &[(i64, i64)]) -> Result<()> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let tx = conn.transaction()?;
+        tx.execute("UPDATE media SET dupe_group = NULL WHERE dupe_group IS NOT NULL", [])?;
+        {
+            let mut stmt = tx.prepare("UPDATE media SET dupe_group = ?2 WHERE id = ?1")?;
+            for (group, id) in pairs {
+                stmt.execute(params![id, group])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Folders the scanner must walk straight past, newest first.
+    pub fn excluded_folders(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt =
+            conn.prepare("SELECT path FROM excluded_folders ORDER BY added_at DESC")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn add_excluded_folder(&self, path: &str, now: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "INSERT INTO excluded_folders (path, added_at) VALUES (?1, ?2)
+             ON CONFLICT(path) DO NOTHING",
+            params![path, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_excluded_folder(&self, path: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute("DELETE FROM excluded_folders WHERE path = ?1", params![path])?;
+        Ok(())
+    }
+
+    /// Drop every indexed row under `prefix`, returning their content keys.
+    ///
+    /// Excluding a folder has to remove what is already indexed as well as stop
+    /// future walks, or the texture pack you just excluded stays in the grid
+    /// until something else happens to prune it.
+    ///
+    /// The keys come back so the caller can delete the thumbnails those rows
+    /// were the last owner of — a key shared with a file elsewhere must keep
+    /// its derived data, which is why this cannot just delete by row.
+    pub fn delete_media_under(&self, prefix: &str) -> Result<Vec<String>> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let tx = conn.transaction()?;
+        let keys: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT DISTINCT content_key FROM media
+                 WHERE content_key IS NOT NULL AND (path = ?1 OR path LIKE ?2 ESCAPE '\\')",
+            )?;
+            let pattern = format!("{}%", escape_like(prefix));
+            let rows = stmt.query_map(params![prefix, pattern], |row| row.get(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        tx.execute(
+            "DELETE FROM media WHERE path = ?1 OR path LIKE ?2 ESCAPE '\\'",
+            params![prefix, format!("{}%", escape_like(prefix))],
+        )?;
+        tx.commit()?;
+        Ok(keys)
+    }
+
+    /// Whether any row still uses this content key. See [`Db::delete_media_under`].
+    pub fn content_key_is_orphaned(&self, key: &str) -> Result<bool> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM media WHERE content_key = ?1",
+            params![key],
+            |row| row.get::<_, i64>(0),
+        )? == 0)
     }
 
     pub fn media_paths_in_folder(&self, folder_id: i64) -> Result<Vec<String>> {
@@ -412,8 +788,301 @@ impl Db {
             PhaseQueue::Classification => {
                 "SELECT COUNT(*) FROM media WHERE classified_at IS NOT NULL"
             }
+            // Documents are outside this phase's universe entirely — neither
+            // queued nor counted as finished — so the two halves of `total`
+            // are drawn from the same population and the bar cannot exceed 100%.
+            PhaseQueue::AnimeReview => {
+                "SELECT COUNT(*) FROM media WHERE anime_at IS NOT NULL AND rating = 'sfw'
+                 AND NOT EXISTS (
+                     SELECT 1 FROM media_tags t
+                     WHERE t.media_id = media.id AND t.tag = 'document'
+                 )"
+            }
+            PhaseQueue::Labels => "SELECT COUNT(*) FROM media WHERE labelled_at IS NOT NULL",
         };
         Ok(conn.query_row(sql, [], |row| row.get(0))?)
+    }
+
+    /// Rows NudeNet called SFW that the anime tagger has not yet seen.
+    ///
+    /// SFW only, and that is the whole point of the phase: the tagger exists to
+    /// catch drawn content NudeNet under-fires on, so it can only ever *raise*
+    /// a rating. Running it on something already flagged spends the most
+    /// expensive model in the app to confirm a decision that has been made.
+    ///
+    /// Documents are excluded for the same reason. A Danbooru-trained tagger
+    /// has no useful opinion about a scanned payslip, and the label phase runs
+    /// first in every path that reaches here, so the tag is already known.
+    ///
+    /// Newest first, matching every other queue — the part of the library on
+    /// screen settles first.
+    pub fn pending_anime(&self, limit: i64) -> Result<Vec<PendingFile>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, path, kind, thumb_path, content_key FROM media
+             WHERE anime_at IS NULL
+               AND classified_at IS NOT NULL
+               AND rating = 'sfw'
+               AND thumb_path IS NOT NULL
+               AND error IS NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM media_tags t
+                   WHERE t.media_id = media.id AND t.tag = 'document'
+               )
+             ORDER BY kind = 'video', modified_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            let kind: String = row.get(2)?;
+            Ok(PendingFile {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                kind: if kind == "video" {
+                    MediaKind::Video
+                } else {
+                    MediaKind::Image
+                },
+                thumb_path: row.get(3)?,
+                content_key: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        Ok(conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Record what a file says about how it was generated.
+    ///
+    /// The prompt is duplicated into its own column rather than only living in
+    /// the JSON, so searching for a prompt cannot also match a model hash or a
+    /// seed that happens to contain the same digits.
+    pub fn set_generation(&self, id: i64, generation: Option<&Generation>) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let json = match generation {
+            Some(generation) => Some(serde_json::to_string(generation)?),
+            None => None,
+        };
+        conn.execute(
+            "UPDATE media SET generation_json = ?2, prompt = ?3 WHERE id = ?1",
+            params![id, json, generation.and_then(|g| g.prompt.clone())],
+        )?;
+        Ok(())
+    }
+
+    /// Attach an imported star rating to a row, if one was recorded for it.
+    ///
+    /// Never overwrites a rating already on the row: an import is a one-time
+    /// recovery of somebody's past judgement, and re-running it must not undo
+    /// a newer one made here.
+    pub fn apply_imported_stars(&self, id: i64, path: &str) -> Result<bool> {
+        let Some(key) = outputs_match_key(path) else {
+            return Ok(false);
+        };
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let changed = conn.execute(
+            "UPDATE media SET stars = (SELECT stars FROM imported_stars WHERE match_key = ?2)
+             WHERE id = ?1
+               AND stars IS NULL
+               AND EXISTS (SELECT 1 FROM imported_stars WHERE match_key = ?2)",
+            params![id, key],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Has this database already been read, exactly as it is now?
+    ///
+    /// A changed size or mtime means the webui has been used since, so it is
+    /// read again — the ratings are staged with `ON CONFLICT DO UPDATE`, so a
+    /// re-read refreshes rather than duplicates.
+    pub fn database_already_imported(
+        &self,
+        path: &str,
+        size_bytes: i64,
+        modified_at: i64,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM imported_databases
+                 WHERE path = ?1 AND size_bytes = ?2 AND modified_at = ?3",
+                params![path, size_bytes, modified_at],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn record_database_import(
+        &self,
+        path: &str,
+        size_bytes: i64,
+        modified_at: i64,
+        staged: i64,
+        now: i64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "INSERT INTO imported_databases (path, size_bytes, modified_at, imported_at, staged)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(path) DO UPDATE SET
+                 size_bytes = excluded.size_bytes,
+                 modified_at = excluded.modified_at,
+                 imported_at = excluded.imported_at,
+                 staged = excluded.staged",
+            params![path, size_bytes, modified_at, now, staged],
+        )?;
+        Ok(())
+    }
+
+    /// Stage ratings read out of an Image Browser database.
+    ///
+    /// Returns how many were stored. Replaces on conflict, so re-importing a
+    /// database that has since been updated refreshes rather than duplicates.
+    pub fn stage_imported_stars(
+        &self,
+        entries: &[(String, i64)],
+        source: &str,
+        now: i64,
+    ) -> Result<usize> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let tx = conn.transaction()?;
+        let mut stored = 0;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO imported_stars (match_key, stars, source, imported_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(match_key) DO UPDATE SET
+                     stars = excluded.stars,
+                     source = excluded.source,
+                     imported_at = excluded.imported_at",
+            )?;
+            for (key, stars) in entries {
+                stmt.execute(params![key, stars, source, now])?;
+                stored += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(stored)
+    }
+
+    /// Apply every staged rating to rows already in the index.
+    ///
+    /// Returns how many rows gained a rating. Runs as one statement rather
+    /// than a row-by-row loop because the join is what SQLite is for.
+    pub fn apply_all_imported_stars(&self) -> Result<usize> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare("SELECT id, path FROM media WHERE stars IS NULL")?;
+        let rows: Vec<(i64, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+
+        let mut update = conn.prepare(
+            "UPDATE media SET stars = (SELECT stars FROM imported_stars WHERE match_key = ?2)
+             WHERE id = ?1 AND EXISTS (SELECT 1 FROM imported_stars WHERE match_key = ?2)",
+        )?;
+        let mut applied = 0;
+        for (id, path) in rows {
+            if let Some(key) = outputs_match_key(&path) {
+                applied += update.execute(params![id, key])?;
+            }
+        }
+        Ok(applied)
+    }
+
+    /// Set or clear a row's star rating. The one place a person's judgement
+    /// is written; nothing in the pipeline calls this.
+    pub fn set_stars(&self, id: i64, stars: Option<i64>) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "UPDATE media SET stars = ?2 WHERE id = ?1",
+            params![id, stars.filter(|s| (1..=5).contains(s))],
+        )?;
+        Ok(())
+    }
+
+    /// Rows that have never been examined for structural tags.
+    ///
+    /// Unlike the classification queue this does not require a verdict: a
+    /// document is a document whether or not anything has rated it, and the
+    /// generator metadata sits in the file itself.
+    pub fn pending_labels(&self, limit: i64) -> Result<Vec<PendingFile>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, path, kind, thumb_path, content_key FROM media
+             WHERE labelled_at IS NULL AND error IS NULL
+             ORDER BY modified_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            let kind: String = row.get(2)?;
+            Ok(PendingFile {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                kind: if kind == "video" {
+                    MediaKind::Video
+                } else {
+                    MediaKind::Image
+                },
+                thumb_path: row.get(3)?,
+                content_key: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Replace a row's tags and stamp it as examined, in one transaction.
+    ///
+    /// Replace rather than insert, so re-running the pass after a rule change
+    /// corrects a row instead of accumulating both answers.
+    pub fn set_tags(&self, id: i64, tags: &[String], now: i64) -> Result<()> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM media_tags WHERE media_id = ?1", params![id])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO media_tags (media_id, tag) VALUES (?1, ?2)",
+            )?;
+            for tag in tags {
+                stmt.execute(params![id, tag])?;
+            }
+        }
+        tx.execute(
+            "UPDATE media SET labelled_at = ?2 WHERE id = ?1",
+            params![id, now],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Record that the tagger has seen this row, whatever it concluded.
+    ///
+    /// Stamped even when the tagger found nothing, so a file it has no opinion
+    /// about leaves the queue instead of being re-examined on every launch.
+    pub fn mark_anime_done(&self, id: i64, now: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute("UPDATE media SET anime_at = ?2 WHERE id = ?1", params![id, now])?;
+        Ok(())
     }
 
     /// Files whose shape is not known yet.
@@ -680,8 +1349,55 @@ impl Db {
             where_parts.push("is_sexy = 1".to_string());
         }
         if !query.search.trim().is_empty() {
-            where_parts.push(format!("name LIKE ?{} ESCAPE '\\'", binds.len() + 1));
-            binds.push(Box::new(format!("%{}%", escape_like(query.search.trim()))));
+            // Filename *or* prompt. Searching a generated library by what was
+            // asked for is the point of keeping the prompt, and nobody wants
+            // two search boxes to choose between. The prompt is its own column
+            // rather than part of the generation blob so that searching for
+            // "euler" finds a prompt about Euler and not every image made with
+            // that sampler.
+            // Through the FTS index rather than `LIKE`, so it composes with the
+            // folder, kind and rating filters *and* answers in single-digit
+            // milliseconds. Measured on 160,901 rows: `LIKE '%moona%'` needs
+            // 230ms for the count this query also runs — far too slow for a
+            // field that filters the grid as you type.
+            //
+            // A term the index cannot answer yields nothing rather than
+            // everything: typing "ab" should show an empty grid, not the whole
+            // library, because the next keystroke is about to make it useful.
+            match fts_expression(query.search.trim()) {
+                Some(expression) => {
+                    let at = binds.len() + 1;
+                    where_parts.push(format!(
+                        "id IN (SELECT rowid FROM media_fts WHERE media_fts MATCH ?{at})"
+                    ));
+                    binds.push(Box::new(expression));
+                }
+                None => where_parts.push("0".to_string()),
+            }
+        }
+        if let Some(min) = query.min_stars {
+            where_parts.push(format!("stars >= ?{}", binds.len() + 1));
+            binds.push(Box::new(min));
+        }
+        if query.duplicates_only {
+            where_parts.push("dupe_group IS NOT NULL".to_string());
+        }
+        if let Some(tag) = query.tag.as_deref().filter(|tag| !tag.is_empty()) {
+            where_parts.push(format!(
+                "EXISTS (SELECT 1 FROM media_tags t WHERE t.media_id = media.id AND t.tag = ?{})",
+                binds.len() + 1
+            ));
+            binds.push(Box::new(tag.to_string()));
+        }
+        for hidden in query.hide_tags.iter().filter(|tag| !tag.is_empty()) {
+            // One NOT EXISTS per tag rather than a single `NOT IN (...)`: the
+            // list is bound, so it cannot be interpolated as one placeholder,
+            // and hiding two tags is an AND of two absences either way.
+            where_parts.push(format!(
+                "NOT EXISTS (SELECT 1 FROM media_tags t WHERE t.media_id = media.id AND t.tag = ?{})",
+                binds.len() + 1
+            ));
+            binds.push(Box::new(hidden.clone()));
         }
 
         let where_sql = if where_parts.is_empty() {
@@ -690,8 +1406,15 @@ impl Db {
             format!("WHERE {}", where_parts.join(" AND "))
         };
 
-        let order_sql = match query.sort {
+        // Duplicates override the sort: the whole point of the view is seeing
+        // copies of one picture next to each other, and any other order
+        // scatters them through the grid.
+        let order_sql = if query.duplicates_only {
+            "ORDER BY dupe_group, id"
+        } else {
+            match query.sort {
             SortOrder::Recent => "ORDER BY modified_at DESC, id DESC",
+            SortOrder::Added => "ORDER BY added_at DESC, id DESC",
             SortOrder::Oldest => "ORDER BY modified_at ASC, id ASC",
             SortOrder::Name => "ORDER BY name COLLATE NOCASE ASC, id ASC",
             SortOrder::Largest => "ORDER BY size_bytes DESC, id DESC",
@@ -699,6 +1422,7 @@ impl Db {
             // on every query, so page 2 would re-show items from page 1 and
             // silently skip others. This is stable for a given row set.
             SortOrder::Random => "ORDER BY (id * 2654435761) % 2147483647, id",
+            }
         };
 
         let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
@@ -772,9 +1496,36 @@ impl Db {
     }
 }
 
+/// An FTS5 MATCH expression for text a person typed.
+///
+/// Everything is quoted, so `(` `"` `*` and `-` are searched for rather than
+/// parsed as query syntax — typing `(wide hips:1.3)` should find that text, not
+/// raise "fts5: syntax error near". Terms are ANDed, so word order does not
+/// matter but every word must appear.
+///
+/// Returns `None` for input the trigram tokenizer cannot answer: it indexes
+/// three-character sequences, so nothing shorter than three characters can be
+/// looked up.
+fn fts_expression(input: &str) -> Option<String> {
+    let terms: Vec<String> = input
+        .split_whitespace()
+        .filter(|term| term.chars().count() >= 3)
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect();
+    if terms.is_empty() {
+        return None;
+    }
+    Some(terms.join(" AND "))
+}
+
+/// Bumping this rebuilds the search index once, on the next launch. Change it
+/// whenever the tokenizer or the indexed columns change, or an existing library
+/// keeps an index that no longer matches the queries run against it.
+const FTS_VERSION: &str = "1-trigram-name-prompt";
+
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
-                             duration_sec, verdict_json, classified_at";
+                             duration_sec, verdict_json, classified_at, stars,                              generation_json, dupe_group";
 
 fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
     let kind: String = row.get(4)?;
@@ -803,6 +1554,11 @@ fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
         // next scan pass will rewrite it.
         verdict: verdict_json.and_then(|json| serde_json::from_str(&json).ok()),
         classified_at: row.get(15)?,
+        stars: row.get(16)?,
+        generation: row
+            .get::<_, Option<String>>(17)?
+            .and_then(|json| serde_json::from_str(&json).ok()),
+        dupe_group: row.get(18)?,
     })
 }
 
@@ -818,6 +1574,39 @@ fn truncate(input: &str, max: usize) -> String {
         .last()
         .unwrap_or(0);
     format!("{}…", &input[..end])
+}
+
+/// The portion of a path that survives the tree being moved.
+///
+/// A Stable Diffusion Image Browser database records absolute paths from
+/// whenever the image was made:
+///
+/// ```text
+/// D:\Development\__big_stable-diffusion-webui\outputs\txt2img-images\2023-05-08\00043-2571709213.png
+/// ```
+///
+/// By the time anything imports it, that tree has usually been archived to
+/// another drive and often renamed on the way. What does *not* change is
+/// everything from `outputs` onwards — that is the webui's own layout, so it
+/// travels with the files. Measured against two real databases, keying on this
+/// matched 2,204 of 2,204 surviving ratings in one and every survivor in the
+/// other, where matching on the recorded install directory matched none.
+///
+/// `None` for a path with no `outputs` segment, which is every file that did
+/// not come out of a webui.
+pub fn outputs_match_key(path: &str) -> Option<String> {
+    let normalised = path.replace('/', "\\");
+    let lower = normalised.to_lowercase();
+    let at = lower
+        .split('\\')
+        .position(|segment| segment == "outputs")?;
+    Some(
+        lower
+            .split('\\')
+            .skip(at)
+            .collect::<Vec<_>>()
+            .join("\\"),
+    )
 }
 
 /// `%` and `_` are wildcards in LIKE; a filename containing either would match
@@ -857,6 +1646,10 @@ pub enum PhaseQueue {
     Dimensions,
     Thumbnails,
     Classification,
+    /// Only SFW rows are ever queued for it, so "completed" counts the rows
+    /// that were eligible and are done — not the whole library.
+    AnimeReview,
+    Labels,
 }
 
 /// Everything the thumbnail phase learns about a file in one pass.
@@ -905,6 +1698,10 @@ mod tests {
             rating: None,
             sexy_only: false,
             search: String::new(),
+            tag: None,
+            min_stars: None,
+            duplicates_only: false,
+            hide_tags: Vec::new(),
             sort: SortOrder::Recent,
             limit: 100,
             offset: 0,
@@ -967,6 +1764,142 @@ mod tests {
             .unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.items[0].name, "b.mp4");
+    }
+
+    #[test]
+    fn fts_expressions_are_quoted_so_prompt_punctuation_is_searchable() {
+        // `(wide hips:1.3)` is text someone will paste in from a prompt. Left
+        // unquoted, FTS5 parses the parentheses and the colon as query syntax
+        // and raises "fts5: syntax error near", which reaches the UI as a red
+        // toast for a perfectly reasonable search.
+        assert_eq!(
+            fts_expression("(wide hips:1.3)").as_deref(),
+            Some(r#""(wide" AND "hips:1.3)""#)
+        );
+        // A quote in the input must not end the quoted term.
+        assert_eq!(fts_expression(r#"say "hi""#).as_deref(), Some(r#""say" AND """hi""""#));
+    }
+
+    #[test]
+    fn fts_expressions_drop_terms_the_trigram_index_cannot_answer() {
+        // Trigram indexes three-character sequences, so a shorter term matches
+        // nothing at all — silently returning zero results for `a girl` would
+        // be worse than searching for `girl`.
+        assert_eq!(fts_expression("a girl").as_deref(), Some(r#""girl""#));
+        assert_eq!(fts_expression("of"), None);
+        assert_eq!(fts_expression("   "), None);
+    }
+
+    /// How many rows the grid's search finds for `text`.
+    fn found(db: &Db, text: &str) -> i64 {
+        let mut q = query();
+        q.search = text.to_string();
+        db.query_media(&q).unwrap().total
+    }
+
+    /// One row whose name and prompt are both searchable.
+    fn with_prompt(prompt: &str) -> (Db, i64) {
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[file("/media/00166-3997412987.png", MediaKind::Image, 1)],
+            1,
+        )
+        .expect("insert");
+        let id = db.query_media(&query()).unwrap().items[0].id;
+        db.set_generation(
+            id,
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".into(),
+                prompt: Some(prompt.to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("set generation");
+        (db, id)
+    }
+
+    #[test]
+    fn searching_finds_a_filename_and_a_prompt_alike() {
+        let (db, _) = with_prompt("official art, moona hoshinova, 1girl");
+
+        assert_eq!(found(&db, "00166"), 1, "by filename");
+        assert_eq!(found(&db, "hoshinova"), 1, "by prompt");
+        // A substring *inside* a token, which a word tokenizer would miss:
+        // `1girl` is one word, and this is why the index is trigram.
+        assert_eq!(found(&db, "girl"), 1, "inside a token");
+        // Terms are ANDed, so word order does not matter but all must appear.
+        assert_eq!(found(&db, "hoshinova moona"), 1);
+        assert_eq!(found(&db, "hoshinova beach"), 0);
+        // Punctuation from a real prompt must not be parsed as query syntax.
+        assert_eq!(found(&db, "(wide hips:1.3)"), 0);
+    }
+
+    #[test]
+    fn a_library_that_predates_the_search_index_gets_one_built() {
+        // The case every existing install is in, and the one the in-memory
+        // tests cannot reach: rows already present when the FTS table is
+        // created. They never pass through the triggers, so without a backfill
+        // the index is empty and every search returns nothing.
+        //
+        // This failed once because the "is it built" check counted rows —
+        // and on an external-content table `count(*)` is answered from the
+        // *content* table, so an empty index reports the full library.
+        let path = std::env::temp_dir().join(format!("luma-fts-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let db = Db::open(&path).unwrap();
+            let folder = db.add_folder("/media", 1).unwrap();
+            db.insert_media_batch(folder, &[file("/media/moona.png", MediaKind::Image, 1)], 1)
+                .unwrap();
+        }
+
+        // Put it in the state an upgrading install starts from: rows present,
+        // index absent.
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "DROP TABLE media_fts; DELETE FROM settings WHERE key = 'fts_version';",
+            )
+            .unwrap();
+        }
+
+        let db = Db::open(&path).unwrap();
+        let mut query = query();
+        query.search = "moona".to_string();
+        assert_eq!(
+            db.query_media(&query).unwrap().total,
+            1,
+            "an index built after the rows exist must still find them"
+        );
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_search_index_follows_a_row_that_changes() {
+        // An external-content FTS table is only as correct as its triggers.
+        let (db, id) = with_prompt("a castle at dusk");
+        assert_eq!(found(&db, "castle"), 1);
+
+        // Re-parsed with a different prompt: the old text must stop matching.
+        db.set_generation(
+            id,
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".into(),
+                prompt: Some("a harbour at dawn".into()),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(found(&db, "castle"), 0);
+        assert_eq!(found(&db, "harbour"), 1);
+
+        db.delete_media_by_path("/media/00166-3997412987.png").unwrap();
+        assert_eq!(found(&db, "harbour"), 0);
     }
 
     #[test]
@@ -1362,5 +2295,131 @@ mod tests {
         let ready = db.pending_classification(100).unwrap();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].thumb_path.as_deref(), Some("/thumbs/a.jpg"));
+    }
+
+    #[test]
+    fn tags_can_both_narrow_and_exclude() {
+        let (db, _) = seeded();
+        let ids: Vec<i64> = db
+            .query_media(&query())
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| item.id)
+            .collect();
+
+        assert_eq!(db.pending_labels(100).unwrap().len(), 3);
+        db.set_tags(ids[0], &["document".to_string()], 5).unwrap();
+        db.set_tags(ids[1], &["generated".to_string()], 5).unwrap();
+        db.set_tags(ids[2], &[], 5).unwrap();
+        assert!(db.pending_labels(100).unwrap().is_empty(), "all three examined");
+
+        let only_docs = MediaQuery { tag: Some("document".into()), ..query() };
+        let page = db.query_media(&only_docs).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].id, ids[0]);
+
+        // The case this feature exists for: everything except the scans.
+        let no_docs = MediaQuery { hide_tags: vec!["document".into()], ..query() };
+        let page = db.query_media(&no_docs).unwrap();
+        assert_eq!(page.total, 2);
+        assert!(page.items.iter().all(|item| item.id != ids[0]));
+
+        // Untagged rows survive every exclusion — absence of a tag is not a tag.
+        let neither = MediaQuery {
+            hide_tags: vec!["document".into(), "generated".into()],
+            ..query()
+        };
+        let page = db.query_media(&neither).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].id, ids[2]);
+
+        // Re-labelling replaces rather than accumulates, so a corrected rule
+        // fixes a row instead of leaving it in both buckets.
+        db.set_tags(ids[0], &["generated".to_string()], 6).unwrap();
+        assert_eq!(db.query_media(&only_docs).unwrap().total, 0);
+        assert_eq!(
+            db.query_media(&MediaQuery { tag: Some("generated".into()), ..query() })
+                .unwrap()
+                .total,
+            2
+        );
+    }
+
+    #[test]
+    fn only_sfw_rows_queue_for_the_anime_tagger() {
+        // The economics of the second pass. It is the most expensive model in
+        // the app and can only ever *raise* a rating, so every row it looks at
+        // that is already flagged is pure waste. This is the query that decides
+        // whether the phase costs 70% of the library or all of it.
+        let (db, _) = seeded();
+        let ids: Vec<i64> = db
+            .query_media(&query())
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| item.id)
+            .collect();
+
+        for (index, id) in ids.iter().enumerate() {
+            db.update_thumbnail(
+                *id,
+                &ThumbnailUpdate {
+                    thumb_path: format!("/thumbs/{index}.jpg"),
+                    thumb_width: 320,
+                    thumb_height: 240,
+                    width: 1600,
+                    height: 1200,
+                    duration_sec: None,
+                },
+            )
+            .unwrap();
+        }
+
+        // Nothing is classified yet, so nothing is eligible: the tagger refines
+        // a verdict, it does not produce the first one.
+        assert!(db.pending_anime(100).unwrap().is_empty());
+
+        let verdict = |rating: Rating| MediaVerdict {
+            person: true,
+            sexy: rating != Rating::Sfw,
+            nude: rating == Rating::Explicit,
+            rating,
+            top_label: None,
+            top_label_title: None,
+            top_score: 0.0,
+            frame_count: 1,
+            sexy_frame_count: 0,
+            poster_frame_index: Some(0),
+        };
+        db.update_verdict(ids[0], &verdict(Rating::Sfw), 10).unwrap();
+        db.update_verdict(ids[1], &verdict(Rating::Suggestive), 10).unwrap();
+        db.update_verdict(ids[2], &verdict(Rating::Explicit), 10).unwrap();
+
+        let queued = db.pending_anime(100).unwrap();
+        assert_eq!(queued.len(), 1, "only the SFW row is worth a second opinion");
+        assert_eq!(queued[0].id, ids[0]);
+
+        // A scan is SFW and stays SFW. Running a Danbooru tagger over a payslip
+        // is the most expensive model in the app answering a question nobody
+        // asked, so a document leaves the queue without being looked at.
+        db.set_tags(ids[0], &["document".to_string()], 15).unwrap();
+        assert!(
+            db.pending_anime(100).unwrap().is_empty(),
+            "a document is not worth a second opinion either"
+        );
+        assert_eq!(
+            db.completed_in_phase(PhaseQueue::AnimeReview).unwrap(),
+            0,
+            "and it is not counted as finished — it was never in this phase"
+        );
+        db.set_tags(ids[0], &[], 16).unwrap();
+        assert_eq!(db.pending_anime(100).unwrap().len(), 1, "untagged, it returns");
+
+        // Stamped even when the tagger concludes nothing, or the row would come
+        // back on every launch forever.
+        db.mark_anime_done(ids[0], 20).unwrap();
+        assert!(db.pending_anime(100).unwrap().is_empty());
+        assert_eq!(db.completed_in_phase(PhaseQueue::AnimeReview).unwrap(), 1);
     }
 }

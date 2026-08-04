@@ -130,6 +130,16 @@ pub struct MediaItem {
     pub duration_sec: Option<f64>,
     pub verdict: Option<MediaVerdict>,
     pub classified_at: Option<i64>,
+    /// A person's 1-5 judgement, never a model's. `None` means unrated.
+    #[serde(default)]
+    pub stars: Option<i64>,
+    /// What the file says about how it was made, when it says anything.
+    #[serde(default)]
+    pub generation: Option<crate::generated::Generation>,
+    /// Which set of duplicates this row belongs to, or `None` for none. Shared
+    /// by every member, and numbered from the lowest — see `dupes::group`.
+    #[serde(default)]
+    pub dupe_group: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -157,6 +167,17 @@ pub enum JobPhase {
     Measuring,
     Thumbnailing,
     Classifying,
+    /// Fingerprinting each image so duplicates can be found.
+    Hashing,
+    /// Working out what kind of picture each row is — a scan, a generated
+    /// image — independent of how it was rated.
+    Labelling,
+    /// The anime tagger's second opinion on what NudeNet called SFW.
+    ///
+    /// Last, and its own phase, because it is the only optional one: the
+    /// library is fully rated before it starts, so interrupting it costs
+    /// accuracy on drawn content and nothing else.
+    Tagging,
     Done,
 }
 
@@ -204,6 +225,13 @@ pub struct LibraryStats {
 #[serde(rename_all = "lowercase")]
 pub enum SortOrder {
     Recent,
+    /// When the *vault* first saw the file, not when the file was written.
+    ///
+    /// The two differ by years: a folder of decade-old photos added today is
+    /// new to the library and ancient by `modified_at`. This is the question
+    /// "what just came in", which is what the recently-added strip answered
+    /// before the search field took its place.
+    Added,
     Oldest,
     Name,
     Largest,
@@ -219,6 +247,22 @@ pub struct MediaQuery {
     pub rating: Option<Rating>,
     pub sexy_only: bool,
     pub search: String,
+    /// Show only rows carrying this structural tag. `None` means "no filter".
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Show only rows rated at least this many stars. `Some(1)` is therefore
+    /// "anything I have rated at all".
+    #[serde(default)]
+    pub min_stars: Option<i64>,
+    /// Show only files that have at least one duplicate, grouped together.
+    #[serde(default)]
+    pub duplicates_only: bool,
+    /// Hide rows carrying any of these. Separate from `tag` rather than a
+    /// signed list because the two are genuinely different questions — "show
+    /// me the documents" and "never show me documents" are both wanted, and
+    /// the second is the reason this exists.
+    #[serde(default)]
+    pub hide_tags: Vec<String>,
     pub sort: SortOrder,
     pub limit: i64,
     pub offset: i64,

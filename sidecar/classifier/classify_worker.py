@@ -269,6 +269,85 @@ def load_anime_tagger():
         return None
 
 
+def looks_like_a_document(img) -> bool:
+    """Is this a scan, a screenshot of text, or a photo?
+
+    No model — a page of type has a shape that arithmetic can see. Every
+    threshold here was measured against 4,000 real thumbnails from a live
+    library rather than picked by eye, and the two rules that matter were each
+    added to kill a specific false positive that the previous version produced:
+
+    - **Glyph geometry, not whiteness.** Keying on "mostly white with some
+      ink" scored about 50% precision: it flagged shampoo bottles on studio
+      backdrops, a photograph of snow, and a manga page. Whiteness is the
+      *background* of a document, not the document. Counting small dark marks
+      of consistent height that line up into rows took it to ~72%.
+    - **Periodicity.** The survivors were all seamless tile patterns — a motif
+      stamped on a grid reads as hundreds of evenly spaced marks, which is
+      exactly what text looks like to a glyph counter. Autocorrelating the
+      ink-per-row profile separated the two groups completely: patterns ring
+      at 0.75-0.89, prose sits at 0.20-0.61. Nothing landed in between.
+
+    Tuned for precision over recall, because the point of the label is to hide
+    things: a photo wrongly hidden is worse than a document left visible. It
+    misses documents on dark backgrounds, coloured forms, and photographs of
+    paper taken at an angle.
+    """
+    import cv2
+    import numpy as np
+
+    height, width = img.shape[:2]
+    area = float(height * width)
+    if area < 1024:
+        return False
+
+    saturation = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[:, :, 1].astype("float32") / 255.0
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    luminance = gray.astype("float32") / 255.0
+
+    paper = float(np.mean((luminance > 0.80) & (saturation < 0.20)))
+    if paper < 0.45 or float(np.mean(saturation)) > 0.15:
+        return False
+
+    # Adaptive, not a global cutoff: it finds ink against paper whatever the
+    # scan's exposure, which is the difference between reading a bright phone
+    # photo of a letter and reading a dim one.
+    binary = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 15, 10
+    )
+    count, _, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+
+    rows, heights = [], []
+    biggest = 0.0
+    for i in range(1, count):
+        _, _, box_w, box_h, blob = stats[i]
+        biggest = max(biggest, blob / area)
+        if 3 <= box_h <= 28 and 1 <= box_w <= 40 and 4 <= blob <= 500 \
+                and blob >= 0.12 * box_w * box_h:
+            rows.append(centroids[i][1])
+            heights.append(box_h)
+
+    if len(rows) < 120 or biggest > 0.05:
+        return False
+
+    heights = np.asarray(heights, dtype="float32")
+    if float(heights.std() / max(heights.mean(), 1e-6)) > 0.55:
+        return False
+
+    # Do the marks stack into lines of type?
+    histogram, _ = np.histogram(np.asarray(rows), bins=max(8, height // 8), range=(0, height))
+    if int(np.sum(histogram >= 4)) < 6:
+        return False
+
+    ink = (binary > 0).astype("float32").mean(axis=1)
+    signal = ink - ink.mean()
+    correlation = np.correlate(signal, signal, mode="full")[len(signal) - 1:]
+    correlation = correlation / max(correlation[0], 1e-9)
+    low = max(4, height // 64)
+    peak = float(correlation[low:max(low + 1, height // 2)].max()) if height > 8 else 0.0
+    return peak <= 0.68
+
+
 def _iou(a, b) -> float:
     """Intersection over union of two `[x, y, w, h]` pixel boxes."""
     ax2, ay2 = a[0] + a[2], a[1] + a[3]
@@ -369,7 +448,84 @@ def check_environment() -> int:
     return 0 if report["ok"] else 1
 
 
+def limit_worker_threads() -> None:
+    """Hold this worker to `LUMA_ORT_THREADS` threads of real parallelism.
+
+    Two libraries have to be told separately, and missing either one makes the
+    app's CPU throttle nearly useless:
+
+    - **OpenCV** keeps its own thread pool sized to the core count. It is the
+      dominant cost of the structural label pass — `adaptiveThreshold` and
+      `connectedComponentsWithStats` both parallelise — so leaving it alone was
+      measured holding 35% of a 16-core machine from a *single* worker that was
+      supposed to be using 5%.
+    - **ONNX Runtime** sizes its intra-op pool per session, and a worker holds
+      three of them.
+
+    Both matter because the throttle's arithmetic assumes a unit of work costs
+    one thread. When the work is internally parallel, pacing it by sleeping
+    between units throttles almost nothing.
+    """
+    limit = os.environ.get("LUMA_ORT_THREADS")
+    if not limit:
+        return
+    try:
+        threads = max(1, int(limit))
+    except ValueError:
+        return
+
+    try:
+        import cv2
+
+        cv2.setNumThreads(threads)
+        log(f"OpenCV limited to {threads} thread(s)")
+    except Exception as exc:  # noqa: BLE001 — a throttle that cannot be applied
+        log(f"could not limit OpenCV threads: {type(exc).__name__}: {exc}")
+
+    limit_onnx_threads(threads)
+
+
+def limit_onnx_threads(threads: int) -> None:
+    """Hold ONNX Runtime to `threads` per session.
+
+    Set by the app when CPU throttling is on. It has to be done by patching the
+    session constructor because the thread budget is a *session option*, and the
+    sessions that matter are not ours: `NudeDetector` builds its own internally
+    and takes no options argument. The environment variables ONNX honours
+    (`OMP_NUM_THREADS` and friends) only apply to OpenMP builds, which the
+    wheels on PyPI are not.
+
+    Without this the throttle would be pacing something far larger than it
+    thinks: ONNX sizes its intra-op pool from the core count *per session*, and
+    a worker holds three. Eight workers were measured holding ~77 threads each
+    on a 16-core machine.
+    """
+    import onnxruntime
+
+    original = onnxruntime.InferenceSession
+
+    class SingleThreaded(original):
+        def __init__(self, *args, **kwargs):
+            options = kwargs.get("sess_options") or onnxruntime.SessionOptions()
+            options.intra_op_num_threads = threads
+            options.inter_op_num_threads = threads
+            # Sequential, or ORT still runs independent branches of the graph
+            # concurrently on top of the intra-op budget.
+            options.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
+            kwargs["sess_options"] = options
+            super().__init__(*args, **kwargs)
+
+    onnxruntime.InferenceSession = SingleThreaded
+    log(f"ONNX limited to {threads} thread(s) per session")
+
+
 def serve() -> int:
+    # Before anything constructs a session, including the import below.
+    try:
+        limit_worker_threads()
+    except Exception as exc:  # noqa: BLE001 — a throttle that cannot be applied
+        log(f"could not limit worker threads: {type(exc).__name__}: {exc}")
+
     try:
         from nudenet import NudeDetector
     except Exception as exc:  # noqa: BLE001
@@ -424,6 +580,14 @@ def serve() -> int:
             continue
 
         paths = request.get("paths") or []
+        # Which models to run. The caller decides, because the two are worth
+        # very different amounts per file: NudeNet is ~12MB and decides most of
+        # the library, while the tagger is ~378MB and only earns its cost on
+        # drawn content. Splitting them lets the pipeline get every file rated
+        # first and revisit the ones worth a second opinion afterwards.
+        #
+        # "full" stays the default so an older caller keeps working.
+        mode = request.get("mode") or "full"
         results = []
         for path in paths:
             try:
@@ -432,11 +596,23 @@ def serve() -> int:
                     results.append({"ok": False, "error": "cannot decode image"})
                     continue
                 height, width = img.shape[:2]
-                detections = merge_passes([d.detect(img) for d in detectors])
-                # Appended, not merged: these cover the whole frame and would
-                # suppress every real box under an IoU test.
-                if anime is not None:
-                    detections = detections + anime.detect(img)
+                if mode == "label":
+                    # Structural, not sexual: these describe what kind of
+                    # picture this is, so they travel as tags rather than as
+                    # detections and never reach the rating rules.
+                    tags = ["document"] if looks_like_a_document(img) else []
+                    results.append({"ok": True, "detections": [], "tags": tags})
+                    continue
+                if mode == "anime":
+                    # A second opinion on its own. The caller already holds this
+                    # file's NudeNet detections and merges these into them.
+                    detections = anime.detect(img) if anime is not None else []
+                else:
+                    detections = merge_passes([d.detect(img) for d in detectors])
+                    # Appended, not merged: these cover the whole frame and would
+                    # suppress every real box under an IoU test.
+                    if mode == "full" and anime is not None:
+                        detections = detections + anime.detect(img)
                 results.append({"ok": True, "detections": normalise(detections, width, height)})
             except Exception as exc:  # noqa: BLE001 — one bad file never kills the worker
                 log(f"failed on {path}: {type(exc).__name__}: {exc}")

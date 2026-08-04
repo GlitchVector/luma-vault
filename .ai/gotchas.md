@@ -176,6 +176,22 @@ provider warnings on some platforms and a stray line would corrupt the stream.
 
 ## Tooling
 
+**The dev server is pinned to 4340, and the pin matters.** `dth-character-studio`
+— which is often running on the same machine — uses 4330, so the two Tauri apps
+can be up at once. Two things keep it that way:
+
+- `devUrl` in `tauri.conf.json` hard-codes `http://localhost:4340`, so the port
+  is not something vite is free to choose. Changing one without the other gives
+  a window pointing at nothing.
+- `--strictPort` makes vite **fail** rather than fall back to 4341. A silent
+  fallback is the worse outcome: the shell would come up and render a blank
+  page, which reads as an app bug rather than a busy port.
+
+The two apps are also on different identifiers — `net.glitchvector.luma-vault`
+against `com.polynaut.dthcharacterstudio` — so their indexes, thumbnails and
+extracted frames live in separate app-data directories and cannot collide
+either.
+
 **Rust 1.88+ is required** by several transitive dependencies (`image`, `time`,
 `serde_with`). 1.87 fails with a `rustc is not supported` error listing them.
 

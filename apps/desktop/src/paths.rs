@@ -31,9 +31,42 @@ pub fn external_path(path: &str) -> String {
     }
 }
 
+/// Whether deleting this file could put it in a Recycle Bin.
+///
+/// False for a network share, where Windows has no bin at all — Explorer
+/// deletes outright there and warns you it is doing so. It matters because
+/// every path in this index is a share, so "you can restore it from the bin"
+/// would be a lie on every file in the library.
+///
+/// Takes the *external* spelling: a share is `\\server\share\…` once
+/// [`external_path`] has run, and `\\?\UNC\…` before it, so both are caught.
+pub fn has_recycle_bin(path: &str) -> bool {
+    let unc = path.starts_with(r"\\?\UNC\") || path.starts_with(r"\\?\unc\");
+    // A plain `\\server\share`, but not the `\\?\D:\` verbatim disk form, which
+    // starts with the same two backslashes and *is* local.
+    let plain_unc = path.starts_with(r"\\") && !path.starts_with(r"\\?\");
+    !(unc || plain_unc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_share_has_no_recycle_bin_in_either_spelling() {
+        // Measured: `trash::delete` on a file here fails with 0x80070002, and
+        // the shell's own recycle call deletes the file outright and reports
+        // success. Neither leaves anything to restore.
+        assert!(!has_recycle_bin(r"\\?\UNC\jebpot\devs\AI\a.jpg"));
+        assert!(!has_recycle_bin(r"\\jebpot\devs\AI\a.jpg"));
+    }
+
+    #[test]
+    fn a_local_disk_has_one_despite_the_leading_backslashes() {
+        assert!(has_recycle_bin(r"\\?\D:\vault\a.mp4"));
+        assert!(has_recycle_bin(r"D:\vault\a.mp4"));
+        assert!(has_recycle_bin("/Users/x/vault/a.mp4"));
+    }
 
     #[test]
     fn a_verbatim_unc_path_becomes_the_plain_share_path() {

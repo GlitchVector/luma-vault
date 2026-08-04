@@ -91,6 +91,36 @@ export type Folder = z.infer<typeof folderSchema>
  * image byte is fetched. That is what makes the wall lay out in one pass with
  * zero reflow, and it is the reason this grid does not need virtualization.
  */
+/**
+ * What a file says about how it was made.
+ *
+ * Every field is a string, including the numeric ones, and every field is
+ * optional. These are claims copied out of a file rather than values this app
+ * computed — `Steps: 28`, `Steps: 28.0` and a truncated `Steps: 2` all occur on
+ * disk, and coercing them to numbers here would mean choosing between dropping
+ * a record and inventing a value for it.
+ */
+export const generationSchema = z.object({
+  /** The tool that wrote the metadata — "Stable Diffusion", "ComfyUI", … */
+  tool: z.string(),
+  prompt: z.string().optional(),
+  negativePrompt: z.string().optional(),
+  model: z.string().optional(),
+  seed: z.string().optional(),
+  sampler: z.string().optional(),
+  steps: z.string().optional(),
+  cfgScale: z.string().optional(),
+  /**
+   * Made from another picture, so these parameters alone cannot reproduce it.
+   *
+   * An img2img or inpaint result depends on a source image that no parameter
+   * block carries. Sending it to txt2img yields a different picture with the
+   * same description — which looks like success, so the UI has to say so.
+   */
+  needsSourceImage: z.boolean().default(false),
+})
+export type Generation = z.infer<typeof generationSchema>
+
 export const mediaItemSchema = z.object({
   id: z.number(),
   folderId: z.number(),
@@ -112,6 +142,23 @@ export const mediaItemSchema = z.object({
   durationSec: z.number().nullable(),
   verdict: mediaVerdictSchema.nullable(),
   classifiedAt: z.number().nullable(),
+  /**
+   * A person's 1-5 judgement, never a model's.
+   *
+   * Deliberately separate from `verdict.rating`: one says "I like this", the
+   * other says "this is explicit". A re-classify rewrites the second and must
+   * never touch the first.
+   */
+  stars: z.number().nullable(),
+  generation: generationSchema.nullable(),
+  /**
+   * Which set of duplicates this row belongs to, or `null` for none.
+   *
+   * Shared by every member of a set and numbered from its lowest member, so it
+   * is stable between searches — the grid can group on it without the
+   * arrangement reshuffling under someone half way through reviewing it.
+   */
+  dupeGroup: z.number().nullable(),
 })
 export type MediaItem = z.infer<typeof mediaItemSchema>
 
@@ -137,6 +184,18 @@ export const jobPhaseSchema = z.enum([
   'measuring',
   'thumbnailing',
   'classifying',
+  /** Fingerprinting each image so duplicates can be found. */
+  'hashing',
+  /** Working out what kind of picture each row is — a scan, a generated image. */
+  'labelling',
+  /**
+   * The anime tagger re-examining what NudeNet rated SFW.
+   *
+   * Runs after everything else and only ever raises a rating, so a library in
+   * this phase is already fully rated — the bar is showing an improvement in
+   * progress, not work the grid is waiting on.
+   */
+  'tagging',
   'done',
 ])
 export type JobPhase = z.infer<typeof jobPhaseSchema>
@@ -161,6 +220,55 @@ export const scanProgressSchema = z.object({
 })
 export type ScanProgress = z.infer<typeof scanProgressSchema>
 
+/**
+ * How much of the machine background work may use.
+ *
+ * A share of the *whole* machine, comparable to what a task manager shows, and
+ * an average over seconds rather than an instantaneous ceiling.
+ */
+export const throttleLevelSchema = z.enum([
+  /** Everything available. */
+  'off',
+  /** ~25%: the desktop stays responsive and a big scan still finishes in hours. */
+  'background',
+  /** ~5%: for when the machine is busy with something that matters more. */
+  'idle',
+])
+export type ThrottleLevel = z.infer<typeof throttleLevelSchema>
+
+/** What a duplicate search turned up. */
+export const duplicateReportSchema = z.object({
+  /** Sets of two or more files that are the same picture. */
+  groups: z.number(),
+  /** How many files are in those sets altogether. */
+  files: z.number(),
+  imageGroups: z.number(),
+  videoGroups: z.number(),
+  /** Images that had a perceptual hash to compare. */
+  hashed: z.number(),
+  /**
+   * Rows skipped for sharing a hash with hundreds of others — blank frames and
+   * flat colours, which are not duplicates of each other but pictures of
+   * nothing. Reported so the cap is never mistaken for "none found".
+   */
+  skippedCommon: z.number(),
+})
+export type DuplicateReport = z.infer<typeof duplicateReportSchema>
+
+/** What an Image Browser import did. See `importImageBrowserDb`. */
+export const importSummarySchema = z.object({
+  /** Usable 1-5 ratings found in the source database. */
+  found: z.number(),
+  /** Of those, how many had a path that could be reduced to a match key. */
+  staged: z.number(),
+  /** Rows in this library that gained a rating immediately. The rest attach
+   *  later, as the folders they name are scanned. */
+  applied: z.number(),
+  /** Ratings whose path had no recognisable `outputs` segment. */
+  unrecognised: z.number(),
+})
+export type ImportSummary = z.infer<typeof importSummarySchema>
+
 export const libraryStatsSchema = z.object({
   folders: z.number(),
   images: z.number(),
@@ -177,7 +285,7 @@ export type LibraryStats = z.infer<typeof libraryStatsSchema>
 // Query
 // ---------------------------------------------------------------------------
 
-export const sortOrderSchema = z.enum(['recent', 'oldest', 'name', 'largest', 'random'])
+export const sortOrderSchema = z.enum(['recent', 'added', 'oldest', 'name', 'largest', 'random'])
 export type SortOrder = z.infer<typeof sortOrderSchema>
 
 export const mediaQuerySchema = z.object({
@@ -187,6 +295,25 @@ export const mediaQuerySchema = z.object({
   rating: ratingSchema.nullable().default(null),
   sexyOnly: z.boolean().default(false),
   search: z.string().default(''),
+  /** Show only items carrying this structural tag. */
+  tag: z.string().nullable().default(null),
+  /** Show only items rated at least this many stars. `1` means "rated at all". */
+  minStars: z.number().nullable().default(null),
+  /**
+   * Show only files that have at least one duplicate.
+   *
+   * Overrides `sort`: copies of one picture have to sit next to each other or
+   * the view is pointless.
+   */
+  duplicatesOnly: z.boolean().default(false),
+  /**
+   * Hide items carrying any of these.
+   *
+   * Separate from `tag` rather than one signed list, because "show me the
+   * documents" and "never show me documents" are both wanted and the second is
+   * why this exists.
+   */
+  hideTags: z.array(z.string()).default([]),
   sort: sortOrderSchema.default('recent'),
   limit: z.number().int().positive().max(5000).default(500),
   offset: z.number().int().nonnegative().default(0),

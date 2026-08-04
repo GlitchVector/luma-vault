@@ -31,13 +31,14 @@ use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 use tauri::{AppHandle, Emitter};
 
-use crate::classifier::{ClassifierPool, BATCH_SIZE};
+use crate::classifier::{ClassifierPool, ClassifyMode, BATCH_SIZE};
 use crate::db::{Db, NewFrame, PendingFile, PhaseQueue, ThumbnailUpdate};
 use crate::rating::{self, from_single_frame, rate_frame, roll_up_video, ClassifyOptions};
 use crate::sampling::{plan_frame_timestamps, SamplingOptions};
+use crate::throttle::Throttle;
 use crate::thumbs::{self, THUMB_MAX};
-use crate::types::{JobPhase, MediaKind, ScanProgress};
-use crate::{scan, video};
+use crate::types::{Detection, JobPhase, MediaKind, ScanProgress};
+use crate::{dupes, generated, imports, scan, video};
 
 /// The event the frontend listens on. One event shape for every phase, so the
 /// status bar is a single component and adding a phase costs the UI nothing.
@@ -76,8 +77,29 @@ const MAX_REPORTED_ERRORS: usize = 50;
 /// decoding is that cheap the balance may genuinely shift toward I/O — so if
 /// this is ever raised, measure the two costs again first rather than
 /// re-deriving from either intuition.
-fn thumbnail_threads() -> usize {
-    num_cpus::get()
+fn thumbnail_threads(throttle: &Throttle) -> usize {
+    throttle.limit(num_cpus::get())
+}
+
+/// A rayon pool sized for the current throttle.
+///
+/// `None` means "the global pool is already small enough". Every phase that
+/// fans out needs one of these: `par_iter` uses rayon's global pool, which is
+/// sized to the core count and knows nothing about the throttle. Limiting only
+/// the classifier pool bounds how many *models* run at once but not how many
+/// threads are calling them, which measured at 42% of a 16-core machine on a
+/// level asking for 25%.
+fn phase_pool(pipeline: &Arc<Pipeline>, name: &'static str) -> Option<rayon::ThreadPool> {
+    let cores = num_cpus::get();
+    let threads = pipeline.throttle.limit(cores);
+    if threads >= cores {
+        return None;
+    }
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(move |i| format!("luma-{name}-{i}"))
+        .build()
+        .ok()
 }
 
 pub struct Pipeline {
@@ -89,6 +111,7 @@ pub struct Pipeline {
     frame_root: PathBuf,
     progress: Arc<Mutex<ScanProgress>>,
     busy: Arc<AtomicBool>,
+    throttle: Arc<Throttle>,
 }
 
 impl Pipeline {
@@ -98,6 +121,7 @@ impl Pipeline {
         frame_root: PathBuf,
         classifier_python: Option<PathBuf>,
         classifier_script: Option<PathBuf>,
+        throttle: Arc<Throttle>,
     ) -> Self {
         Self {
             db,
@@ -108,7 +132,22 @@ impl Pipeline {
             frame_root,
             progress: Arc::new(Mutex::new(ScanProgress::idle())),
             busy: Arc::new(AtomicBool::new(false)),
+            throttle,
         }
+    }
+
+    pub fn throttle(&self) -> &Arc<Throttle> {
+        &self.throttle
+    }
+
+    /// Drop the classifier pool so the next phase rebuilds it.
+    ///
+    /// The pool's size and its workers' thread budget are both fixed at spawn,
+    /// so a throttle that changes after the pool is up would otherwise not take
+    /// effect until the app restarted.
+    pub fn reset_pool(&self) {
+        let mut guard = self.classifier.lock().expect("classifier mutex");
+        *guard = None;
     }
 
     pub fn snapshot(&self) -> ScanProgress {
@@ -148,9 +187,11 @@ impl Pipeline {
         };
 
         // Leave headroom: the UI thread, the webview and ffmpeg all want a core.
-        let workers = num_cpus::get().saturating_sub(2).clamp(1, 8);
+        let workers = self
+            .throttle
+            .limit(num_cpus::get().saturating_sub(2).clamp(1, 8));
 
-        match ClassifierPool::new(python, script, workers) {
+        match ClassifierPool::new(python, script, workers, &self.throttle.worker_env()) {
             Ok(pool) => {
                 let pool = Arc::new(pool);
                 *guard = Some(Arc::clone(&pool));
@@ -189,6 +230,10 @@ pub fn run_scan(pipeline: Arc<Pipeline>, app: AppHandle, folder_id: i64, root: P
         measure_phase(&pipeline, &app);
         thumbnail_phase(&pipeline, &app);
         classify_phase(&pipeline, &app);
+        hash_phase(&pipeline, &app);
+        label_phase(&pipeline, &app);
+        // Last: everything above rates the library, this only refines it.
+        anime_phase(&pipeline, &app);
     }));
 
     if outcome.is_err() {
@@ -261,6 +306,17 @@ pub fn run_startup(pipeline: Arc<Pipeline>, app: AppHandle) {
         // 4. Whatever step 3 turned up.
         thumbnail_phase(&pipeline, &app);
         classify_phase(&pipeline, &app);
+
+        // 5. Structural tags and perceptual hashes. Both cheap, and both
+        //    about what the grid shows rather than how anything is rated.
+        hash_phase(&pipeline, &app);
+        label_phase(&pipeline, &app);
+
+        // 6. Only now the expensive second opinion, over everything that came
+        //    out SFW. Deliberately after the walk in step 3: a file discovered
+        //    this launch deserves a rating before an already-rated file
+        //    deserves a better one.
+        anime_phase(&pipeline, &app);
     }));
 
     if outcome.is_err() {
@@ -291,6 +347,9 @@ pub fn run_pending(pipeline: Arc<Pipeline>, app: AppHandle) {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         thumbnail_phase(&pipeline, &app);
         classify_phase(&pipeline, &app);
+        hash_phase(&pipeline, &app);
+        label_phase(&pipeline, &app);
+        anime_phase(&pipeline, &app);
     }));
 
     if outcome.is_err() {
@@ -316,6 +375,7 @@ pub fn run_pending(pipeline: Arc<Pipeline>, app: AppHandle) {
 // ---------------------------------------------------------------------------
 
 fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &Path) {
+    let excluded = pipeline.db.excluded_folders().unwrap_or_default();
     // An unreachable root is not an empty folder. Walking one returns nothing,
     // and the prune below would then read "every file has been deleted" and
     // wipe the folder's entire index. Unplugging a NAS must not cost you your
@@ -350,7 +410,11 @@ fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &
         },
     );
 
-    let (files, mut errors) = scan::walk_folder(root, |count, current| {
+    let scan::Walk {
+        files,
+        rating_databases,
+        mut errors,
+    } = scan::walk_folder(root, &excluded, |count, current| {
         pipeline.publish(
             app,
             ScanProgress {
@@ -406,6 +470,20 @@ fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &
     }
 
     let _ = pipeline.db.mark_scanned(folder_id, now);
+
+    // Ratings travel with the folder. An Image Browser database sits inside the
+    // webui whose output this is, so a walk that found the images has already
+    // walked past the file recording what someone thought of them — and going
+    // back for it by hand is a step nobody should have to know about.
+    //
+    // Staged rather than applied: the rows these name may not exist yet, and
+    // each claims its rating as it is indexed.
+    if !rating_databases.is_empty() {
+        let staged = imports::import_discovered(&pipeline.db, &rating_databases, now);
+        if staged > 0 {
+            let _ = pipeline.db.apply_all_imported_stars();
+        }
+    }
 
     errors.truncate(MAX_REPORTED_ERRORS);
     pipeline.publish(
@@ -551,7 +629,7 @@ fn measure_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
 
     let done = Arc::new(std::sync::atomic::AtomicI64::new(0));
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(thumbnail_threads())
+        .num_threads(thumbnail_threads(&pipeline.throttle))
         .thread_name(|i| format!("luma-measure-{i}"))
         .build()
         .ok();
@@ -657,7 +735,7 @@ fn thumbnail_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
     // Falling back to the global pool on failure keeps a thread-starved machine
     // working rather than refusing to scan.
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(thumbnail_threads())
+        .num_threads(thumbnail_threads(&pipeline.throttle))
         .thread_name(|i| format!("luma-thumb-{i}"))
         .build()
         .ok();
@@ -670,6 +748,7 @@ fn thumbnail_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
 
         let work = || {
             batch.par_iter().for_each(|file| {
+                let started = std::time::Instant::now();
                 let result = match file.kind {
                     MediaKind::Image => thumbnail_one_image(pipeline, file),
                     MediaKind::Video => thumbnail_one_video(pipeline, file),
@@ -703,6 +782,10 @@ fn thumbnail_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
                         },
                     );
                 }
+                // Per file rather than per batch: decoding is the single most
+                // expensive thing this app does, and a 512-file batch would
+                // hold the machine for minutes before the first sleep.
+                pipeline.throttle.pace(started.elapsed());
             });
         };
 
@@ -818,14 +901,25 @@ fn thumbnail_one_video(pipeline: &Arc<Pipeline>, file: &PendingFile) -> anyhow::
 // Phase 3 — classification
 // ---------------------------------------------------------------------------
 
+/// Rate everything with no verdict yet.
+///
+/// A thin loop around one pass, because changing the CPU throttle has to take
+/// effect on a phase that is *already running* — over a library this size a
+/// single pass is hours. A pass abandons its work when the setting moves and
+/// asks to be run again; its pools go out of scope with it, so the next one
+/// builds them at the new size.
 fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
+    while classify_pass(pipeline, app) {}
+}
+
+fn classify_pass(pipeline: &Arc<Pipeline>, app: &AppHandle) -> bool {
     let outstanding = pipeline
         .db
         .pending_classification(i64::MAX)
         .map(|rows| rows.len() as i64)
         .unwrap_or(0);
     if outstanding == 0 {
-        return;
+        return false;
     }
     let already = pipeline.db.completed_in_phase(PhaseQueue::Classification).unwrap_or(0);
     let total = already + outstanding;
@@ -846,7 +940,7 @@ fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
                 ],
             },
         );
-        return;
+        return false;
     };
 
     let options = ClassifyOptions::default();
@@ -855,7 +949,12 @@ fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
     let done = Arc::new(std::sync::atomic::AtomicI64::new(already));
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
 
-    loop {
+    // Captured so the loop can tell the setting changed under it.
+    let generation = pipeline.throttle.generation();
+    let drain = || loop {
+        if pipeline.throttle.generation() != generation {
+            return; // rebuild the pools at the new size
+        }
         let batch = match pipeline.db.pending_classification(PAGE) {
             Ok(batch) if !batch.is_empty() => batch,
             _ => break,
@@ -875,7 +974,8 @@ fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
                 return; // a row lost its thumbnail between the query and here
             }
 
-            let results = match pool.classify(&paths) {
+            let started = std::time::Instant::now();
+            let results = match pool.classify(&paths, ClassifyMode::Detect) {
                 Ok(results) => results,
                 Err(error) => {
                     errors
@@ -933,12 +1033,23 @@ fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
                 }
             }
 
-            report(pipeline, app, &done, chunk.len() as i64, total, &errors, chunk.last());
+            report(
+                pipeline,
+                app,
+                JobPhase::Classifying,
+                &done,
+                chunk.len() as i64,
+                total,
+                &errors,
+                chunk.last(),
+            );
+            pipeline.throttle.pace(started.elapsed());
         });
 
         // Videos: one file at a time, but its frames batched. A long video is
         // 60 frames, so it is already a full unit of work for one worker.
         videos.par_iter().for_each(|file| {
+            let started = std::time::Instant::now();
             if let Err(error) = classify_one_video(pipeline, &pool, file, options) {
                 let message = format!("{error:#}");
                 errors
@@ -947,8 +1058,30 @@ fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
                     .push(format!("{}: {message}", file.path));
                 let _ = pipeline.db.mark_failed(file.id, &message, now_ms());
             }
-            report(pipeline, app, &done, 1, total, &errors, Some(file));
+            report(
+                pipeline,
+                app,
+                JobPhase::Classifying,
+                &done,
+                1,
+                total,
+                &errors,
+                Some(file),
+            );
+            pipeline.throttle.pace(started.elapsed());
         });
+    };
+
+    match phase_pool(pipeline, "classify") {
+        Some(pool) => pool.install(drain),
+        None => drain(),
+    }
+    if pipeline.throttle.generation() != generation {
+        // Ask to be run again rather than looping in place. Returning is what
+        // releases the classifier pool: restarting while this pass still held
+        // its `Arc` would leave the old workers alive beside their
+        // replacements.
+        return true;
     }
 
     let snapshot = errors.lock().expect("errors mutex").clone();
@@ -963,6 +1096,8 @@ fn classify_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
             errors: snapshot.into_iter().take(MAX_REPORTED_ERRORS).collect(),
         },
     );
+
+    false
 }
 
 fn classify_one_video(
@@ -982,7 +1117,7 @@ fn classify_one_video(
     let mut verdicts = Vec::with_capacity(existing.len());
     for chunk in existing.chunks(BATCH_SIZE) {
         let paths: Vec<String> = chunk.iter().map(|frame| frame.path.clone()).collect();
-        for result in pool.classify(&paths)? {
+        for result in pool.classify(&paths, ClassifyMode::Detect)? {
             // A frame that fails to classify counts as SFW rather than
             // aborting the video — the remaining frames still decide it.
             let detections = result.unwrap_or_default();
@@ -1015,10 +1150,415 @@ fn classify_one_video(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5 — perceptual hashes
+// ---------------------------------------------------------------------------
+
+/// Give every image a perceptual hash, so duplicates can be found later.
+///
+/// Its own pass rather than part of thumbnailing, because the library that
+/// needs it most is the one that was already scanned. Reads the thumbnail, not
+/// the original: local instead of on a share, already decoded once, and already
+/// normalised to a common size — which is the first thing a perceptual hash
+/// does anyway, and the reason resolution stops mattering.
+///
+/// Images only. A video's duplicates are found by its content key, which the
+/// scan already computed.
+fn hash_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
+    let outstanding = pipeline
+        .db
+        .pending_hashes(i64::MAX)
+        .map(|rows| rows.len() as i64)
+        .unwrap_or(0);
+    if outstanding == 0 {
+        return;
+    }
+    let done = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    let drain = || loop {
+        let batch = match pipeline.db.pending_hashes(PAGE) {
+            Ok(batch) if !batch.is_empty() => batch,
+            _ => break,
+        };
+
+        batch.par_iter().for_each(|file| {
+            let started = std::time::Instant::now();
+            let Some(thumb) = file.thumb_path.as_deref() else {
+                return;
+            };
+            match dupes::fingerprint(Path::new(thumb)) {
+                Ok((hash, colour)) => {
+                    let _ = pipeline.db.set_fingerprint(file.id, hash, &colour);
+                }
+                Err(error) => {
+                    // A thumbnail that will not decode is not a scan failure —
+                    // the row keeps its verdict and simply never participates
+                    // in duplicate search. Marking it failed would pull it out
+                    // of the grid over a feature it never asked for.
+                    errors
+                        .lock()
+                        .expect("errors mutex")
+                        .push(format!("{}: {error}", file.path));
+                    let _ = pipeline.db.set_fingerprint(file.id, 0, &[]);
+                }
+            }
+            report(
+                pipeline,
+                app,
+                JobPhase::Hashing,
+                &done,
+                1,
+                outstanding,
+                &errors,
+                Some(file),
+            );
+            pipeline.throttle.pace(started.elapsed());
+        });
+    };
+
+    match phase_pool(pipeline, "hash") {
+        Some(pool) => pool.install(drain),
+        None => drain(),
+    }
+
+    let snapshot = errors.lock().expect("errors mutex").clone();
+    pipeline.publish(
+        app,
+        ScanProgress {
+            phase: JobPhase::Hashing,
+            folder_id: None,
+            done: outstanding,
+            total: outstanding,
+            current: None,
+            errors: snapshot.into_iter().take(MAX_REPORTED_ERRORS).collect(),
+        },
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 — structural labels
+// ---------------------------------------------------------------------------
+
+/// Work out what *kind* of picture each row is, independent of its rating.
+///
+/// Two questions, answered together because they share a queue:
+///
+/// - **Is it a document?** Decided from the thumbnail by the Python worker,
+///   which already has OpenCV and already has the file open.
+/// - **Was it generated?** Decided from the original's first 96KB in Rust, so
+///   it still works when the classifier is unavailable.
+///
+/// Neither answer touches a verdict. A scanned payslip and a generated
+/// illustration are rated by exactly the same rules as anything else; these
+/// tags only decide whether you are shown them.
+fn label_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
+    while label_pass(pipeline, app) {}
+}
+
+fn label_pass(pipeline: &Arc<Pipeline>, app: &AppHandle) -> bool {
+    let outstanding = pipeline
+        .db
+        .pending_labels(i64::MAX)
+        .map(|rows| rows.len() as i64)
+        .unwrap_or(0);
+    if outstanding == 0 {
+        return false;
+    }
+
+    let already = pipeline.db.completed_in_phase(PhaseQueue::Labels).unwrap_or(0);
+    let total = already + outstanding;
+    let done = Arc::new(std::sync::atomic::AtomicI64::new(already));
+    let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+    // Optional: without it, rows still get their `generated` tag. Documents
+    // need pixels, and pixels need the worker.
+    let pool = pipeline.pool();
+
+    // Captured so the loop can tell the setting changed under it.
+    let generation = pipeline.throttle.generation();
+    let drain = || loop {
+        if pipeline.throttle.generation() != generation {
+            return; // rebuild the pools at the new size
+        }
+        let batch = match pipeline.db.pending_labels(PAGE) {
+            Ok(batch) if !batch.is_empty() => batch,
+            _ => break,
+        };
+
+        batch.par_chunks(BATCH_SIZE).for_each(|chunk| {
+            let started = std::time::Instant::now();
+            // Only images are examined for document structure — a video is not
+            // a scan of anything, and sending 60 frames per file through this
+            // would cost more than the whole pass is worth.
+            let candidates: Vec<(usize, String)> = chunk
+                .iter()
+                .enumerate()
+                .filter(|(_, file)| file.kind == MediaKind::Image)
+                .filter_map(|(index, file)| {
+                    file.thumb_path.clone().map(|thumb| (index, thumb))
+                })
+                .collect();
+
+            let mut structural: Vec<Vec<String>> = vec![Vec::new(); chunk.len()];
+            if let Some(pool) = pool.as_ref() {
+                let paths: Vec<String> =
+                    candidates.iter().map(|(_, thumb)| thumb.clone()).collect();
+                match pool.label(&paths) {
+                    Ok(results) => {
+                        for ((index, _), outcome) in candidates.iter().zip(results) {
+                            match outcome {
+                                Ok(tags) => structural[*index] = tags,
+                                Err(reason) => errors
+                                    .lock()
+                                    .expect("errors mutex")
+                                    .push(format!("{}: {reason}", chunk[*index].path)),
+                            }
+                        }
+                    }
+                    Err(error) => errors
+                        .lock()
+                        .expect("errors mutex")
+                        .push(format!("labeller: {error:#}")),
+                }
+            }
+
+            for (index, file) in chunk.iter().enumerate() {
+                let mut tags = std::mem::take(&mut structural[index]);
+                let generation = generated::read_generation(Path::new(&file.path));
+                if generation.is_some() {
+                    tags.push("generated".to_string());
+                }
+                let _ = pipeline.db.set_tags(file.id, &tags, now_ms());
+                let _ = pipeline.db.set_generation(file.id, generation.as_ref());
+                // A rating imported from an Image Browser database is keyed by
+                // where the file used to live, so it can only be applied once
+                // the row exists. Doing it here means an import can precede the
+                // scan that gives it something to attach to.
+                let _ = pipeline.db.apply_imported_stars(file.id, &file.path);
+            }
+
+            report(
+                pipeline,
+                app,
+                JobPhase::Labelling,
+                &done,
+                chunk.len() as i64,
+                total,
+                &errors,
+                chunk.last(),
+            );
+            pipeline.throttle.pace(started.elapsed());
+        });
+    };
+
+    match phase_pool(pipeline, "label") {
+        Some(rayon_pool) => rayon_pool.install(drain),
+        None => drain(),
+    }
+    if pipeline.throttle.generation() != generation {
+        // Ask to be run again rather than looping in place. Returning is what
+        // releases the classifier pool: restarting while this pass still held
+        // its `Arc` would leave the old workers alive beside their
+        // replacements.
+        return true;
+    }
+
+    let snapshot = errors.lock().expect("errors mutex").clone();
+    pipeline.publish(
+        app,
+        ScanProgress {
+            phase: JobPhase::Labelling,
+            folder_id: None,
+            done: total,
+            total,
+            current: None,
+            errors: snapshot.into_iter().take(MAX_REPORTED_ERRORS).collect(),
+        },
+    );
+
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 — the anime tagger's second opinion
+// ---------------------------------------------------------------------------
+
+/// Re-examine SFW rows with the Danbooru tagger.
+///
+/// # Why this is a separate pass rather than part of classification
+///
+/// Running both models on every file measured at 2.13 files/s against 4.13 for
+/// NudeNet alone on the same library — the tagger is a 378MB ViT at 448px and
+/// roughly doubles the cost of rating a file. Paying that up front means
+/// nothing is rated until everything is.
+///
+/// Splitting it gets the whole library rated at full speed, then improves the
+/// drawn-content answer afterwards. The queue is a query like every other
+/// phase, so it is resumable and interruptible: stopping here leaves a fully
+/// rated library that is merely less accurate about illustrations.
+///
+/// Only SFW rows are queued. The tagger can raise a rating and never lower one,
+/// so running it on something already flagged spends the most expensive model
+/// in the app to confirm a decision that has already been made.
+fn anime_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
+    while anime_pass(pipeline, app) {}
+}
+
+fn anime_pass(pipeline: &Arc<Pipeline>, app: &AppHandle) -> bool {
+    let outstanding = pipeline
+        .db
+        .pending_anime(i64::MAX)
+        .map(|rows| rows.len() as i64)
+        .unwrap_or(0);
+    if outstanding == 0 {
+        return false;
+    }
+
+    let Some(pool) = pipeline.pool() else {
+        return false; // no classifier: the library keeps its NudeNet verdicts
+    };
+
+    let already = pipeline.db.completed_in_phase(PhaseQueue::AnimeReview).unwrap_or(0);
+    let total = already + outstanding;
+    let options = ClassifyOptions::default();
+    let done = Arc::new(std::sync::atomic::AtomicI64::new(already));
+    let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+
+    // Captured so the loop can tell the setting changed under it.
+    let generation = pipeline.throttle.generation();
+    let drain = || loop {
+        if pipeline.throttle.generation() != generation {
+            return; // rebuild the pools at the new size
+        }
+        let batch = match pipeline.db.pending_anime(PAGE) {
+            Ok(batch) if !batch.is_empty() => batch,
+            _ => break,
+        };
+
+        batch.par_iter().for_each(|file| {
+            let started = std::time::Instant::now();
+            if let Err(error) = tag_one(pipeline, &pool, file, options) {
+                errors
+                    .lock()
+                    .expect("errors mutex")
+                    .push(format!("{}: {error:#}", file.path));
+            }
+            // Stamped whatever happened, including on failure: a row that
+            // cannot be tagged must leave the queue or the phase never ends.
+            let _ = pipeline.db.mark_anime_done(file.id, now_ms());
+            report(
+                pipeline,
+                app,
+                JobPhase::Tagging,
+                &done,
+                1,
+                total,
+                &errors,
+                Some(file),
+            );
+            pipeline.throttle.pace(started.elapsed());
+        });
+    };
+
+    match phase_pool(pipeline, "anime") {
+        Some(rayon_pool) => rayon_pool.install(drain),
+        None => drain(),
+    }
+    if pipeline.throttle.generation() != generation {
+        // Ask to be run again rather than looping in place. Returning is what
+        // releases the classifier pool: restarting while this pass still held
+        // its `Arc` would leave the old workers alive beside their
+        // replacements.
+        return true;
+    }
+
+    let snapshot = errors.lock().expect("errors mutex").clone();
+    pipeline.publish(
+        app,
+        ScanProgress {
+            phase: JobPhase::Tagging,
+            folder_id: None,
+            done: total,
+            total,
+            current: None,
+            errors: snapshot.into_iter().take(MAX_REPORTED_ERRORS).collect(),
+        },
+    );
+
+    false
+}
+
+/// Merge the tagger's findings into one row's stored detections and re-rate.
+///
+/// Works off the frames already in the index rather than re-running NudeNet, so
+/// this pass costs exactly one tagger inference per frame and no more. An image
+/// is a one-frame video here, the same way it is everywhere else.
+fn tag_one(
+    pipeline: &Arc<Pipeline>,
+    pool: &ClassifierPool,
+    file: &PendingFile,
+    options: ClassifyOptions,
+) -> anyhow::Result<()> {
+    let existing = pipeline.db.frames_for_media(file.id)?;
+    if existing.is_empty() {
+        anyhow::bail!("no frames recorded to re-examine");
+    }
+
+    let mut verdicts = Vec::with_capacity(existing.len());
+    for chunk in existing.chunks(BATCH_SIZE) {
+        let paths: Vec<String> = chunk.iter().map(|frame| frame.path.clone()).collect();
+        let found = pool.classify(&paths, ClassifyMode::Anime)?;
+        for (frame, result) in chunk.iter().zip(found) {
+            // Anything already carrying `ANIME_*` is being re-examined, so the
+            // old opinion is dropped rather than appended to. Without this a
+            // second pass would stack two copies of every finding.
+            let mut merged: Vec<Detection> = frame
+                .verdict
+                .detections
+                .iter()
+                .filter(|detection| !detection.label.starts_with("ANIME_"))
+                .cloned()
+                .collect();
+            merged.extend(result.unwrap_or_default());
+            verdicts.push(rate_frame(&merged, options));
+        }
+    }
+
+    let frames: Vec<NewFrame> = existing
+        .iter()
+        .zip(&verdicts)
+        .map(|(frame, rated)| NewFrame {
+            frame_index: frame.frame_index,
+            timestamp_sec: frame.timestamp_sec,
+            path: frame.path.clone(),
+            verdict_json: serde_json::to_string(rated).unwrap_or_else(|_| "{}".to_string()),
+        })
+        .collect();
+    let _ = pipeline.db.replace_frames(file.id, &frames);
+
+    let verdict = if file.kind == MediaKind::Video {
+        let rolled = roll_up_video(&verdicts);
+        // The poster follows the rating: a video the tagger just promoted
+        // should show the frame that earned it, not its middle.
+        if let Some(index) = rolled.poster_frame_index {
+            if let Some(frame) = existing.get(index as usize) {
+                let _ = pipeline.db.update_poster(file.id, &frame.path);
+            }
+        }
+        rolled
+    } else {
+        from_single_frame(&verdicts[0])
+    };
+
+    pipeline.db.update_verdict(file.id, &verdict, now_ms())?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn report(
     pipeline: &Arc<Pipeline>,
     app: &AppHandle,
+    phase: JobPhase,
     done: &Arc<std::sync::atomic::AtomicI64>,
     delta: i64,
     total: i64,
@@ -1030,7 +1570,7 @@ fn report(
     pipeline.publish(
         app,
         ScanProgress {
-            phase: JobPhase::Classifying,
+            phase,
             folder_id: None,
             done: finished,
             total,

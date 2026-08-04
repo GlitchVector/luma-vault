@@ -50,6 +50,9 @@ const item: MediaItem = {
   durationSec: null,
   verdict: null,
   classifiedAt: null,
+  stars: null,
+  generation: null,
+  dupeGroup: null,
 }
 
 afterEach(() => {

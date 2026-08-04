@@ -23,6 +23,16 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+# One localhost POST: selecting the checkpoint in Forge *before* its page is
+# built. Already in the tree via Tauri, so this is a name rather than a
+# download. No TLS features — the only host it ever talks to is 127.0.0.1.
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+# URL parsing, so `open_external` can refuse a scheme before the OS sees it.
+url = "2"
+# Deleting to the OS trash rather than unlinking. A media library is not a
+# place to be certain about a decision, and the Recycle Bin is the difference
+# between a mistake and a loss.
+trash = "5"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

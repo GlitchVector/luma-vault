@@ -14,18 +14,23 @@
     "build": "pnpm --filter @luma/web build",
     "build:desktop": "pnpm --filter @luma/desktop tauri build",
     "test": "pnpm -r test",
+    "test:forge": "node integrations/forge-prefill/test.mjs",
     "typecheck": "pnpm -r typecheck",
     "lint": "oxlint --config .oxlintrc.json apps packages",
     "lint:fix": "oxlint --config .oxlintrc.json --fix apps packages",
     "setup:python": "node scripts/setup-python.mjs",
+    "setup:forge": "node scripts/install-forge-extension.mjs",
     "rust:check": "cargo clippy --locked --manifest-path apps/desktop/Cargo.toml --all-targets -- -D warnings",
-    "rust:test": "cargo test --locked --manifest-path apps/desktop/Cargo.toml"
+    "rust:test": "cargo test --locked --manifest-path apps/desktop/Cargo.toml",
+    "migrate-prompt": "node --experimental-strip-types scripts/migrate-prompt.mjs"
   },
   "devDependencies": {
     "oxlint": "^1.19.0",
     "typescript": "^5.9.3"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

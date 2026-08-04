@@ -27,6 +27,30 @@
     ]
   },
   {
+    "phase": "hashing",
+    "folderId": null,
+    "done": 512,
+    "total": 670,
+    "current": "/Volumes/vault/Images/pics/superb/21006089.gif",
+    "errors": []
+  },
+  {
+    "phase": "labelling",
+    "folderId": null,
+    "done": 640,
+    "total": 670,
+    "current": "/Volumes/vault/Images/pics/superb/scan-0004.png",
+    "errors": []
+  },
+  {
+    "phase": "tagging",
+    "folderId": null,
+    "done": 431,
+    "total": 502,
+    "current": "/Volumes/vault/Images/pics/superb/21006089.gif",
+    "errors": []
+  },
+  {
     "phase": "done",
     "folderId": null,
     "done": 670,

@@ -17,15 +17,21 @@ import {
   libraryStatsSchema,
   mediaFrameSchema,
   mediaItemSchema,
+  importSummarySchema,
+  duplicateReportSchema,
+  throttleLevelSchema,
   mediaPageSchema,
   scanProgressSchema,
   type Folder,
+  type DuplicateReport,
+  type ImportSummary,
   type LibraryStats,
   type MediaFrame,
   type MediaItem,
   type MediaPage,
   type MediaQuery,
   type ScanProgress,
+  type ThrottleLevel,
 } from '@luma/core'
 import { z } from 'zod'
 
@@ -111,6 +117,50 @@ export async function pickFolder(): Promise<string | null> {
   return typeof selected === 'string' ? selected : null
 }
 
+/**
+ * Delete a file and drop it from the library.
+ *
+ * The Recycle Bin where there is one — this is the one action rescanning cannot
+ * undo, so it stays recoverable outside the app wherever that is possible. It
+ * is not on a network share, which is this whole library: pass `permanent` only
+ * once the person has been told that, because the backend refuses otherwise
+ * rather than quietly destroying the file. `hasRecycleBin` decides.
+ */
+export async function deleteItem(id: number, permanent: boolean): Promise<void> {
+  if (!isTauri()) return
+  await invoke('delete_item', { id, permanent })
+}
+
+/**
+ * Select the checkpoint in Forge, before opening its page.
+ *
+ * Order matters and is not obvious: Forge builds its checkpoint dropdown from
+ * the setting once, while the page is being constructed. A checkpoint chosen
+ * after the tab opens *is* selected — generation uses it — but the dropdown
+ * keeps whatever it rendered with, which reads as the button not working.
+ *
+ * Best-effort: resolves to the model name on success, or null when the block
+ * names none. Rejects when Forge is unreachable, which the caller reports
+ * without blocking the tab — the parameters are on the clipboard either way.
+ */
+export async function forgeSelectCheckpoint(block: string): Promise<string | null> {
+  if (!isTauri()) return null
+  return invoke<string | null>('forge_select_checkpoint', { block })
+}
+
+/** Opens a file picker for an Image Browser database. Null when cancelled. */
+export async function pickImageBrowserDb(): Promise<string | null> {
+  if (!isTauri()) return null
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const selected = await open({
+    directory: false,
+    multiple: false,
+    title: 'Choose a Stable Diffusion Image Browser database',
+    filters: [{ name: 'Image Browser database', extensions: ['sqlite3', 'sqlite', 'db'] }],
+  })
+  return typeof selected === 'string' ? selected : null
+}
+
 /** Reveals a file in Finder / Explorer. */
 export async function revealInFileManager(path: string): Promise<void> {
   if (!isTauri()) return
@@ -146,6 +196,99 @@ export async function mediaFrames(mediaId: number): Promise<MediaFrame[]> {
 export async function mediaById(id: number): Promise<MediaItem | null> {
   if (!isTauri()) return null
   return mediaItemSchema.nullable().parse(await invoke('media_by_id', { id }))
+}
+
+/**
+ * Set or clear a person's 1-5 rating.
+ *
+ * The only rating in this app a human writes. Everything else on a row comes
+ * from a model, and a re-classify never touches this one.
+ */
+export async function setStars(id: number, stars: number | null): Promise<void> {
+  if (!isTauri()) return
+  await invoke('set_stars', { id, stars })
+}
+
+/**
+ * Import star ratings from a Stable Diffusion Image Browser `wib.sqlite3`.
+ *
+ * Ratings whose folder has not been scanned yet are staged and attach as those
+ * files are indexed, so importing before scanning is the expected order.
+ */
+export async function importImageBrowserDb(path: string): Promise<ImportSummary> {
+  if (!isTauri()) return { found: 0, staged: 0, applied: 0, unrecognised: 0 }
+  return importSummarySchema.parse(await invoke('import_image_browser_db', { path }))
+}
+
+/**
+ * Find every picture the library holds more than once, and group them.
+ *
+ * Images are matched perceptually, so a re-encode or a copy at another
+ * resolution still counts; videos are matched exactly on their content key,
+ * because a re-encoded video is a different video.
+ */
+export async function findDuplicates(): Promise<DuplicateReport> {
+  if (!isTauri()) {
+    return { groups: 0, files: 0, imageGroups: 0, videoGroups: 0, hashed: 0, skippedCommon: 0 }
+  }
+  return duplicateReportSchema.parse(await invoke('find_duplicates'))
+}
+
+/** Opens a URL in the default browser. Refused unless http or https. */
+export async function openExternal(url: string): Promise<void> {
+  if (!isTauri()) {
+    window.open(url, '_blank', 'noopener')
+    return
+  }
+  await invoke('open_external', { url })
+}
+
+/**
+ * The verbatim parameter block a file records, or null if it has none.
+ *
+ * Read from the file each time rather than stored — a real block with
+ * ControlNet and ADetailer is kilobytes, and this is only needed on a click.
+ * Sending Forge *this* rather than a block rebuilt from the parsed fields is
+ * the difference between regenerating the same image and a similar one.
+ */
+export async function generationParameters(id: number): Promise<string | null> {
+  if (!isTauri()) return null
+  return z.string().nullable().parse(await invoke('generation_parameters', { id }))
+}
+
+/** Where the local Stable Diffusion UI answers. */
+export async function forgeUrl(): Promise<string> {
+  if (!isTauri()) return 'http://127.0.0.1:7860'
+  return z.string().parse(await invoke('forge_url'))
+}
+
+export async function setForgeUrl(url: string): Promise<void> {
+  if (!isTauri()) return
+  await invoke('set_forge_url', { url })
+}
+
+// ---------------------------------------------------------------------------
+// Exclusions
+// ---------------------------------------------------------------------------
+
+export async function listExclusions(): Promise<string[]> {
+  if (!isTauri()) return []
+  return z.array(z.string()).parse(await invoke('list_exclusions'))
+}
+
+/**
+ * Stop scanning a folder and drop what it already contributed.
+ *
+ * Returns how many rows were removed. Files on disk are never touched.
+ */
+export async function excludeFolder(path: string): Promise<number> {
+  if (!isTauri()) return 0
+  return z.number().parse(await invoke('exclude_folder', { path }))
+}
+
+export async function includeFolder(path: string): Promise<void> {
+  if (!isTauri()) return
+  await invoke('include_folder', { path })
 }
 
 export async function libraryStats(): Promise<LibraryStats> {
@@ -186,14 +329,32 @@ const environmentSchema = z.object({
   classifierAvailable: z.boolean(),
   ffmpegAvailable: z.boolean(),
   busy: z.boolean(),
+  /** How much of the machine background work may use. */
+  throttle: throttleLevelSchema,
 })
 export type Environment = z.infer<typeof environmentSchema>
 
 export async function environment(): Promise<Environment> {
   if (!isTauri()) {
-    return { classifierAvailable: false, ffmpegAvailable: false, busy: false }
+    return {
+      classifierAvailable: false,
+      ffmpegAvailable: false,
+      busy: false,
+      throttle: 'off',
+    }
   }
   return environmentSchema.parse(await invoke('environment'))
+}
+
+/**
+ * Cap background work at a share of the machine.
+ *
+ * Takes effect on the next unit of work, not immediately — a batch already
+ * inside the classifier finishes at full speed.
+ */
+export async function setThrottle(level: ThrottleLevel): Promise<void> {
+  if (!isTauri()) return
+  await invoke('set_throttle', { level })
 }
 
 /**

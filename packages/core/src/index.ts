@@ -36,6 +36,10 @@ export {
   VIDEO_EXTENSIONS,
   extensionOf,
   basenameOf,
+  dirnameOf,
+  displayPath,
+  hasRecycleBin,
+  toParameterBlock,
   kindOf,
   isAnimatedImage,
   fitWithin,
@@ -44,17 +48,30 @@ export {
 } from './media.ts'
 
 export {
+  migrateGeneration,
+  type Architecture,
+  type Migration,
+  type MigrationTarget,
+} from './migrate.ts'
+
+export { highlight, excerpt, searchTerms, type HighlightPart } from './highlight.ts'
+
+export {
   detectionSchema,
   ratingSchema,
   frameVerdictSchema,
   mediaVerdictSchema,
   mediaKindSchema,
   folderSchema,
+  generationSchema,
   mediaItemSchema,
   mediaFrameSchema,
   jobPhaseSchema,
   scanProgressSchema,
   libraryStatsSchema,
+  importSummarySchema,
+  duplicateReportSchema,
+  throttleLevelSchema,
   sortOrderSchema,
   mediaQuerySchema,
   mediaPageSchema,
@@ -66,6 +83,10 @@ export type {
   MediaVerdict,
   MediaKind,
   Folder,
+  Generation,
+  ImportSummary,
+  DuplicateReport,
+  ThrottleLevel,
   MediaItem,
   MediaFrame,
   JobPhase,

@@ -1,0 +1,467 @@
+/**
+ * Lifting a generation from one model to another.
+ *
+ * The point is not to translate a prompt — it is to stop the *silent* failures
+ * that make a migrated prompt look like it worked and produce something else.
+ * Three of them, all invisible at the UI:
+ *
+ * 1. **A LoRA trained for SD1.5 does nothing on SDXL.** Different text-encoder
+ *    dimensions, so the tag is parsed, matched against nothing, and dropped.
+ * 2. **A textual inversion is the same.** `EasyNegative` on an SDXL model is
+ *    not an embedding, it is the literal words "easy negative" steering the
+ *    image somewhere nobody asked for.
+ * 3. **SD1.5 resolutions produce broken anatomy on SDXL**, which was trained
+ *    at ~1 megapixel. 660x990 is not "smaller", it is out of distribution.
+ *
+ * None of these raise an error. Each one quietly changes the picture.
+ *
+ * Everything here is a string transformation over a parameter block: no I/O, no
+ * knowledge of which models exist, and no network. What *is* installed is the
+ * caller's problem.
+ */
+
+/** The architectures this app can tell apart from a checkpoint's tensor names. */
+export type Architecture = 'sd' | 'xl'
+
+export interface MigrationTarget {
+  architecture: Architecture
+  /** Checkpoint name as Forge knows it, which is what `Model:` must contain. */
+  checkpoint: string
+  /**
+   * The emphasis mode the webui is *currently* set to.
+   *
+   * Passed in so the block can state it. A block that says nothing about a
+   * settings-backed field does not leave that setting alone — the paste fills
+   * in the default and records the difference as an override, which then
+   * reverts the setting for that generation. So omitting `Emphasis` silently
+   * undoes a person's own choice, and they see an override chip they never
+   * added. Naming the current value gives the paste nothing to override.
+   */
+  emphasis?: string
+}
+
+export interface Migration {
+  /** The rewritten parameter block, ready to hand to Forge. */
+  block: string
+  /** What changed and why, in the order it was decided. Shown, not logged. */
+  notes: string[]
+}
+
+/**
+ * SDXL's training buckets. A generation must land on one of these or the
+ * anatomy degrades — the model never saw other shapes.
+ */
+const XL_BUCKETS: ReadonlyArray<readonly [number, number]> = [
+  [1024, 1024],
+  [1152, 896],
+  [896, 1152],
+  [1216, 832],
+  [832, 1216],
+  [1344, 768],
+  [768, 1344],
+  [1536, 640],
+  [640, 1536],
+]
+
+/**
+ * Embeddings that exist only for SD1.5. Left in a prompt for an SDXL model they
+ * become ordinary words — `bad-hands-5` reads as "bad hands 5", which is the
+ * opposite of what it was doing.
+ */
+const SD15_EMBEDDINGS = [
+  'easynegative',
+  'bad-hands-5',
+  'badhandv4',
+  'bad_prompt',
+  'bad_prompt_version2',
+  'ng_deepnegative_v1_75t',
+  'ng_deepnegative_v1_4t',
+  'ng_deepnegative',
+  'bad-artist',
+  'bad-artist-anime',
+  'bad-image-v2-39000',
+  'verybadimagenegative_v1.3',
+  'negative_hand-neg',
+  'bad_pictures',
+]
+
+/**
+ * Phrases that read like tags but are not, and the tags that are.
+ *
+ * Booru-trained models learned exact strings. `huge hips` is not one of the
+ * 10,861 tags in `models/anime-tagger/selected_tags.csv`, so it carries no
+ * learned meaning and the model falls back to the words — which is how
+ * substituting it for `wide hips` makes hips *smaller*. That is the opposite of
+ * SD1.5, which was captioned in prose and would do something reasonable with a
+ * synonym.
+ *
+ * Every left-hand side was checked as absent from that file and every
+ * right-hand side as present. Rewriting is safe; *dropping* unknown tags would
+ * not be, because character names, artist names and quality tags are all
+ * legitimately outside the tagger's vocabulary.
+ */
+const TAG_ALIASES: ReadonlyArray<readonly [string, string]> = [
+  ['huge hips', 'wide hips'],
+  ['large hips', 'wide hips'],
+  ['big hips', 'wide hips'],
+  ['wide hip', 'wide hips'],
+  ['big ass', 'huge ass'],
+  ['large ass', 'huge ass'],
+  ['fat ass', 'huge ass'],
+  ['bubble butt', 'huge ass'],
+  ['big breasts', 'huge breasts'],
+  ['hyper breasts', 'gigantic breasts'],
+  ['busty', 'huge breasts'],
+  ['huge thighs', 'thick thighs'],
+  ['fat thighs', 'thick thighs'],
+  ['chubby', 'plump'],
+  ['bbw', 'plump'],
+  ['voluptuous', 'curvy'],
+  ['curvaceous', 'curvy'],
+  ['slim waist', 'narrow waist'],
+  ['thin waist', 'narrow waist'],
+  ['wasp waist', 'narrow waist'],
+  ['hourglass figure', 'narrow waist, wide hips'],
+  ['naked breasts', 'breasts out'],
+  ['bare breasts', 'breasts out'],
+  ['naked', 'nude'],
+]
+
+/**
+ * Negatives that cancel what the prompt is asking for.
+ *
+ * `thick thighs` in the prompt and `fat` in the negative is a tug of war the
+ * negative usually wins, and the result reads as the model ignoring the prompt.
+ * These pairs were carried over from SD1.5 prompts where the negative was
+ * fighting a different failure mode — SD1.5 made people doughy, so `fat, chubby`
+ * earned its place there. On a booru model it just deletes the body type.
+ *
+ * Only removed when the prompt actually asks for the opposite; a negative
+ * saying `fat` on a prompt that says nothing about body shape is left alone.
+ */
+const NEGATIVE_CONFLICTS: ReadonlyArray<{ wants: string[]; suppressedBy: string[] }> = [
+  {
+    wants: ['wide hips', 'thick thighs', 'curvy', 'plump', 'huge ass', 'breast expansion'],
+    suppressedBy: ['fat', 'chubby', 'obese', 'overweight', 'skinny', 'thin', 'petite', 'slim'],
+  },
+  {
+    wants: ['huge breasts', 'gigantic breasts', 'large breasts', 'breast expansion'],
+    suppressedBy: ['flat chest', 'small breasts', 'flat chested'],
+  },
+  {
+    wants: ['nude', 'topless', 'breasts out', 'nipples', 'completely nude'],
+    suppressedBy: ['clothed', 'fully clothed'],
+  },
+  {
+    wants: ['muscular', 'abs', 'toned'],
+    suppressedBy: ['muscular', 'abs'],
+  },
+]
+
+/** What booru-trained SDXL models expect at the front of a prompt. */
+const XL_QUALITY = 'masterpiece, best quality, amazing quality, very aesthetic, absurdres'
+
+/** A baseline negative for booru-trained SDXL, replacing the SD1.5 embeddings. */
+const XL_NEGATIVE = [
+  'worst quality',
+  'low quality',
+  'lowres',
+  'bad anatomy',
+  'bad hands',
+  'missing fingers',
+  'extra digits',
+  'jpeg artifacts',
+  'signature',
+  'watermark',
+  'username',
+  'artist name',
+]
+
+/** A settings line split into ordered pairs, quote-aware. */
+function settingsFields(line: string): Array<[string, string]> {
+  const parts: string[] = []
+  let buffer = ''
+  let quoted = false
+  for (const character of line) {
+    if (character === '"') quoted = !quoted
+    if (character === ',' && !quoted) {
+      parts.push(buffer)
+      buffer = ''
+    } else {
+      buffer += character
+    }
+  }
+  parts.push(buffer)
+
+  const fields: Array<[string, string]> = []
+  for (const part of parts) {
+    const at = part.indexOf(':')
+    if (at < 0) continue
+    const key = part.slice(0, at).trim()
+    if (key) fields.push([key, part.slice(at + 1).trim()])
+  }
+  return fields
+}
+
+function joinSettings(fields: Array<[string, string]>): string {
+  return fields.map(([key, value]) => `${key}: ${value}`).join(', ')
+}
+
+/** Split a parameter block into its three parts, any of which may be absent. */
+function splitBlock(block: string): { prompt: string; negative: string; settings: string } {
+  const lines = block.replace(/\r\n/g, '\n').split('\n')
+  // Scanning backwards, not `findLastIndex`: the shared tsconfig targets a lib
+  // without it, and this is not worth raising the target for.
+  let settingsAt = -1
+  for (let at = lines.length - 1; at >= 0; at -= 1) {
+    if (/(^|,\s*)Steps:\s/.test(lines[at] ?? '')) {
+      settingsAt = at
+      break
+    }
+  }
+  const settings = settingsAt >= 0 ? lines[settingsAt]! : ''
+  const head = settingsAt >= 0 ? lines.slice(0, settingsAt) : lines
+
+  const negativeAt = head.findIndex((line) => line.startsWith('Negative prompt:'))
+  if (negativeAt < 0) return { prompt: head.join('\n').trim(), negative: '', settings }
+  return {
+    prompt: head.slice(0, negativeAt).join('\n').trim(),
+    negative: [head[negativeAt]!.slice('Negative prompt:'.length), ...head.slice(negativeAt + 1)]
+      .join('\n')
+      .trim(),
+    settings,
+  }
+}
+
+/** Drop comma-separated terms whose text matches one of `unwanted`. */
+function dropTerms(text: string, unwanted: string[]): { text: string; removed: string[] } {
+  const removed: string[] = []
+  const kept = text
+    .split(',')
+    .map((term) => term.trim())
+    .filter((term) => {
+      if (!term) return false
+      // `(EasyNegative:1.2)` and `[bad-hands-5]` are the same term wearing
+      // emphasis syntax, which a plain equality check would miss.
+      const bare = term.replace(/^[([{]+|[)\]}]+$/g, '').replace(/:[\d.]+$/, '').trim()
+      const match = unwanted.some((name) => bare.toLowerCase() === name.toLowerCase())
+      if (match) removed.push(bare)
+      return !match
+    })
+  return { text: kept.join(', '), removed }
+}
+
+/** The bucket closest in shape to `width`x`height`. */
+function nearestBucket(width: number, height: number): readonly [number, number] {
+  const wanted = width / height
+  let best = XL_BUCKETS[0]!
+  let bestGap = Infinity
+  for (const bucket of XL_BUCKETS) {
+    const gap = Math.abs(bucket[0] / bucket[1] - wanted)
+    if (gap < bestGap) {
+      bestGap = gap
+      best = bucket
+    }
+  }
+  return best
+}
+
+/**
+ * Rewrite a parameter block to run on `target`.
+ *
+ * The seed is always randomised. A seed is a coordinate in one model's noise
+ * space and means nothing in another's — carrying it over implies a
+ * relationship between the two images that does not exist.
+ */
+export function migrateGeneration(block: string, target: MigrationTarget): Migration {
+  const notes: string[] = []
+  const { prompt, negative, settings } = splitBlock(block)
+  const fields = settingsFields(settings)
+  const get = (key: string) => fields.find(([name]) => name === key)?.[1]
+
+  const from: Architecture = /XL|SDXL/i.test(get('Model') ?? '') ? 'xl' : 'sd'
+  const crossing = target.architecture === 'xl' && from !== 'xl'
+
+  let nextPrompt = prompt
+  let nextNegative = negative
+
+  if (crossing) {
+    // 1. LoRAs. Architecture-specific, and silently ignored rather than an error.
+    const loras = [...nextPrompt.matchAll(/<(?:lora|lyco):([^:>]+)[^>]*>/gi)].map((m) => m[1])
+    if (loras.length > 0) {
+      nextPrompt = nextPrompt.replace(/<(?:lora|lyco):[^>]*>/gi, '').replace(/[ \t]+/g, ' ')
+      notes.push(
+        `Removed ${loras.length} SD1.5 LoRA${loras.length === 1 ? '' : 's'} (${loras.join(', ')}) — ` +
+          'they do nothing on SDXL. Booru-trained models cover most of what they did with plain tags.',
+      )
+    }
+
+    // 2. Textual inversions, in both prompts.
+    const fromPrompt = dropTerms(nextPrompt, SD15_EMBEDDINGS)
+    const fromNegative = dropTerms(nextNegative, SD15_EMBEDDINGS)
+    nextPrompt = fromPrompt.text
+    const dropped = [...fromPrompt.removed, ...fromNegative.removed]
+    if (dropped.length > 0) {
+      notes.push(
+        `Removed ${dropped.length} SD1.5 embedding${dropped.length === 1 ? '' : 's'} ` +
+          `(${dropped.join(', ')}) — on SDXL these are just words, steering the image rather than away from it.`,
+      )
+    }
+
+    // 3. Phrases that are not tags, rewritten to the ones that are. Weights
+    //    and emphasis brackets are preserved: `(huge hips:1.3)` keeps its 1.3.
+    const renamed: string[] = []
+    for (const [wrong, right] of TAG_ALIASES) {
+      const pattern = new RegExp(`(^|[,(\\[|\\s])${wrong}(?=[),\\]:\\s]|$)`, 'gi')
+      if (pattern.test(nextPrompt)) {
+        nextPrompt = nextPrompt.replace(pattern, (_whole, before: string) => `${before}${right}`)
+        renamed.push(`${wrong} → ${right}`)
+      }
+    }
+    if (renamed.length > 0) {
+      notes.push(
+        `Rewrote ${renamed.length} phrase${renamed.length === 1 ? '' : 's'} that are not danbooru ` +
+          `tags (${renamed.join(', ')}). These models learned exact tag strings, so a near-miss ` +
+          'carries no meaning — which is why "huge hips" produces smaller hips than "wide hips".',
+      )
+    }
+
+    // 5. Quality tags, which booru-trained SDXL models were trained to expect.
+    if (!/masterpiece|best quality/i.test(nextPrompt)) {
+      nextPrompt = `${XL_QUALITY},\n${nextPrompt}`
+      notes.push('Added the danbooru quality tags these models are trained to expect.')
+    }
+
+    // Keep whatever of the original negative was not an embedding, then top it
+    // up — a negative stripped of its embeddings is usually too thin.
+    const keptNegative = fromNegative.text
+      .split(',')
+      .map((term) => term.trim())
+      .filter(Boolean)
+    // Matched against the whole text, not term by term: `(worst quality, low
+    // quality:1.4)` is one weighted group holding two terms, so a per-term
+    // comparison misses both and appends them again. Duplicates dilute — the
+    // encoder sees the concept twice at half the attention each.
+    const already = fromNegative.text.toLowerCase()
+    for (const term of XL_NEGATIVE) {
+      if (!new RegExp(`(^|[^a-z])${term}([^a-z]|$)`).test(already)) keptNegative.push(term)
+    }
+    nextNegative = keptNegative.join(', ')
+
+    // Negatives that cancel what the prompt asks for. An SD1.5 negative
+    //    often carried `fat, chubby` to fight that model's doughiness; on a
+    //    booru model it deletes the body type the prompt just requested.
+    const asks = nextPrompt.toLowerCase()
+    const cancelling = new Set<string>()
+    for (const { wants, suppressedBy } of NEGATIVE_CONFLICTS) {
+      if (!wants.some((tag) => asks.includes(tag))) continue
+      for (const term of suppressedBy) cancelling.add(term)
+    }
+    if (cancelling.size > 0) {
+      const before = nextNegative
+      const cleared = dropTerms(nextNegative, [...cancelling])
+      nextNegative = cleared.text
+      if (cleared.removed.length > 0) {
+        notes.push(
+          `Removed ${cleared.removed.join(', ')} from the negative — the prompt asks for the ` +
+            'opposite, and the negative usually wins, which reads as the model ignoring you.',
+        )
+      } else if (before !== nextNegative) {
+        // Defensive: the two should not disagree.
+        notes.push('Adjusted the negative prompt.')
+      }
+    }
+
+  }
+
+  // --- settings -----------------------------------------------------------
+  const next = new Map(fields)
+  next.set('Model', target.checkpoint)
+  // Always random: see the doc comment.
+  next.set('Seed', '-1')
+
+  // Provenance fields describe the *old* generation. Left in place they do not
+  // merely go stale — Forge reads them back: `Model hash` would now contradict
+  // `Model`, and `Lora hashes` names a LoRA that is no longer in the prompt,
+  // which the paste tries to resolve and fails on.
+  next.delete('Model hash')
+
+  // Stated rather than left out — see `MigrationTarget.emphasis`.
+  if (target.emphasis) {
+    next.set('Emphasis', target.emphasis)
+    if (crossing && target.emphasis === 'Original') {
+      notes.push(
+        'Emphasis is set to Original, which renormalises each chunk after applying weights — so ' +
+          '(tag:1.3) mostly redistributes attention rather than adding it. "No norm" makes weights ' +
+          'bite properly and is what Forge recommends for SDXL.',
+      )
+    }
+  }
+
+  if (crossing) {
+    const size = (get('Size') ?? '').match(/(\d+)x(\d+)/)
+    if (size) {
+      const width = Number(size[1])
+      const height = Number(size[2])
+      const [bucketWidth, bucketHeight] = nearestBucket(width, height)
+      next.set('Size', `${bucketWidth}x${bucketHeight}`)
+      notes.push(
+        `Size ${width}x${height} → ${bucketWidth}x${bucketHeight}. SDXL was trained at about a ` +
+          'megapixel; an SD1.5 canvas produces distorted anatomy rather than a smaller picture.',
+      )
+
+      // Preserve the final resolution the original aimed at, so a hires pass
+      // keeps its purpose instead of inheriting a factor that no longer fits.
+      const upscale = Number(get('Hires upscale') ?? '0')
+      if (upscale > 1) {
+        const wanted = (height * upscale) / bucketHeight
+        const clamped = Math.max(1.1, Math.min(2, Math.round(wanted * 20) / 20))
+        next.set('Hires upscale', String(clamped))
+        notes.push(
+          `Hires upscale ${upscale} → ${clamped}, keeping the final height near the original ` +
+            `${Math.round(height * upscale)}px.`,
+        )
+      }
+    }
+
+    // A VAE belongs to an architecture. An SD1.5 VAE handed to an SDXL model
+    // does not fail — it decodes the latents wrongly and returns saturated
+    // rainbow noise, which looks like a broken model rather than a wrong
+    // setting. `Automatic` uses whatever the checkpoint carries.
+    const vae = get('VAE')
+    if (vae && vae !== 'Automatic' && vae !== 'None') {
+      next.set('VAE', 'Automatic')
+      notes.push(
+        `VAE ${vae} → Automatic. It is an SD1.5 VAE; on SDXL it decodes to rainbow noise rather ` +
+          'than erroring.',
+      )
+    }
+    next.delete('VAE hash')
+
+    // The receipts for what was just removed. `Lora hashes` and `TI` are how
+    // Forge reports which extras a generation used; carrying them past a
+    // migration that dropped those extras leaves the block describing a
+    // picture that will not be made, and the paste erroring on the lookup.
+    next.delete('Lora hashes')
+    next.delete('TI')
+    next.delete('TI hashes')
+    next.delete('Hashes')
+    // Written by whichever webui made the original, and read by nothing here.
+    next.delete('Version')
+
+    next.set('CFG scale', '5')
+    next.set('Steps', '28')
+    next.set('Clip skip', '2')
+    notes.push(
+      'CFG 5, 28 steps, clip skip 2 — what booru-trained SDXL models are tuned for. Higher CFG ' +
+        'burns contrast and steps past ~30 stop changing the image.',
+    )
+  }
+
+  const ordered = [...next.entries()] as Array<[string, string]>
+  const lines = [nextPrompt.trim()]
+  if (nextNegative.trim()) lines.push(`Negative prompt: ${nextNegative.trim()}`)
+  lines.push(joinSettings(ordered))
+
+  return { block: lines.join('\n'), notes }
+}

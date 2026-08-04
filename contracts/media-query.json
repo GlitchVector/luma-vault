@@ -4,6 +4,12 @@
   "rating": "suggestive",
   "sexyOnly": true,
   "search": "beach",
+  "tag": null,
+  "hideTags": [
+    "document"
+  ],
+  "minStars": 4,
+  "duplicatesOnly": false,
   "sort": "recent",
   "limit": 500,
   "offset": 0

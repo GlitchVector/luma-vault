@@ -1,4 +1,4 @@
-import { basenameOf, type Folder, type LibraryStats } from '@luma/core'
+import { basenameOf, displayPath, type Folder, type LibraryStats } from '@luma/core'
 import { Button, cn } from '@luma/ui'
 
 interface FolderSidebarProps {
@@ -10,6 +10,9 @@ interface FolderSidebarProps {
   onRemove: (id: number) => void
   onRescan: (id: number) => void
   onRetryFailed: () => void
+  onImportRatings: () => void
+  exclusions: string[]
+  onInclude: (path: string) => void
 }
 
 export function FolderSidebar({
@@ -21,6 +24,9 @@ export function FolderSidebar({
   onRemove,
   onRescan,
   onRetryFailed,
+  onImportRatings,
+  exclusions,
+  onInclude,
 }: FolderSidebarProps) {
   return (
     <aside className="flex w-60 shrink-0 flex-col gap-3 border-r border-white/5 bg-zinc-950/60 p-3">
@@ -135,6 +141,48 @@ export function FolderSidebar({
           ) : null}
         </dl>
       ) : null}
+
+      {/* Excluded folders are otherwise invisible: the library is simply
+          smaller than the folder, with nothing saying why. Listing them is what
+          makes the exclusion undoable rather than a thing you did once. */}
+      {exclusions.length > 0 ? (
+        <details className="border-t border-white/5 pt-2 text-[11px]">
+          <summary className="cursor-pointer text-zinc-500 hover:text-zinc-300">
+            Excluded ({exclusions.length})
+          </summary>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {exclusions.map((path) => (
+              <li key={path} className="group flex items-center gap-1">
+                <span
+                  className="min-w-0 flex-1 truncate text-zinc-600"
+                  title={displayPath(path)}
+                >
+                  {basenameOf(path) || displayPath(path)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onInclude(path)}
+                  title={`Scan ${displayPath(path)} again`}
+                  className="shrink-0 rounded px-1 text-zinc-600 opacity-0 hover:bg-white/10 hover:text-zinc-200 group-hover:opacity-100"
+                >
+                  undo
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {/* Ratings from a previous life. Deliberately at the bottom and quiet:
+          it is a one-off migration, not something anyone does twice. */}
+      <button
+        type="button"
+        onClick={onImportRatings}
+        title="Import 1-5 star ratings from a Stable Diffusion Image Browser database (wib.sqlite3). Ratings for folders you have not scanned yet are kept and attach when you do."
+        className="text-left text-[11px] text-zinc-600 underline decoration-dotted underline-offset-2 hover:text-zinc-400"
+      >
+        Import ratings…
+      </button>
     </aside>
   )
 }
