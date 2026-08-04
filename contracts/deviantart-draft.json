@@ -1,0 +1,24 @@
+[
+  {
+    "mediaId": 4821,
+    "title": "1girl, Silver Hair, Red Dress",
+    "description": "Made with ponyDiffusionV6XL_v6StartWithThisOne.safetensors.",
+    "tags": ["glitchvector", "topless", "breasts", "nude", "nsfw", "mature", "aiart", "aigenerated"],
+    "isMature": true,
+    "matureLevel": "strict",
+    "matureClassification": ["nudity", "sexual"],
+    "isAiGenerated": true,
+    "noai": true
+  },
+  {
+    "mediaId": 77,
+    "title": "Untitled",
+    "description": "",
+    "tags": [],
+    "isMature": false,
+    "matureLevel": null,
+    "matureClassification": [],
+    "isAiGenerated": false,
+    "noai": false
+  }
+]

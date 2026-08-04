@@ -4,12 +4,16 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
+  deviantArtAccountSchema,
+  deviantArtDraftSchema,
+  deviantArtSummarySchema,
   folderSchema,
   libraryStatsSchema,
   mediaFrameSchema,
   mediaItemSchema,
   mediaQuerySchema,
   scanProgressSchema,
+  timelineBucketSchema,
 } from './schemas.ts'
 
 const CONTRACTS = join(dirname(fileURLToPath(import.meta.url)), '../../../contracts')
@@ -29,6 +33,10 @@ const CASES: Array<[file: string, schema: z.ZodType]> = [
   ['media-frame.json', z.array(mediaFrameSchema)],
   ['library-stats.json', libraryStatsSchema],
   ['media-query.json', mediaQuerySchema],
+  ['timeline.json', z.array(timelineBucketSchema)],
+  ['deviantart-draft.json', z.array(deviantArtDraftSchema)],
+  ['deviantart-account.json', z.array(deviantArtAccountSchema)],
+  ['deviantart-summary.json', deviantArtSummarySchema],
 ]
 
 describe('contract fixtures', () => {

@@ -10,6 +10,9 @@ interface FilterBarProps {
   onToggleBoxes: () => void
   selecting: boolean
   onToggleSelecting: () => void
+  /** Whether the timeline strip is open under this bar. */
+  timeline: boolean
+  onToggleTimeline: () => void
   onChange: (patch: Partial<MediaQuery>) => void
 }
 
@@ -24,8 +27,10 @@ const RATINGS: Array<{ value: Rating; label: string }> = [
  * Structural tags, which answer "what kind of picture is this" rather than
  * "how sexy is it". Each cycles through three states, because both directions
  * are useful: off → only these → hide these.
+ *
+ * One of them gains a fourth. See `triage`.
  */
-const TAGS: Array<{ value: string; label: string; title: string }> = [
+const TAGS: Array<{ value: string; label: string; title: string; triage?: boolean }> = [
   {
     value: 'document',
     label: 'Docs',
@@ -35,6 +40,12 @@ const TAGS: Array<{ value: string; label: string; title: string }> = [
     value: 'generated',
     label: 'AI',
     title: 'Images whose metadata names the generator that made them',
+    // Adds an "unrated" step between *only these* and *hide these*: generated
+    // images nobody has starred yet, which is the pile actually waiting to be
+    // gone through. Only here — "documents I have not starred" is not a
+    // question anyone has, and a fourth click on every pill to reach the third
+    // state would be a worse bar for everyone.
+    triage: true,
   },
 ]
 
@@ -58,6 +69,8 @@ export function FilterBar({
   onToggleBoxes,
   selecting,
   onToggleSelecting,
+  timeline,
+  onToggleTimeline,
   onChange,
 }: FilterBarProps) {
   return (
@@ -107,31 +120,47 @@ export function FilterBar({
       {TAGS.map((tag) => {
         const only = query.tag === tag.value
         const hidden = query.hideTags.includes(tag.value)
+        const triaging = only && tag.triage === true && query.unstarred
+        const without = query.hideTags.filter((t) => t !== tag.value)
+
+        // off → only → [unrated] → hidden → off. One control, because a
+        // separate "show" and "hide" pill per tag would be four more controls
+        // for a bar that already has eleven.
+        //
+        // `unstarred` is cleared on every step that is not the triage one. It
+        // is a property of the whole query rather than of this pill, so leaving
+        // it set while moving to another tag — or switching this one off —
+        // would silently narrow a filter nothing on screen claims to be
+        // applying.
+        const next = () => {
+          if (only && tag.triage === true && !query.unstarred) {
+            // `minStars` goes with it: nothing is both unstarred and 4+, and
+            // the two star pills already replace each other for the same
+            // reason. A filter combination that can only ever be empty is not
+            // worth being able to express.
+            return { unstarred: true, minStars: null }
+          }
+          if (only) return { tag: null, unstarred: false, hideTags: [...without, tag.value] }
+          if (hidden) return { hideTags: without, unstarred: false }
+          return { tag: tag.value, unstarred: false, hideTags: without }
+        }
+
         return (
           <Pill
             key={tag.value}
             active={only || hidden}
             title={
-              only
-                ? `Showing only: ${tag.title}`
-                : hidden
-                  ? `Hidden: ${tag.title}`
-                  : tag.title
-            }
-            onClick={() =>
-              onChange(
-                // off → only → hidden → off. One control, because a separate
-                // "show" and "hide" pill per tag would be four more controls
-                // for a bar that already has eleven.
-                only
-                  ? { tag: null, hideTags: [...query.hideTags, tag.value] }
+              triaging
+                ? `Showing only what you have not starred yet: ${tag.title}`
+                : only
+                  ? `Showing only: ${tag.title}`
                   : hidden
-                    ? { hideTags: query.hideTags.filter((t) => t !== tag.value) }
-                    : { tag: tag.value, hideTags: query.hideTags.filter((t) => t !== tag.value) },
-              )
+                    ? `Hidden: ${tag.title}`
+                    : tag.title
             }
+            onClick={() => onChange(next())}
           >
-            {hidden ? `No ${tag.label}` : tag.label}
+            {hidden ? `No ${tag.label}` : triaging ? `${tag.label} Unrated` : tag.label}
           </Pill>
         )
       })}
@@ -218,6 +247,14 @@ export function FilterBar({
         }}
       >
         Duplicates
+      </Pill>
+
+      <Pill
+        active={timeline || query.modifiedAfter !== null || query.modifiedBefore !== null}
+        title="When the library is: bars per week, and a draggable selection that narrows the grid to a date range"
+        onClick={onToggleTimeline}
+      >
+        Timeline
       </Pill>
 
       <span className="ml-auto text-[11px] tabular-nums text-zinc-500">

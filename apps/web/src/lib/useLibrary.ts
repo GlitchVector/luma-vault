@@ -19,8 +19,11 @@ export const DEFAULT_QUERY: MediaQuery = {
   search: '',
   tag: null,
   minStars: null,
+  unstarred: false,
   minLongestEdge: null,
   duplicatesOnly: false,
+  modifiedAfter: null,
+  modifiedBefore: null,
   // Nothing hidden by default. Documents are the reason this exists, but a
   // grid that silently omits files on first run is a bug report waiting to
   // happen — the "No Docs" pill is one click away.
@@ -248,6 +251,7 @@ export function useLibrary() {
             tag: null,
             sexyOnly: false,
             minStars: null,
+            unstarred: false,
             offset: 0,
           }
           void runQuery(next, false)

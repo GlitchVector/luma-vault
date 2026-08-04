@@ -23,12 +23,33 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
-# One localhost POST: selecting the checkpoint in Forge *before* its page is
-# built. Already in the tree via Tauri, so this is a name rather than a
-# download. No TLS features — the only host it ever talks to is 127.0.0.1.
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
+# Forge on 127.0.0.1, and DeviantArt over TLS.
+#
+# `rustls-tls` rather than the platform stack: schannel/openssl would make the
+# build depend on what the host has installed, and this is the only remote
+# origin the binary ever reaches. `multipart` is the stash/submit upload — the
+# endpoint takes a file part, not a base64 field.
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  # The OAuth token exchange and stash/publish are both urlencoded forms.
+  "form",
+  "multipart",
+  "rustls",
+  "webpki-roots",
+] }
 # URL parsing, so `open_external` can refuse a scheme before the OS sees it.
 url = "2"
+
+# PKCE. `getrandom` talks to the OS CSPRNG directly — a code verifier from a
+# seeded PRNG is a code verifier an attacker can predict, which is the one
+# thing PKCE exists to prevent. base64 is the URL-safe encoding the challenge
+# is transmitted in. Both are already in the tree via rustls.
+base64 = "0.22"
+getrandom = "0.3"
+# The refresh token, in the OS credential store rather than beside the index.
+# It is a bearer credential for someone's DeviantArt account: SQLite would put
+# it in plaintext in a file that gets copied around with backups.
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 # Deleting to the OS trash rather than unlinking. A media library is not a
 # place to be certain about a decision, and the Recycle Bin is the difference
 # between a mistake and a loss.

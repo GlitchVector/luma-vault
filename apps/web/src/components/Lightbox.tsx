@@ -32,6 +32,7 @@ import {
 } from '#/lib/native.ts'
 import { askConfirm, showMessage } from '#/lib/dialogs.ts'
 import { preloadImages } from '#/lib/preload.ts'
+import { toast } from '#/lib/toasts.ts'
 
 /**
  * How long a row has to stay on screen before its original is fetched.
@@ -109,6 +110,16 @@ interface LightboxProps {
    */
   onToggleSelect: (id: number) => void
   /**
+   * Whether the row on screen is currently picked.
+   *
+   * The lightbox used to fire {@link onToggleSelect} blind, which is fine for a
+   * key that means "flip this" and useless for one that means "take it out" —
+   * a blind toggle on an unpicked row would *add* it. It also gives the header
+   * something to say, which matters as soon as stepping back to reconsider is
+   * part of the pass.
+   */
+  selected: boolean
+  /**
    * Show a different row, by id.
    *
    * Distinct from `onStep`, which walks the filtered list. This reaches a
@@ -116,6 +127,59 @@ interface LightboxProps {
    * upscaled variant.
    */
   onOpenId: (id: number) => void
+}
+
+/**
+ * A short string shown as code, which copies itself when clicked.
+ *
+ * The whole control is the target rather than a separate icon beside it: the
+ * only thing anyone wants to do with a line like this is take it, so making the
+ * text itself the button removes the step of aiming at something smaller.
+ *
+ * Confirms in place instead of raising a toast. A toast says *that* something
+ * was copied somewhere else on screen; swapping the label says *this* was, which
+ * is the question being asked, and it cannot be missed by looking at the thing
+ * you just clicked.
+ */
+function CopyLabel({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 1200)
+    return () => clearTimeout(timer)
+  }, [copied])
+
+  return (
+    <button
+      type="button"
+      title={`Copy "${value}"`}
+      onClick={() => {
+        // Optional-chained *and* guarded: `clipboard?.writeText()` yields
+        // undefined where the API is absent, and `.then` on that throws.
+        const written = navigator.clipboard?.writeText(value)
+        if (!written) return
+        void written.then(
+          () => setCopied(true),
+          // A clipboard the browser refused is not worth an error dialog over,
+          // but claiming success would be a lie.
+          () => setCopied(false),
+        )
+      }}
+      className={cn(
+        'mt-1 flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left font-mono',
+        'transition-colors',
+        copied
+          ? 'border-indigo-400/40 bg-indigo-500/15 text-indigo-200'
+          : 'border-white/10 bg-black/40 text-zinc-400 hover:border-white/20 hover:text-zinc-200',
+      )}
+    >
+      <span className="min-w-0 flex-1 truncate">{value}</span>
+      <span className="shrink-0 text-[10px] uppercase tracking-wide opacity-70">
+        {copied ? 'copied' : 'copy'}
+      </span>
+    </button>
+  )
 }
 
 export function Lightbox({
@@ -132,6 +196,7 @@ export function Lightbox({
   onDeleted,
   onOpenId,
   onToggleSelect,
+  selected,
 }: LightboxProps) {
   const [fetched, setFetched] = useState<MediaItem | null>(null)
   const [frames, setFrames] = useState<MediaFrame[]>([])
@@ -330,16 +395,37 @@ export function Lightbox({
         rated.current = true
         setFetched({ ...item, stars: 4 })
         void setStars(item.id, 4)
+        // The two verdict keys are alternatives, so rating takes the row back
+        // out of the pile. Stepping back to reconsider something you picked and
+        // rating it instead is a *change of mind*, and leaving it picked would
+        // mean the batch action later runs over a picture you decided to keep.
+        //
+        // Guarded rather than toggled: `onToggleSelect` on an unpicked row
+        // would add it, so pressing Up on an ordinary picture would silently
+        // start a selection.
+        if (selected) {
+          toast(`Unpicked ${item.name}`, 'muted')
+          onToggleSelect(item.id)
+        }
         // On to the next, like the pick below it. Both keys mean "I have decided
         // about this one", and the decision is nearly always followed by moving
         // on — so the pass stays a single repeated key whichever you press.
         // Adjusting a rating you have just given is what 1-5 are for, and they
-        // deliberately stay put.
+        // deliberately stay put — but they take the row out of the pile too,
+        // because any rating is the verdict that says this one is not a
+        // candidate.
         onStep(1)
         return
       }
       if (event.key === 'ArrowDown' && item) {
         event.preventDefault()
+        // Said out loud, because there is nothing on this screen to see it
+        // happen on — the selection lives in a grid the lightbox is covering.
+        // Read before the toggle: `selected` is the state being left.
+        toast(
+          `${selected ? 'Unpicked' : 'Picked'} ${item.name}`,
+          selected ? 'muted' : 'picked',
+        )
         onToggleSelect(item.id)
         // And on to the next one. Picking is nearly always followed by moving
         // on, so a pass through a folder becomes one key rather than two —
@@ -370,6 +456,17 @@ export function Lightbox({
 
       const digit = Number(event.key)
       const next = digit === 0 ? null : digit
+
+      // Rating takes the row out of the pile, the same as Up does. **Before**
+      // the no-op check below, deliberately: pressing 4 on something already
+      // rated 4 is still someone saying "this one is decided", and that check
+      // exists only to skip a pointless write — it must not also swallow the
+      // half of the keypress that has an effect.
+      if (selected) {
+        toast(`Unpicked ${item.name}`, 'muted')
+        onToggleSelect(item.id)
+      }
+
       if (next === item.stars) return
       // Applied locally first: this is meant to be held down through a folder,
       // and waiting for a round-trip per key makes it feel like it missed.
@@ -379,7 +476,7 @@ export function Lightbox({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, onStep, item, zoom, confirmDelete, onToggleSelect])
+  }, [onClose, onStep, item, zoom, confirmDelete, onToggleSelect, selected])
 
   if (!item) return null
 
@@ -472,6 +569,17 @@ export function Lightbox({
         <span className="tabular-nums">{formatBytes(item.sizeBytes)}</span>
         {item.kind === 'video' ? (
           <span className="tabular-nums">{formatDuration(item.durationSec)}</span>
+        ) : null}
+        {/* Without this, stepping back to a picture gives no clue whether it is
+            already picked — and the decision to reconsider one is exactly when
+            that matters. */}
+        {selected ? (
+          <span
+            className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-indigo-200"
+            title="Picked for the selection. Rating it with Up takes it back out."
+          >
+            picked
+          </span>
         ) : null}
         {/* Clicking the star you already have clears it, so there is no
             separate "unrate" control for a five-way choice. */}
@@ -922,6 +1030,17 @@ export function Lightbox({
                 </Fragment>
               ))}
           </dl>
+
+          {/* Last, because it hands off to something outside this app. The
+              panel reads top to bottom as "what this picture is" — the prompt,
+              then the settings — and this is what you do about it afterwards.
+              Written out rather than run from here: it belongs to a different
+              tool, and the useful thing this window can do is give the exact
+              string instead of making someone retype a filename of digits. */}
+          <h3 className="mt-3 border-t border-white/5 pt-2 text-zinc-600">
+            SDXL Claude Command
+          </h3>
+          <CopyLabel value={`/sdxl ${item.name}`} />
         </aside>
       ) : null}
       </div>

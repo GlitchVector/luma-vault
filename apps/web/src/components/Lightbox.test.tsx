@@ -2,6 +2,8 @@ import type { MediaItem } from '@luma/core'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDialogs } from '#/lib/dialogs.ts'
+import { resetToasts, toast } from '#/lib/toasts.ts'
+import { ToastHost } from '#/components/ToastHost.tsx'
 import { resetPreloads } from '#/lib/preload.ts'
 import { DialogHost } from './DialogHost.tsx'
 import { Lightbox } from './Lightbox.tsx'
@@ -139,6 +141,9 @@ afterEach(() => {
   // The in-flight table is module state and outlives a render, so without this
   // every case after the first would find its warming already "done".
   resetPreloads()
+  // Toasts hold a timer each; leaving them queued would let one raised by a
+  // case fire into the next.
+  resetToasts()
   vi.unstubAllGlobals()
 })
 
@@ -160,6 +165,7 @@ function renderLightbox(props: Partial<React.ComponentProps<typeof Lightbox>> = 
       onDeleted={() => {}}
       onOpenId={() => {}}
       onToggleSelect={() => {}}
+      selected={false}
       {...props}
     />
     <DialogHost />
@@ -235,6 +241,7 @@ describe('the dwell before the original is fetched', () => {
         onDeleted={() => {}}
       onOpenId={() => {}}
       onToggleSelect={() => {}}
+      selected={false}
       />
     )
   }
@@ -534,6 +541,7 @@ describe('zooming and panning', () => {
         onDeleted={() => {}}
       onOpenId={() => {}}
       onToggleSelect={() => {}}
+      selected={false}
       />,
     )
 
@@ -578,10 +586,245 @@ describe('warming the neighbours', () => {
           onDeleted={() => {}}
       onOpenId={() => {}}
       onToggleSelect={() => {}}
+      selected={false}
         />,
       )
     }
 
     expect(warmed).toEqual([url(`${THUMB}-2`)])
+  })
+})
+
+describe('changing your mind about a picked picture', () => {
+  const press = (key: string) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+
+  it('takes a picked picture back out when you rate it instead', () => {
+    // The pass is: Down picks and moves on. Step back, decide it is a keeper
+    // rather than a candidate, and Up has to undo the pick — otherwise the
+    // batch action later runs over a picture you deliberately kept.
+    const toggled: number[] = []
+    renderLightbox({ seed: makeItem(7), selected: true, onToggleSelect: (id) => toggled.push(id) })
+
+    press('ArrowUp')
+    expect(toggled).toEqual([7])
+  })
+
+  it('does not start a selection by rating an unpicked one', () => {
+    // `onToggleSelect` flips, so firing it blind here would *add* the row —
+    // making Up on an ordinary picture silently begin a selection.
+    const toggled: number[] = []
+    renderLightbox({ seed: makeItem(7), selected: false, onToggleSelect: (id) => toggled.push(id) })
+
+    press('ArrowUp')
+    expect(toggled).toEqual([])
+  })
+
+  it('takes it back out when a digit rates it too', () => {
+    // Any rating is the verdict that says this one is not a candidate, so the
+    // number keys undo the pick just as Up does. They still do not step.
+    const toggled: number[] = []
+    renderLightbox({ seed: makeItem(7), selected: true, onToggleSelect: (id) => toggled.push(id) })
+
+    press('3')
+    expect(toggled).toEqual([7])
+  })
+
+  it('takes it back out even when the rating did not change', () => {
+    // Pressing 4 on something already rated 4 writes nothing — but it is still
+    // someone saying "this one is decided". The no-op check exists to skip a
+    // pointless round trip, and must not swallow the half of the keypress that
+    // has an effect.
+    const toggled: number[] = []
+    renderLightbox({
+      seed: { ...makeItem(7), stars: 4 },
+      selected: true,
+      onToggleSelect: (id) => toggled.push(id),
+    })
+
+    press('4')
+    expect(toggled).toEqual([7])
+  })
+
+  it('takes it back out when 0 clears the rating', () => {
+    const toggled: number[] = []
+    renderLightbox({
+      seed: { ...makeItem(7), stars: 3 },
+      selected: true,
+      onToggleSelect: (id) => toggled.push(id),
+    })
+
+    press('0')
+    expect(toggled).toEqual([7])
+  })
+
+  it('does not start a selection with a digit either', () => {
+    const toggled: number[] = []
+    renderLightbox({ seed: makeItem(7), selected: false, onToggleSelect: (id) => toggled.push(id) })
+
+    press('3')
+    expect(toggled).toEqual([])
+  })
+
+  it('says on screen that the picture is picked', () => {
+    // Stepping back to reconsider is exactly when you need to know.
+    renderLightbox({ seed: makeItem(7), selected: true })
+    expect(screen.getByText('picked')).toBeTruthy()
+  })
+
+  it('says nothing when it is not', () => {
+    renderLightbox({ seed: makeItem(7), selected: false })
+    expect(screen.queryByText('picked')).toBeNull()
+  })
+})
+
+describe('saying that a pick registered', () => {
+  const press = (key: string) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+
+  function renderWithToasts(props: Partial<React.ComponentProps<typeof Lightbox>> = {}) {
+    render(<ToastHost />)
+    return renderLightbox(props)
+  }
+
+  const named = (name: string) => ({ ...makeItem(7), name })
+
+  it('names the picture it just picked', async () => {
+    // The selection lives in a grid the lightbox is covering, so without this
+    // the key has no visible effect at all.
+    renderWithToasts({ seed: named('holiday.png'), selected: false })
+    press('ArrowDown')
+    expect(await screen.findByText('Picked holiday.png')).toBeTruthy()
+  })
+
+  it('says so when the same key takes it back out', async () => {
+    renderWithToasts({ seed: named('holiday.png'), selected: true })
+    press('ArrowDown')
+    expect(await screen.findByText('Unpicked holiday.png')).toBeTruthy()
+  })
+
+  it('says so when a rating takes it out', async () => {
+    renderWithToasts({ seed: named('holiday.png'), selected: true })
+    press('ArrowUp')
+    expect(await screen.findByText('Unpicked holiday.png')).toBeTruthy()
+  })
+
+  it('says so when a digit takes it out', async () => {
+    renderWithToasts({ seed: named('holiday.png'), selected: true })
+    press('3')
+    expect(await screen.findByText('Unpicked holiday.png')).toBeTruthy()
+  })
+
+  it('says nothing when a rating changed no pick', async () => {
+    // Rating an unpicked picture is the ordinary case. A toast on every rating
+    // would be constant noise through a pass.
+    renderWithToasts({ seed: named('holiday.png'), selected: false })
+    press('ArrowUp')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(screen.queryByText(/^(Picked|Unpicked) holiday\.png$/)).toBeNull()
+  })
+
+  it('keeps only the newest few when a key is held through a folder', async () => {
+    // These confirm a key meant to be repeated. Without a cap a fast pass
+    // stacks them up the side of the window and pushes the newest — the only
+    // one that matters — off screen.
+    render(<ToastHost />)
+    for (const name of ['a.png', 'b.png', 'c.png', 'd.png', 'e.png']) {
+      toast(`Picked ${name}`, 'picked')
+    }
+    expect(await screen.findByText('Picked e.png')).toBeTruthy()
+    expect(screen.getAllByText(/^Picked /)).toHaveLength(3)
+    expect(screen.queryByText('Picked a.png')).toBeNull()
+  })
+})
+
+describe('the /sdxl hand-off', () => {
+  const generated = (name: string) => ({
+    ...makeItem(7),
+    name,
+    generation: { tool: 'Stable Diffusion', prompt: '1girl, silver hair', needsSourceImage: false },
+  })
+
+  it('offers the exact command for this picture', () => {
+    // The filename is a counter and a seed. Retyping it by hand is the step
+    // this removes.
+    renderLightbox({ seed: generated('00042-3746152819.png'), showGeneration: true })
+    expect(screen.getByText('/sdxl 00042-3746152819.png')).toBeTruthy()
+  })
+
+  it('puts it on the clipboard when clicked, and says it did', async () => {
+    const written: string[] = []
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: (text: string) => (written.push(text), Promise.resolve()) },
+      configurable: true,
+    })
+
+    renderLightbox({ seed: generated('00042-3746152819.png'), showGeneration: true })
+    screen.getByText('/sdxl 00042-3746152819.png').click()
+
+    expect(written).toEqual(['/sdxl 00042-3746152819.png'])
+    // Confirmed on the control itself: a message elsewhere would answer a
+    // different question than "did *this* copy".
+    expect(await screen.findByText('copied')).toBeTruthy()
+  })
+
+  it('does not claim success when the browser refuses the clipboard', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: () => Promise.reject(new Error('denied')) },
+      configurable: true,
+    })
+
+    renderLightbox({ seed: generated('a.png'), showGeneration: true })
+    screen.getByText('/sdxl a.png').click()
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(screen.queryByText('copied')).toBeNull()
+  })
+
+  it('survives a webview with no clipboard at all', async () => {
+    // `clipboard?.writeText()` yields undefined there, and `.then` on that
+    // throws — which would take the click handler down rather than degrade.
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+
+    renderLightbox({ seed: generated('a.png'), showGeneration: true })
+    expect(() => screen.getByText('/sdxl a.png').click()).not.toThrow()
+    expect(screen.queryByText('copied')).toBeNull()
+  })
+
+  it('is absent on a picture with no prompt data', () => {
+    renderLightbox({ seed: makeItem(7), showGeneration: true })
+    expect(screen.queryByText(/^\/sdxl /)).toBeNull()
+  })
+})
+
+describe('where the /sdxl command sits', () => {
+  it('is labelled, and comes after the settings rather than above the prompt', () => {
+    // The panel reads top to bottom as "what this picture is" — prompt, then
+    // settings. Handing off to another tool is what you do about it afterwards,
+    // so it goes last.
+    renderLightbox({
+      seed: {
+        ...makeItem(7),
+        name: 'a.png',
+        generation: {
+          tool: 'Stable Diffusion',
+          prompt: '1girl, silver hair',
+          model: 'waiNSFW.safetensors',
+          needsSourceImage: false,
+        },
+      },
+      showGeneration: true,
+    })
+
+    expect(screen.getByText('SDXL Claude Command')).toBeTruthy()
+
+    const panel = screen.getByText('/sdxl a.png').closest('aside')
+    expect(panel).toBeTruthy()
+    const order = [...(panel?.querySelectorAll('*') ?? [])]
+    const at = (text: string) =>
+      order.findIndex((node) => node.textContent?.trim() === text)
+
+    expect(at('SDXL Claude Command')).toBeGreaterThan(at('1girl, silver hair'))
+    expect(at('/sdxl a.png')).toBeGreaterThan(at('SDXL Claude Command'))
   })
 })

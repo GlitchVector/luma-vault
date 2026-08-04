@@ -1242,6 +1242,28 @@ impl Db {
         Ok(())
     }
 
+    /// Rate many rows at once. Returns how many actually changed.
+    ///
+    /// One transaction rather than a call per id: a selection can be hundreds,
+    /// and the same reasoning that made `delete_media` a batch applies — that
+    /// many round trips is slow, and a partial failure halfway through is
+    /// impossible to report on sensibly. Here it is also atomic, so a rating
+    /// applied to a selection either lands on all of it or on none.
+    pub fn set_stars_many(&self, ids: &[i64], stars: Option<i64>) -> Result<usize> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let value = stars.filter(|s| (1..=5).contains(s));
+        let tx = conn.transaction()?;
+        let mut changed = 0;
+        {
+            let mut stmt = tx.prepare("UPDATE media SET stars = ?2 WHERE id = ?1")?;
+            for id in ids {
+                changed += stmt.execute(params![id, value])?;
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
     /// Rows that have never been examined for structural tags.
     ///
     /// Unlike the classification queue this does not require a verdict: a
@@ -1578,9 +1600,20 @@ impl Db {
     // Query
     // -----------------------------------------------------------------------
 
-    pub fn query_media(&self, query: &MediaQuery) -> Result<MediaPage> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
-
+    /// The WHERE clause a query implies, shared by the grid and the timeline.
+    ///
+    /// One builder rather than two, because the timeline's whole claim is
+    /// "these bars describe the grid you are looking at" — a predicate added to
+    /// one and forgotten in the other breaks that silently.
+    ///
+    /// `include_range` is the one deliberate divergence: the histogram must
+    /// ignore `modified_after`/`modified_before` or selecting a range would
+    /// collapse the timeline to only the bars inside it, and there would be no
+    /// way to see — or grab — anything outside the current selection.
+    fn media_filter(
+        query: &MediaQuery,
+        include_range: bool,
+    ) -> (Vec<String>, Vec<Box<dyn rusqlite::ToSql>>) {
         let mut where_parts: Vec<String> = Vec::new();
         let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -1652,6 +1685,12 @@ impl Db {
             where_parts.push(format!("stars >= ?{}", binds.len() + 1));
             binds.push(Box::new(min));
         }
+        if query.unstarred {
+            // `stars` is NULL until somebody rates a row, and `0` is not used —
+            // clearing a rating writes NULL back. So this is the triage queue:
+            // everything nobody has judged yet.
+            where_parts.push("stars IS NULL".to_string());
+        }
         if let Some(min) = query.min_longest_edge {
             // A row the measure phase has not reached yet has no dimensions, so
             // `MAX` is NULL and the comparison excludes it — which is right.
@@ -1680,6 +1719,26 @@ impl Db {
             binds.push(Box::new(hidden.clone()));
         }
 
+        if include_range {
+            // Half-open, so two adjacent weeks share a boundary without
+            // double-counting the file sitting exactly on it.
+            if let Some(after) = query.modified_after {
+                where_parts.push(format!("modified_at >= ?{}", binds.len() + 1));
+                binds.push(Box::new(after));
+            }
+            if let Some(before) = query.modified_before {
+                where_parts.push(format!("modified_at < ?{}", binds.len() + 1));
+                binds.push(Box::new(before));
+            }
+        }
+
+        (where_parts, binds)
+    }
+
+    pub fn query_media(&self, query: &MediaQuery) -> Result<MediaPage> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+
+        let (where_parts, binds) = Self::media_filter(query, true);
         let where_sql = if where_parts.is_empty() {
             String::new()
         } else {
@@ -1732,6 +1791,52 @@ impl Db {
             total,
             offset: query.offset,
         })
+    }
+
+    /// How many rows the current filters match, per week.
+    ///
+    /// Applies every predicate the grid does **except** the date range — the
+    /// bars have to keep showing the whole span while a selection narrows the
+    /// grid, or there would be nothing outside the selection left to grab.
+    ///
+    /// Weeks start Monday 00:00 UTC. `modified_at` is unix ms, so the epoch
+    /// shift aligns the integer division to Monday: day 0 of the epoch —
+    /// Thursday, 1 January 1970 — belongs to the week that began Monday,
+    /// 29 December 1969, three days earlier, so shifting by 3 days makes the
+    /// division land its boundaries on Mondays. (Pinned by a test against
+    /// 2024-07-01, a known Monday: 4 puts every boundary on Sunday.) UTC rather
+    /// than local time, deliberately — a fixed arithmetic is stable across DST
+    /// changes and machines, and being an hour "off" at a bar boundary is
+    /// invisible at a week's width.
+    ///
+    /// Empty weeks are not returned; the frontend rebuilds gaps from the range.
+    pub fn media_timeline(&self, query: &MediaQuery) -> Result<Vec<crate::types::TimelineBucket>> {
+        const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+        const EPOCH_TO_MONDAY_MS: i64 = 3 * 24 * 60 * 60 * 1000;
+
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let (mut where_parts, binds) = Self::media_filter(query, false);
+        // A file with no sensible mtime — 0 is what a broken copy tool writes —
+        // would otherwise put a 1970 bar on the axis and flatten five decades
+        // of real bars into hairlines.
+        where_parts.push("modified_at > 0".to_string());
+
+        let sql = format!(
+            "SELECT ((modified_at + {EPOCH_TO_MONDAY_MS}) / {WEEK_MS}) AS week, COUNT(*)
+             FROM media WHERE {} GROUP BY week ORDER BY week",
+            where_parts.join(" AND ")
+        );
+        let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(bind_refs.as_slice(), |row| {
+            let week: i64 = row.get(0)?;
+            Ok(crate::types::TimelineBucket {
+                start: week * WEEK_MS - EPOCH_TO_MONDAY_MS,
+                count: row.get(1)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Newest files across every folder — the strip pinned above the grid once
@@ -1998,7 +2103,10 @@ mod tests {
             search: String::new(),
             tag: None,
             min_stars: None,
+            unstarred: false,
             min_longest_edge: None,
+            modified_after: None,
+            modified_before: None,
             duplicates_only: false,
             hide_tags: Vec::new(),
             sort: SortOrder::Recent,
@@ -2021,6 +2129,137 @@ mod tests {
         )
         .expect("insert");
         (db, folder)
+    }
+
+    /// Monday 2024-07-01 00:00 UTC — a known week boundary to build cases on.
+    #[cfg(test)]
+    const A_MONDAY_MS: i64 = 1_719_792_000_000;
+
+    #[test]
+    fn the_timeline_buckets_by_week_and_honours_the_filters() {
+        const WEEK: i64 = 7 * 24 * 60 * 60 * 1000;
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                // Two in the first week, one the week after.
+                file("/media/a.jpg", MediaKind::Image, A_MONDAY_MS + 1000),
+                file("/media/b.jpg", MediaKind::Image, A_MONDAY_MS + WEEK - 1),
+                file("/media/c.mp4", MediaKind::Video, A_MONDAY_MS + WEEK + 1000),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let buckets = db.media_timeline(&query()).expect("timeline");
+        assert_eq!(
+            buckets,
+            vec![
+                crate::types::TimelineBucket { start: A_MONDAY_MS, count: 2 },
+                crate::types::TimelineBucket { start: A_MONDAY_MS + WEEK, count: 1 },
+            ]
+        );
+
+        // The kind filter reaches the bars: the histogram describes the grid.
+        let images_only = MediaQuery { kind: Some(MediaKind::Image), ..query() };
+        let buckets = db.media_timeline(&images_only).expect("timeline");
+        assert_eq!(buckets.iter().map(|b| b.count).sum::<i64>(), 2);
+    }
+
+    #[test]
+    fn the_timeline_ignores_its_own_range_but_the_grid_applies_it() {
+        // The one deliberate divergence between the two: bars keep showing the
+        // whole span while a selection narrows the grid — otherwise selecting
+        // a range would leave nothing outside it to grab.
+        const WEEK: i64 = 7 * 24 * 60 * 60 * 1000;
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/media/a.jpg", MediaKind::Image, A_MONDAY_MS + 1000),
+                file("/media/b.jpg", MediaKind::Image, A_MONDAY_MS + WEEK + 1000),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let narrowed = MediaQuery {
+            modified_after: Some(A_MONDAY_MS),
+            modified_before: Some(A_MONDAY_MS + WEEK),
+            ..query()
+        };
+
+        let page = db.query_media(&narrowed).expect("query");
+        assert_eq!(page.total, 1, "the grid must narrow to the selected week");
+
+        let buckets = db.media_timeline(&narrowed).expect("timeline");
+        assert_eq!(buckets.len(), 2, "the bars must keep showing the whole span");
+    }
+
+    #[test]
+    fn a_file_with_a_zero_mtime_stays_off_the_timeline() {
+        // 0 is what a broken copy tool writes. A 1970 bar would flatten five
+        // decades of real bars into hairlines.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/media/broken.jpg", MediaKind::Image, 0),
+                file("/media/fine.jpg", MediaKind::Image, A_MONDAY_MS + 1000),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let buckets = db.media_timeline(&query()).expect("timeline");
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].start, A_MONDAY_MS);
+    }
+
+    #[test]
+    fn unstarred_finds_exactly_what_nobody_has_judged() {
+        // The triage queue behind the "AI Unrated" filter. `min_stars` cannot
+        // express it: that comparison is *at least*, so `Some(0)` would match
+        // every row including the rated ones and quietly do nothing.
+        let (db, _) = seeded();
+        let all = db.query_media(&query()).expect("query");
+        let first = all.items[0].id;
+        db.set_stars(first, Some(4)).expect("rate one");
+
+        let unstarred = MediaQuery {
+            unstarred: true,
+            ..query()
+        };
+        let found = db.query_media(&unstarred).expect("query");
+
+        assert_eq!(found.total, all.total - 1, "the rated row should be gone");
+        assert!(
+            found.items.iter().all(|item| item.stars.is_none()),
+            "every row returned must be unrated"
+        );
+        assert!(!found.items.iter().any(|item| item.id == first));
+    }
+
+    #[test]
+    fn clearing_a_rating_returns_a_row_to_the_triage_queue() {
+        // `set_stars(None)` writes NULL rather than 0, which is what makes
+        // `stars IS NULL` the right predicate. A zero would leave the row
+        // invisible to both this filter and the "4+" one.
+        let (db, _) = seeded();
+        let id = db.query_media(&query()).expect("query").items[0].id;
+        db.set_stars(id, Some(5)).expect("rate");
+        db.set_stars(id, None).expect("clear");
+
+        let found = db
+            .query_media(&MediaQuery {
+                unstarred: true,
+                ..query()
+            })
+            .expect("query");
+        assert!(found.items.iter().any(|item| item.id == id));
     }
 
     #[test]

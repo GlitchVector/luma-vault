@@ -21,7 +21,15 @@ import {
   duplicateReportSchema,
   throttleLevelSchema,
   mediaPageSchema,
+  mediaQuerySchema,
   scanProgressSchema,
+  deviantArtAccountSchema,
+  deviantArtSummarySchema,
+  timelineBucketSchema,
+  type TimelineBucket,
+  type DeviantArtAccount,
+  type DeviantArtDraft,
+  type DeviantArtSummary,
   type Folder,
   type DuplicateReport,
   type ImportSummary,
@@ -179,6 +187,25 @@ export async function queryMedia(query: MediaQuery): Promise<MediaPage> {
   return mediaPageSchema.parse(await invoke('query_media', { query }))
 }
 
+/**
+ * How many items the query matches per week, for the timeline's bars.
+ *
+ * Honours every filter except the query's own date range — the bars keep
+ * showing the whole span while a selection narrows the grid, so there is
+ * always something outside the selection left to grab.
+ */
+export async function mediaTimeline(query: MediaQuery): Promise<TimelineBucket[]> {
+  if (!isTauri()) return []
+  // Parsed on the way OUT as well as back. The schema fills defaults for any
+  // field a caller left off, and Rust rejects a partial struct outright — the
+  // first version of the timeline panel sent one with `offset` deleted, every
+  // fetch failed with a serde error, and the failure surfaced as an empty
+  // timeline. Filling at the boundary makes that class of mistake unsendable.
+  return z
+    .array(timelineBucketSchema)
+    .parse(await invoke('media_timeline', { query: mediaQuerySchema.parse(query) }))
+}
+
 export async function recentMedia(limit = 40): Promise<MediaItem[]> {
   if (!isTauri()) return []
   return z.array(mediaItemSchema).parse(await invoke('recent_media', { limit }))
@@ -324,6 +351,17 @@ export async function setStars(id: number, stars: number | null): Promise<void> 
 }
 
 /**
+ * Rate a whole selection at once. Returns how many rows changed.
+ *
+ * One call rather than one per id — a selection can be hundreds — and atomic,
+ * so a rating lands on all of it or on none.
+ */
+export async function setStarsMany(ids: number[], stars: number | null): Promise<number> {
+  if (!isTauri()) return 0
+  return z.number().parse(await invoke('set_stars_many', { ids, stars }))
+}
+
+/**
  * Import star ratings from a Stable Diffusion Image Browser `wib.sqlite3`.
  *
  * Ratings whose folder has not been scanned yet are staged and attach as those
@@ -379,6 +417,114 @@ export async function forgeUrl(): Promise<string> {
 export async function setForgeUrl(url: string): Promise<void> {
   if (!isTauri()) return
   await invoke('set_forge_url', { url })
+}
+
+// ---------------------------------------------------------------------------
+// DeviantArt
+// ---------------------------------------------------------------------------
+
+/**
+ * Where staged submissions wait to be reviewed and posted by hand.
+ *
+ * Sta.sh moved into Studio in 2024. Uploading puts a picture here and nowhere
+ * else — nothing is public until it is published, from this page or from the
+ * panel.
+ */
+export const DEVIANTART_STUDIO_URL = 'https://www.deviantart.com/studio'
+
+/** Where an application is registered, to get the client id this needs. */
+export const DEVIANTART_APPS_URL = 'https://www.deviantart.com/developers/apps'
+
+const NO_ACCOUNT: DeviantArtAccount = {
+  configured: false,
+  connected: false,
+  username: null,
+  clientId: null,
+  redirectUri: '',
+  scopes: [],
+  canPublish: false,
+}
+
+export async function deviantArtAccount(): Promise<DeviantArtAccount> {
+  if (!isTauri()) return NO_ACCOUNT
+  return deviantArtAccountSchema.parse(await invoke('deviantart_account'))
+}
+
+/**
+ * Record the application registered on DeviantArt.
+ *
+ * The secret is optional. An app registered as *public* has none, which is the
+ * honest shape for a desktop program — a secret shipped to someone's machine is
+ * not a secret. PKCE is what actually protects the exchange.
+ *
+ * Changing either identifier drops any existing authorization, because tokens
+ * issued to one client id cannot be used by another.
+ */
+export async function deviantArtConfigure(
+  clientId: string,
+  clientSecret: string | null,
+): Promise<DeviantArtAccount> {
+  return deviantArtAccountSchema.parse(
+    await invoke('deviantart_configure', { clientId, clientSecret }),
+  )
+}
+
+export async function deviantArtSetRedirect(uri: string): Promise<void> {
+  await invoke('deviantart_set_redirect', { uri })
+}
+
+/**
+ * Open the browser and wait for DeviantArt to send an authorization back.
+ *
+ * Resolves once the tokens are stored — which means it stays pending for as
+ * long as the login takes, including a 2FA challenge. Rejects if the tab is
+ * closed, after a few minutes.
+ */
+export async function deviantArtConnect(): Promise<DeviantArtAccount> {
+  return deviantArtAccountSchema.parse(await invoke('deviantart_connect'))
+}
+
+export async function deviantArtDisconnect(): Promise<void> {
+  await invoke('deviantart_disconnect')
+}
+
+export interface DeviantArtProgress {
+  /** `uploading`, `publishing` or `done`. */
+  phase: string
+  done: number
+  total: number
+  current: string | null
+}
+
+/**
+ * Upload reviewed drafts, optionally publishing each as it lands.
+ *
+ * Sends what the panel holds rather than ids, so a person's edits are what gets
+ * posted. The file itself is still resolved in Rust from the id, so the webview
+ * never names a path for the backend to read.
+ *
+ * With `publish` false, everything lands privately in Sta.sh and nothing is
+ * visible to anyone until it is submitted from DeviantArt.
+ */
+export async function deviantArtSend(
+  drafts: DeviantArtDraft[],
+  publish: boolean,
+  stack: string | null = null,
+): Promise<DeviantArtSummary> {
+  return deviantArtSummarySchema.parse(
+    await invoke('deviantart_send', { drafts, publish, stack }),
+  )
+}
+
+/** Per-file progress while a batch uploads. Returns an unsubscribe. */
+export async function onDeviantArtProgress(
+  handler: (progress: DeviantArtProgress) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<DeviantArtProgress>('luma://deviantart', (event) => {
+    handler(event.payload)
+  })
 }
 
 // ---------------------------------------------------------------------------

@@ -9,8 +9,11 @@
     "document"
   ],
   "minStars": 4,
+  "unstarred": false,
   "minLongestEdge": 3840,
   "duplicatesOnly": false,
+  "modifiedAfter": 1719792000000,
+  "modifiedBefore": null,
   "sort": "recent",
   "limit": 500,
   "offset": 0

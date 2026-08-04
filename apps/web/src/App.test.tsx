@@ -54,6 +54,12 @@ function makeItem(id: number): MediaItem {
 let library: MediaItem[] = []
 const deleteCalls: Array<{ id: number; permanent: boolean }> = []
 const starCalls: Array<{ id: number; stars: number | null }> = []
+/** Each batch rating, so one call for the whole selection can be asserted. */
+const starBatches: Array<{ ids: number[]; stars: number | null }> = []
+/** Every query the timeline asked with, so its shape can be asserted. */
+const timelineQueries: Array<Record<string, unknown>> = []
+/** When set, the next timeline fetches reject with this message. */
+let timelineFailure: string | null = null
 /** Every query the grid asked the backend for, so a filter can be checked end to end. */
 const queries: Array<{ minStars?: number | null; minLongestEdge?: number | null }> = []
 /** Ids each upscale run was asked for. */
@@ -62,6 +68,18 @@ const upscaleCalls: number[][] = []
 let forgeState = { reachable: true, busy: false, job: null as string | null, progress: 0 }
 /** Each batch delete, so one call for the whole set can be asserted. */
 const deleteBatches: Array<{ ids: number[]; permanent: boolean }> = []
+/** What the DeviantArt panel actually asked the backend to upload. */
+const deviantArtSends: Array<{ drafts: unknown[]; publish: boolean; stack: string | null }> = []
+/** Swapped per test: connected, upload-only, or not set up at all. */
+let deviantArtAccountState = {
+  configured: true,
+  connected: true,
+  username: 'glitchvector',
+  clientId: '12345',
+  redirectUri: 'http://localhost:14340/deviantart',
+  scopes: ['basic', 'stash', 'publish'],
+  canPublish: true,
+}
 
 vi.mock('#/lib/native.ts', () => ({
   isTauri: () => true,
@@ -88,6 +106,25 @@ vi.mock('#/lib/native.ts', () => ({
     })
   },
   recentMedia: (limit: number) => Promise.resolve(library.slice(0, limit)),
+  mediaTimeline: (query: Record<string, unknown>) => {
+    timelineQueries.push(query)
+    if (timelineFailure) return Promise.reject(new Error(timelineFailure))
+    // Weekly counts over whatever the fake library holds, mirroring the real
+    // SQL: Monday buckets, empty weeks absent, zero mtimes excluded.
+    const WEEK = 7 * 24 * 60 * 60 * 1000
+    const SHIFT = 3 * 24 * 60 * 60 * 1000
+    const counts = new Map<number, number>()
+    for (const item of library) {
+      if (item.modifiedAt <= 0) continue
+      const week = Math.floor((item.modifiedAt + SHIFT) / WEEK)
+      counts.set(week, (counts.get(week) ?? 0) + 1)
+    }
+    return Promise.resolve(
+      [...counts.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([week, count]) => ({ start: week * WEEK - SHIFT, count })),
+    )
+  },
   mediaById: (id: number) => Promise.resolve(library.find((item) => item.id === id) ?? null),
   mediaFrames: () => Promise.resolve([]),
   deleteItem: (id: number, permanent: boolean) => {
@@ -120,6 +157,14 @@ vi.mock('#/lib/native.ts', () => ({
   setStars: (id: number, stars: number | null) => {
     starCalls.push({ id, stars })
     return Promise.resolve()
+  },
+  setStarsMany: (ids: number[], stars: number | null) => {
+    starBatches.push({ ids, stars })
+    for (const id of ids) {
+      const row = library.find((item) => item.id === id)
+      if (row) row.stars = stars
+    }
+    return Promise.resolve(ids.length)
   },
   revealInFileManager: () => Promise.resolve(),
   generationParameters: () => Promise.resolve(null),
@@ -171,6 +216,23 @@ vi.mock('#/lib/native.ts', () => ({
   },
   onUpscaleProgress: () => Promise.resolve(() => {}),
   forgeStatus: () => Promise.resolve(forgeState),
+  DEVIANTART_STUDIO_URL: 'https://www.deviantart.com/studio',
+  DEVIANTART_APPS_URL: 'https://www.deviantart.com/developers/apps',
+  deviantArtAccount: () => Promise.resolve(deviantArtAccountState),
+  deviantArtConfigure: () => Promise.resolve(deviantArtAccountState),
+  deviantArtSetRedirect: () => Promise.resolve(),
+  deviantArtConnect: () => Promise.resolve(deviantArtAccountState),
+  deviantArtDisconnect: () => Promise.resolve(),
+  onDeviantArtProgress: () => Promise.resolve(() => {}),
+  deviantArtSend: (drafts: unknown[], publish: boolean, stack: string | null) => {
+    deviantArtSends.push({ drafts, publish, stack })
+    return Promise.resolve({
+      staged: drafts.length,
+      published: publish ? drafts.length : 0,
+      failed: 0,
+      results: [],
+    })
+  },
   deleteMedia: (ids: number[], permanent: boolean) => {
     deleteBatches.push({ ids, permanent })
     library = library.filter((item) => !ids.includes(item.id))
@@ -182,9 +244,22 @@ beforeEach(() => {
   library = Array.from({ length: LIBRARY_SIZE }, (_, index) => makeItem(LIBRARY_SIZE - index))
   deleteCalls.length = 0
   starCalls.length = 0
+  starBatches.length = 0
+  timelineQueries.length = 0
+  timelineFailure = null
   queries.length = 0
   upscaleCalls.length = 0
   deleteBatches.length = 0
+  deviantArtSends.length = 0
+  deviantArtAccountState = {
+    configured: true,
+    connected: true,
+    username: 'glitchvector',
+    clientId: '12345',
+    redirectUri: 'http://localhost:14340/deviantart',
+    scopes: ['basic', 'stash', 'publish'],
+    canPublish: true,
+  }
   forgeState = { reachable: true, busy: false, job: null, progress: 0 }
   // The tile size is remembered here, so a case that sets it would otherwise
   // decide the starting size of every case after it.
@@ -1045,5 +1120,634 @@ describe('deleting from the lightbox', () => {
     })
     expect(deleteCalls).toHaveLength(0)
     expect(library).toHaveLength(LIBRARY_SIZE)
+  })
+})
+
+describe('sending a selection to DeviantArt', () => {
+  const nth = (index: number) => LIBRARY_SIZE - index
+
+  async function selectTwo() {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    screen.getByRole('button', { name: 'Select' }).click()
+    await screen.findByText('Nothing selected')
+    screen.getByTitle(`image-${nth(0)}.png`).click()
+    fireEvent.click(screen.getByTitle(`image-${nth(1)}.png`), { shiftKey: true })
+    await screen.findByText('2 selected')
+  }
+
+  async function openPanel() {
+    await selectTwo()
+    screen.getByRole('button', { name: 'DeviantArt…' }).click()
+    await screen.findByText('2 to review')
+  }
+
+  it('reviews before anything leaves the machine', async () => {
+    await openPanel()
+    // The panel is a review step, not a send. Opening it must upload nothing.
+    expect(deviantArtSends).toHaveLength(0)
+  })
+
+  it('stages privately by default, and posts only on the other button', async () => {
+    // These are genuinely different decisions, so they are two buttons. An
+    // upload can be abandoned by never posting it; a post cannot.
+    await openPanel()
+    screen.getByRole('button', { name: 'Upload 2 to Sta.sh' }).click()
+
+    await waitFor(() => expect(deviantArtSends).toHaveLength(1))
+    expect(deviantArtSends[0]!.publish).toBe(false)
+    expect(deviantArtSends[0]!.drafts).toHaveLength(2)
+  })
+
+  it('posts publicly when asked to', async () => {
+    await openPanel()
+    screen.getByRole('button', { name: 'Upload and post' }).click()
+
+    await waitFor(() => expect(deviantArtSends).toHaveLength(1))
+    expect(deviantArtSends[0]!.publish).toBe(true)
+  })
+
+  it('sends the edited title rather than the derived one', async () => {
+    // The whole point of the panel. Re-deriving on the backend would discard
+    // every correction someone just made.
+    await openPanel()
+    const title = screen.getAllByPlaceholderText('Title')[0]!
+    fireEvent.change(title, { target: { value: 'A Better Name' } })
+
+    screen.getByRole('button', { name: 'Upload 2 to Sta.sh' }).click()
+    await waitFor(() => expect(deviantArtSends).toHaveLength(1))
+
+    const drafts = deviantArtSends[0]!.drafts as Array<{ title: string }>
+    expect(drafts[0]!.title).toBe('A Better Name')
+  })
+
+  it('normalises tags to what DeviantArt accepts', async () => {
+    // Their rule is letters, digits and underscores. A stray character is a
+    // rejected submission, so the panel shows the normalised form and sends it.
+    await openPanel()
+    const tags = screen.getAllByPlaceholderText('tags for this picture, separated by commas')[0]!
+    fireEvent.change(tags, { target: { value: 'sci-fi!, Blue Hair' } })
+
+    screen.getByRole('button', { name: 'Upload 2 to Sta.sh' }).click()
+    await waitFor(() => expect(deviantArtSends).toHaveLength(1))
+
+    const drafts = deviantArtSends[0]!.drafts as Array<{ tags: string[] }>
+    expect(drafts[0]!.tags).toEqual(['sci_fi', 'blue_hair'])
+  })
+
+  it('puts the shared tags on every picture', async () => {
+    await openPanel()
+    fireEvent.change(screen.getByPlaceholderText('a series name, a signature…'), {
+      target: { value: 'glitchvector' },
+    })
+
+    screen.getByRole('button', { name: 'Upload 2 to Sta.sh' }).click()
+    await waitFor(() => expect(deviantArtSends).toHaveLength(1))
+
+    const drafts = deviantArtSends[0]!.drafts as Array<{ tags: string[] }>
+    expect(drafts).toHaveLength(2)
+    for (const draft of drafts) expect(draft.tags[0]).toBe('glitchvector')
+  })
+
+  it('will not offer to post when the connection cannot', async () => {
+    // A connection can be perfectly valid and still lack the publish scope.
+    // Offering the button and failing on click would waste a whole upload.
+    deviantArtAccountState = { ...deviantArtAccountState, scopes: ['basic', 'stash'], canPublish: false }
+    await openPanel()
+
+    expect(await screen.findByText(/did not grant the publish scope/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Upload and post' }).hasAttribute('disabled')).toBe(true)
+    // Staging is still fine — that is what the stash scope is for.
+    expect(screen.getByRole('button', { name: 'Upload 2 to Sta.sh' }).hasAttribute('disabled')).toBe(
+      false,
+    )
+  })
+
+  it('leaves videos out rather than uploading one as an image', async () => {
+    library[0]!.kind = 'video'
+    await selectTwo()
+    screen.getByRole('button', { name: 'DeviantArt…' }).click()
+
+    expect(await screen.findByText('Videos skipped')).toBeTruthy()
+    expect(await screen.findByText('1 to review')).toBeTruthy()
+  })
+})
+
+describe('choosing pose tags from the first picture', () => {
+  const nth = (index: number) => LIBRARY_SIZE - index
+
+  /**
+   * Give the first picture a verdict, the way the classifier would.
+   *
+   * `topLabel` is the highest-scoring *rated* detection, which is exactly what
+   * the pose rule reads — and it is what an upscaled variant inherits, since a
+   * variant never goes through classification and so has no frame rows at all.
+   */
+  function classifyFirst(topLabel: string | null) {
+    library[0]!.verdict = {
+      person: true,
+      sexy: true,
+      nude: false,
+      rating: 'suggestive',
+      topLabel,
+      topLabelTitle: topLabel,
+      topScore: 0.8,
+      frameCount: 1,
+      sexyFrameCount: 1,
+      posterFrameIndex: null,
+    }
+  }
+
+  async function openPanelOverTwo() {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    screen.getByRole('button', { name: 'Select' }).click()
+    await screen.findByText('Nothing selected')
+    screen.getByTitle(`image-${nth(0)}.png`).click()
+    fireEvent.click(screen.getByTitle(`image-${nth(1)}.png`), { shiftKey: true })
+    await screen.findByText('2 selected')
+    screen.getByRole('button', { name: 'DeviantArt…' }).click()
+    await screen.findByText('2 to review')
+  }
+
+  async function sentTags() {
+    screen.getByRole('button', { name: 'Upload 2 to Sta.sh' }).click()
+    await waitFor(() => expect(deviantArtSends).toHaveLength(1))
+    return (deviantArtSends[0]!.drafts as Array<{ tags: string[] }>).map((draft) => draft.tags)
+  }
+
+  it('says from behind when buttocks scored highest', async () => {
+    classifyFirst('BUTTOCKS_EXPOSED')
+    await openPanelOverTwo()
+    // `bigass` is in both lists, so the discriminator is what is *absent*: the
+    // rear set drops the four large-breast tags.
+    expect(await screen.findByText('bigass')).toBeTruthy()
+
+    for (const tags of await sentTags()) {
+      expect(tags).toContain('bubblebutt')
+      expect(tags).not.toContain('hugeboobs')
+      expect(tags).not.toContain('largebreasts')
+    }
+  })
+
+  it('says from the front when anything else scored highest', async () => {
+    classifyFirst('FEMALE_BREAST_EXPOSED')
+    await openPanelOverTwo()
+
+    for (const tags of await sentTags()) {
+      expect(tags).toContain('hugeboobs')
+      expect(tags).toContain('largebreasts')
+    }
+  })
+
+  it('works for an upscaled variant, which has no detections of its own', async () => {
+    // The case this broke on. A variant inherits its original's verdict but
+    // never gets frame rows, and the grid hides an original once a variant
+    // exists — so reading raw detections found nothing for nearly every real
+    // selection and the pose came back empty every time.
+    classifyFirst('BUTTOCKS_EXPOSED')
+    library[0]!.upscaledFrom = '/media/image-orig.png'
+    await openPanelOverTwo()
+
+    for (const tags of await sentTags()) {
+      expect(tags).toContain('bubblebutt')
+      expect(tags).not.toContain('hugeboobs')
+    }
+  })
+
+  it('reads the first picture only, and puts its answer on the whole set', async () => {
+    classifyFirst('BUTTOCKS_EXPOSED')
+    await openPanelOverTwo()
+
+    const sent = await sentTags()
+    expect(sent).toHaveLength(2)
+    for (const tags of sent) {
+      expect(tags).toContain('bubblebutt')
+      expect(tags).not.toContain('hugeboobs')
+    }
+  })
+
+  it('adds nothing when the first picture was never classified', async () => {
+    // Guessing an orientation from nothing would put confident tags on a
+    // picture nothing is known about.
+    await openPanelOverTwo()
+
+    for (const tags of await sentTags()) {
+      expect(tags).not.toContain('bigass')
+      expect(tags).not.toContain('hugeboobs')
+    }
+  })
+
+  it('adds nothing when only the whole-image anime rating was found', async () => {
+    // ANIME_* has no location, so it cannot mean from behind or from the front.
+    classifyFirst('ANIME_EXPLICIT')
+    await openPanelOverTwo()
+
+    for (const tags of await sentTags()) {
+      expect(tags).not.toContain('bigass')
+      expect(tags).not.toContain('hugeboobs')
+    }
+  })
+
+  it('can be overridden for the whole batch', async () => {
+    classifyFirst('FEMALE_BREAST_EXPOSED')
+    await openPanelOverTwo()
+    fireEvent.change(screen.getByTitle(/Which set of orientation tags/), {
+      target: { value: 'rear' },
+    })
+
+    for (const tags of await sentTags()) {
+      expect(tags).toContain('bubblebutt')
+      expect(tags).not.toContain('hugeboobs')
+    }
+  })
+
+  it('can be switched off entirely', async () => {
+    classifyFirst('BUTTOCKS_EXPOSED')
+    await openPanelOverTwo()
+    fireEvent.change(screen.getByTitle(/Which set of orientation tags/), {
+      target: { value: 'none' },
+    })
+
+    for (const tags of await sentTags()) {
+      expect(tags).not.toContain('bigass')
+      expect(tags).not.toContain('bubblebutt')
+    }
+  })
+
+  it('groups the batch into a named stack so Studio can merge it', async () => {
+    // DeviantArt's API cannot make a multi-image deviation. Studio can merge one
+    // out of a selection, and a stack is what makes that selection findable.
+    await openPanelOverTwo()
+    await sentTags()
+    expect(deviantArtSends[0]!.stack).toBe(`image-${nth(0)}`)
+  })
+})
+
+describe('the AI filter cycle', () => {
+  /** The pill, whatever state it is currently labelled with. */
+  const pill = () =>
+    screen.getByRole('button', { name: /^(AI|AI Unrated|No AI)$/ })
+
+  async function ready() {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    queries.length = 0
+  }
+
+  /** The most recent query the grid actually sent to the backend. */
+  const sent = () => queries.at(-1) as unknown as Record<string, unknown>
+
+  it('walks off → AI → AI Unrated → No AI → off', async () => {
+    await ready()
+
+    pill().click()
+    await waitFor(() => expect(sent().tag).toBe('generated'))
+    expect(sent().unstarred).toBe(false)
+    expect(screen.getByRole('button', { name: 'AI' })).toBeTruthy()
+
+    pill().click()
+    await waitFor(() => expect(sent().unstarred).toBe(true))
+    expect(sent().tag).toBe('generated')
+    expect(screen.getByRole('button', { name: 'AI Unrated' })).toBeTruthy()
+
+    pill().click()
+    await waitFor(() => expect(sent().hideTags).toEqual(['generated']))
+    expect(sent().tag).toBeNull()
+    expect(screen.getByRole('button', { name: 'No AI' })).toBeTruthy()
+
+    pill().click()
+    await waitFor(() => expect(sent().hideTags).toEqual([]))
+    expect(sent().tag).toBeNull()
+    expect(screen.getByRole('button', { name: 'AI' })).toBeTruthy()
+  })
+
+  it('never leaves the triage narrowing applied once the pill has moved on', async () => {
+    // `unstarred` belongs to the whole query, not to this pill. Leaving it set
+    // would silently hide every rated picture with nothing on screen claiming
+    // to be doing it.
+    await ready()
+    pill().click()
+    await waitFor(() => expect(sent().tag).toBe('generated'))
+    pill().click()
+    await waitFor(() => expect(sent().unstarred).toBe(true))
+
+    pill().click()
+    await waitFor(() => expect(sent().unstarred).toBe(false))
+    pill().click()
+    await waitFor(() => expect(sent().unstarred).toBe(false))
+  })
+
+  it('drops a 4-star filter rather than asking for the impossible', async () => {
+    // Nothing is both unstarred and rated four or better, so the two cannot be
+    // on together — the same rule the two star pills already follow.
+    await ready()
+    screen.getByRole('button', { name: '★ 4+' }).click()
+    await waitFor(() => expect(sent().minStars).toBe(4))
+
+    pill().click()
+    await waitFor(() => expect(sent().tag).toBe('generated'))
+    pill().click()
+    await waitFor(() => expect(sent().unstarred).toBe(true))
+    expect(sent().minStars).toBeNull()
+  })
+
+  it('gives the Docs pill no triage step', async () => {
+    // "Documents I have not starred" is not a question anyone has, and a fourth
+    // click on every pill to reach the third state is a worse bar for everyone.
+    await ready()
+    const docs = () => screen.getByRole('button', { name: /^(Docs|No Docs)$/ })
+
+    docs().click()
+    await waitFor(() => expect(sent().tag).toBe('document'))
+    docs().click()
+    await waitFor(() => expect(sent().hideTags).toEqual(['document']))
+    expect(sent().unstarred).toBe(false)
+  })
+})
+
+describe('judging a selection from the grid', () => {
+  const nth = (index: number) => LIBRARY_SIZE - index
+  const press = (key: string, init: KeyboardEventInit = {}) =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }))
+
+  async function selectThree() {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    screen.getByRole('button', { name: 'Select' }).click()
+    await screen.findByText('Nothing selected')
+    screen.getByTitle(`image-${nth(0)}.png`).click()
+    fireEvent.click(screen.getByTitle(`image-${nth(2)}.png`), { shiftKey: true })
+    await screen.findByText('3 selected')
+  }
+
+  it('rates the whole selection with one call, not one per picture', async () => {
+    // The same reasoning as the batch delete: a selection can be hundreds, and
+    // that many round trips is slow and impossible to report on sensibly.
+    await selectThree()
+    press('4')
+
+    await waitFor(() => expect(starBatches).toHaveLength(1))
+    expect([...starBatches[0]!.ids].sort((a, b) => b - a)).toEqual([nth(0), nth(1), nth(2)])
+    expect(starBatches[0]!.stars).toBe(4)
+    expect(starCalls).toHaveLength(0)
+  })
+
+  it('clears the whole selection with 0', async () => {
+    await selectThree()
+    press('0')
+    await waitFor(() => expect(starBatches).toHaveLength(1))
+    expect(starBatches[0]!.stars).toBeNull()
+  })
+
+  it('deletes the selection with Delete, asking the same question the button does', async () => {
+    await selectThree()
+    press('Delete')
+
+    expect(await screen.findByText('Delete permanently?')).toBeTruthy()
+    screen.getByRole('button', { name: 'Delete permanently' }).click()
+    await waitFor(() => expect(deleteBatches).toHaveLength(1))
+    expect(deleteBatches[0]!.ids).toHaveLength(3)
+  })
+
+  it('ignores auto-repeat, so holding Delete cannot answer its own question', async () => {
+    await selectThree()
+    press('Delete', { repeat: true })
+
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(screen.queryByText('Delete permanently?')).toBeNull()
+  })
+
+  it('does nothing without a selection', async () => {
+    // These keys belong to the selection. Firing them over a whole library
+    // because nothing was picked would be catastrophic for Delete.
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    press('4')
+    press('Delete')
+
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(starBatches).toHaveLength(0)
+    expect(screen.queryByText('Delete permanently?')).toBeNull()
+  })
+
+  it('leaves a modifier combination alone', async () => {
+    // Ctrl-0 resets the browser's zoom; stealing it would be worse than not
+    // having the shortcut.
+    await selectThree()
+    press('0', { ctrlKey: true })
+
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(starBatches).toHaveLength(0)
+  })
+
+  it('never takes a digit away from a text field', async () => {
+    // The search box is one Tab away, and a listener that eats digits is how
+    // "00166" becomes unsearchable.
+    await selectThree()
+    const search = screen.getByPlaceholderText(/search/i)
+    search.focus()
+    fireEvent.keyDown(search, { key: '4', bubbles: true })
+
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(starBatches).toHaveLength(0)
+  })
+})
+
+describe('the prompt panel', () => {
+  const open = async (id: number) => {
+    render(<App />)
+    ;(await screen.findByTitle(`image-${id}.png`)).click()
+    await screen.findByRole('group', { name: 'Rating' })
+  }
+
+  it('is already open on a picture that carries a prompt', async () => {
+    // For a library that is almost entirely generated, the prompt is what the
+    // picture is — pressing a key on every file to read it is the wrong way
+    // round.
+    library[0]!.generation = {
+      tool: 'Stable Diffusion',
+      prompt: '1girl, silver hair',
+      needsSourceImage: false,
+    }
+    await open(LIBRARY_SIZE)
+
+    expect(await screen.findByText('1girl, silver hair')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Hide prompt' })).toBeTruthy()
+  })
+
+  it('shows nothing at all on a picture that carries none', async () => {
+    // The default costs nothing here: no panel, and no button either.
+    await open(LIBRARY_SIZE)
+
+    expect(screen.queryByRole('button', { name: 'Hide prompt' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Prompt' })).toBeNull()
+  })
+
+  it('stays closed once closed, rather than returning on the next picture', async () => {
+    // Forcing it open per picture would make the close button useless — one
+    // arrow key and it would be back.
+    for (const row of library.slice(0, 2)) {
+      row.generation = { tool: 'Stable Diffusion', prompt: 'a prompt', needsSourceImage: false }
+    }
+    await open(LIBRARY_SIZE)
+
+    screen.getByRole('button', { name: 'Hide prompt' }).click()
+    await screen.findByRole('button', { name: 'Prompt' })
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prompt' })).toBeTruthy())
+    expect(screen.queryByRole('button', { name: 'Hide prompt' })).toBeNull()
+  })
+})
+
+describe('the timeline', () => {
+  const WEEK = 7 * 24 * 60 * 60 * 1000
+  /** Monday 2024-07-01 00:00 UTC. */
+  const MONDAY = 1_719_792_000_000
+
+  /** Two weeks of history: 3 files in week one, 1 in week two. */
+  function twoWeekLibrary() {
+    library = [
+      { ...makeItem(1), modifiedAt: MONDAY + 1000 },
+      { ...makeItem(2), modifiedAt: MONDAY + 2000 },
+      { ...makeItem(3), modifiedAt: MONDAY + 3000 },
+      { ...makeItem(4), modifiedAt: MONDAY + WEEK + 1000 },
+    ]
+  }
+
+  async function openTimeline() {
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+    queries.length = 0
+    screen.getByRole('button', { name: 'Timeline' }).click()
+    // Four bars: one per week with anything in it.
+    await waitFor(() =>
+      expect(screen.getAllByTitle(/Click to show only this week/)).toHaveLength(2),
+    )
+  }
+
+  const sent = () => queries.at(-1) as unknown as Record<string, unknown>
+
+  it('shows a bar per week, sized by how much the week holds', async () => {
+    twoWeekLibrary()
+    await openTimeline()
+
+    const bars = screen.getAllByTitle(/Click to show only this week/)
+    expect(bars[0]!.title).toContain('3 items')
+    expect(bars[1]!.title).toContain('1 item')
+  })
+
+  it('narrows the grid to a week when its bar is clicked', async () => {
+    twoWeekLibrary()
+    await openTimeline()
+
+    screen.getAllByTitle(/Click to show only this week/)[0]!.click()
+    await waitFor(() => expect(sent().modifiedAfter).toBe(MONDAY))
+    expect(sent().modifiedBefore).toBe(MONDAY + WEEK)
+  })
+
+  it('clears the narrowing when the selection is cleared', async () => {
+    twoWeekLibrary()
+    await openTimeline()
+
+    screen.getAllByTitle(/Click to show only this week/)[0]!.click()
+    await waitFor(() => expect(sent().modifiedAfter).toBe(MONDAY))
+    ;(await screen.findByRole('button', { name: 'clear' })).click()
+    await waitFor(() => expect(sent().modifiedAfter).toBeNull())
+    expect(sent().modifiedBefore).toBeNull()
+  })
+
+  it('clears the narrowing when the panel itself is closed', async () => {
+    // A range with no bars on screen would be an invisible filter — the grid
+    // quietly small and nothing saying why.
+    twoWeekLibrary()
+    await openTimeline()
+
+    screen.getAllByTitle(/Click to show only this week/)[0]!.click()
+    await waitFor(() => expect(sent().modifiedAfter).toBe(MONDAY))
+
+    screen.getByRole('button', { name: 'Timeline' }).click()
+    await waitFor(() => expect(sent().modifiedAfter).toBeNull())
+    expect(screen.queryByTitle(/Click to show only this week/)).toBeNull()
+  })
+
+  it('offers both resize handles once a selection exists', async () => {
+    twoWeekLibrary()
+    await openTimeline()
+    screen.getAllByTitle(/Click to show only this week/)[0]!.click()
+
+    expect(
+      await screen.findByRole('button', { name: 'Drag to move the start of the selection' }),
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Drag to move the end of the selection' }),
+    ).toBeTruthy()
+  })
+})
+
+describe('what the timeline sends and how it fails', () => {
+  const MONDAY = 1_719_792_000_000
+
+  it('always sends the complete wire shape, with the range neutralised', async () => {
+    // Rust rejects a struct with fields missing — the first version of the
+    // panel deleted `offset` from the query and every fetch failed, dressed as
+    // an empty library. The full shape with the range nulled is the contract.
+    library = [{ ...makeItem(1), modifiedAt: MONDAY + 1000 }]
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+    screen.getByRole('button', { name: 'Timeline' }).click()
+    await waitFor(() => expect(timelineQueries.length).toBeGreaterThan(0))
+
+    const sent = timelineQueries[0]!
+    for (const field of ['offset', 'limit', 'sort', 'search', 'folderId', 'hideTags']) {
+      expect(sent, `timeline query is missing "${field}"`).toHaveProperty(field)
+    }
+    expect(sent.modifiedAfter).toBeNull()
+    expect(sent.modifiedBefore).toBeNull()
+    expect(sent.offset).toBe(0)
+  })
+
+  it('wears its own message when the fetch fails, not the empty state', async () => {
+    // "Nothing here has a usable date" over a working library sends someone
+    // auditing their files' mtimes for a bug that lives in the panel.
+    timelineFailure = 'invalid args `query`'
+    library = [{ ...makeItem(1), modifiedAt: MONDAY + 1000 }]
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+    screen.getByRole('button', { name: 'Timeline' }).click()
+
+    expect(await screen.findByText(/The timeline could not be read/)).toBeTruthy()
+    expect(screen.queryByText(/usable date/)).toBeNull()
+  })
+})
+
+describe('implausible dates on the timeline', () => {
+  const MONDAY = 1_719_792_000_000
+  /** ~The DOS epoch, which zip extractors stamp on files. */
+  const DOS_1980 = 315_446_400_000
+
+  it('keeps junk mtimes off the axis, and says so', async () => {
+    // One 1980 file against a real library must not stretch the axis across
+    // five decades and flatten everything else into sub-pixel slivers. The
+    // real cluster has to be genuinely dominant — the trim is share-based, so
+    // one junk file in a library of three is a third of it and rightly stays.
+    library = [
+      { ...makeItem(1), modifiedAt: DOS_1980 + 1000 },
+      ...Array.from({ length: 200 }, (_, index) => ({
+        ...makeItem(index + 2),
+        modifiedAt: MONDAY + index * 1000,
+      })),
+    ]
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+    screen.getByRole('button', { name: 'Timeline' }).click()
+
+    // The axis starts and ends at the real library — both header labels.
+    await waitFor(() => expect(screen.getAllByText('Jul 2024')).toHaveLength(2))
+    expect(screen.queryByText(/19(79|80)/)).toBeNull()
+    // …and the trim is announced rather than silent — a hidden file that
+    // simply vanished would read as the library being smaller than the folder.
+    expect(screen.getByText(/1 with implausible dates not drawn/)).toBeTruthy()
   })
 })

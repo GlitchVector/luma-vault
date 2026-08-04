@@ -45,6 +45,20 @@ select {
   }
 }
 
+/* A toast arriving. Short and small: these confirm a key that is meant to be
+   held down through a folder, so anything longer than the gap between two
+   presses would have them animating over each other permanently. */
+@keyframes toast-in {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* A thin, dark scrollbar; the default light one is jarring against the grid. */
 ::-webkit-scrollbar {
   width: 10px;

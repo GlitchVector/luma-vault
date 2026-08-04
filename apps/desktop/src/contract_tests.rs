@@ -61,6 +61,34 @@ fn media_query_matches_the_shared_fixture() {
     round_trip::<crate::types::MediaQuery>(include_str!("../../../contracts/media-query.json"));
 }
 
+#[test]
+fn timeline_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::TimelineBucket>>(include_str!(
+        "../../../contracts/timeline.json"
+    ));
+}
+
+#[test]
+fn deviantart_draft_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::DeviantArtDraft>>(include_str!(
+        "../../../contracts/deviantart-draft.json"
+    ));
+}
+
+#[test]
+fn deviantart_account_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::DeviantArtAccount>>(include_str!(
+        "../../../contracts/deviantart-account.json"
+    ));
+}
+
+#[test]
+fn deviantart_summary_matches_the_shared_fixture() {
+    round_trip::<crate::types::DeviantArtSummary>(include_str!(
+        "../../../contracts/deviantart-summary.json"
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // Shared logic vectors
 // ---------------------------------------------------------------------------

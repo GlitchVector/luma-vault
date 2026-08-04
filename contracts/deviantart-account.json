@@ -1,0 +1,29 @@
+[
+  {
+    "configured": true,
+    "connected": true,
+    "username": "glitchvector",
+    "clientId": "12345",
+    "redirectUri": "http://localhost:14340/deviantart",
+    "scopes": ["basic", "stash", "publish"],
+    "canPublish": true
+  },
+  {
+    "configured": true,
+    "connected": true,
+    "username": "glitchvector",
+    "clientId": "12345",
+    "redirectUri": "http://localhost:14340/deviantart",
+    "scopes": ["basic", "stash"],
+    "canPublish": false
+  },
+  {
+    "configured": false,
+    "connected": false,
+    "username": null,
+    "clientId": null,
+    "redirectUri": "http://localhost:14340/deviantart",
+    "scopes": [],
+    "canPublish": false
+  }
+]

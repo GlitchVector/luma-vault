@@ -316,6 +316,19 @@ export const mediaQuerySchema = z.object({
   /** Show only items rated at least this many stars. `1` means "rated at all". */
   minStars: z.number().nullable().default(null),
   /**
+   * Show only items nobody has starred yet — the triage queue.
+   *
+   * Not `minStars: 0`, which would mean "everything" under a filter whose whole
+   * shape is *at least*. This is the opposite question, so it gets its own
+   * field rather than a magic value in one that already means something.
+   *
+   * Contradicts `minStars` by construction: nothing is both unrated and rated
+   * four or better. The bar keeps them from being on together rather than the
+   * index arbitrating, in the same way the two star pills already replace each
+   * other.
+   */
+  unstarred: z.boolean().default(false),
+  /**
    * Show only items whose longest edge is at least this many pixels.
    *
    * A number rather than a `fourKOnly` flag because the rule *is* a number —
@@ -338,11 +351,34 @@ export const mediaQuerySchema = z.object({
    * why this exists.
    */
   hideTags: z.array(z.string()).default([]),
+  /**
+   * Show only items modified inside `[modifiedAfter, modifiedBefore)`, unix ms.
+   *
+   * Half-open, so two adjacent week selections share a boundary without
+   * double-counting the file that sits exactly on it. Independent nulls: a
+   * timeline selection always sends both, but "everything since March" is a
+   * reasonable query for something else to make.
+   */
+  modifiedAfter: z.number().nullable().default(null),
+  modifiedBefore: z.number().nullable().default(null),
   sort: sortOrderSchema.default('recent'),
   limit: z.number().int().positive().max(5000).default(500),
   offset: z.number().int().nonnegative().default(0),
 })
 export type MediaQuery = z.infer<typeof mediaQuerySchema>
+
+/**
+ * One week of the library, for the timeline's bars.
+ *
+ * `start` is the Monday 00:00 UTC of the week, unix ms. Weeks with no items are
+ * not sent — the frontend rebuilds the gaps from the range, and a library
+ * spanning a decade would otherwise be five hundred rows of zero.
+ */
+export const timelineBucketSchema = z.object({
+  start: z.number(),
+  count: z.number(),
+})
+export type TimelineBucket = z.infer<typeof timelineBucketSchema>
 
 export const mediaPageSchema = z.object({
   items: z.array(mediaItemSchema),
@@ -350,3 +386,76 @@ export const mediaPageSchema = z.object({
   offset: z.number(),
 })
 export type MediaPage = z.infer<typeof mediaPageSchema>
+
+// ---------------------------------------------------------------------------
+// DeviantArt
+// ---------------------------------------------------------------------------
+
+export const matureLevelSchema = z.enum(['moderate', 'strict'])
+export const matureClassificationSchema = z.enum([
+  'nudity',
+  'sexual',
+  'gore',
+  'language',
+  'ideology',
+])
+
+/**
+ * One submission, as a person approved it.
+ *
+ * Travels *into* Rust rather than out of it, which is the opposite direction to
+ * everything else here — `publish.ts` derives it, the panel edits it, and the
+ * backend uploads exactly what it is handed. That is deliberate: it means the
+ * mapping from a verdict to a submission exists once, in one language.
+ */
+export const deviantArtDraftSchema = z.object({
+  mediaId: z.number(),
+  title: z.string(),
+  /** `artist_comments` on the wire. */
+  description: z.string(),
+  tags: z.array(z.string()),
+  isMature: z.boolean(),
+  /** Null exactly when `isMature` is false — the API rejects one without the other. */
+  matureLevel: matureLevelSchema.nullable(),
+  matureClassification: z.array(matureClassificationSchema),
+  isAiGenerated: z.boolean(),
+  noai: z.boolean(),
+})
+export type DeviantArtDraftWire = z.infer<typeof deviantArtDraftSchema>
+
+export const deviantArtAccountSchema = z.object({
+  /** A client id has been entered. Without one there is nothing to connect. */
+  configured: z.boolean(),
+  /** A refresh token is held. Says nothing about whether it still works. */
+  connected: z.boolean(),
+  username: z.string().nullable(),
+  clientId: z.string().nullable(),
+  /** Has to be pasted into the app's whitelist on DeviantArt *exactly*. */
+  redirectUri: z.string(),
+  /** What the last authorization granted, which need not be what was asked. */
+  scopes: z.array(z.string()),
+  /** Whether `publish` was among them. A new app may not be given it. */
+  canPublish: z.boolean(),
+})
+export type DeviantArtAccount = z.infer<typeof deviantArtAccountSchema>
+
+export const deviantArtResultSchema = z.object({
+  mediaId: z.number(),
+  title: z.string(),
+  /** The Sta.sh item, once staged. Publishing needs it. */
+  itemId: z.number().nullable(),
+  /** The public deviation, once published. */
+  url: z.string().nullable(),
+  deviationId: z.string().nullable(),
+  published: z.boolean(),
+  error: z.string().nullable(),
+})
+export type DeviantArtResult = z.infer<typeof deviantArtResultSchema>
+
+export const deviantArtSummarySchema = z.object({
+  staged: z.number(),
+  published: z.number(),
+  failed: z.number(),
+  results: z.array(deviantArtResultSchema),
+})
+export type DeviantArtSummary = z.infer<typeof deviantArtSummarySchema>

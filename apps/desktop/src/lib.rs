@@ -13,6 +13,7 @@
 
 mod classifier;
 mod db;
+mod deviantart;
 mod dupes;
 mod generated;
 pub mod imports;
@@ -39,9 +40,13 @@ use std::sync::Arc;
 use tauri::{Manager, State};
 
 use crate::db::Db;
+use crate::deviantart::DeviantArt;
 use crate::pipeline::Pipeline;
 use crate::protocol::ProtocolRoots;
-use crate::types::{Folder, LibraryStats, MediaFrame, MediaItem, MediaPage, MediaQuery, ScanProgress};
+use crate::types::{
+    DeviantArtAccount, DeviantArtDraft, DeviantArtSummary, Folder, LibraryStats, MediaFrame,
+    MediaItem, MediaPage, MediaQuery, ScanProgress,
+};
 use crate::watcher::FolderWatcher;
 
 pub struct AppState {
@@ -52,6 +57,9 @@ pub struct AppState {
     /// has not been built, which the command reports as a setup step rather
     /// than a failure.
     upscaler: Option<(PathBuf, PathBuf)>,
+    /// Holds the access-token cache, so a batch of twenty uploads refreshes
+    /// once rather than per file.
+    deviantart: Arc<DeviantArt>,
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +152,18 @@ async fn rescan_folder(
 #[tauri::command(async)]
 async fn query_media(state: State<'_, AppState>, query: MediaQuery) -> Result<MediaPage, String> {
     state.db.query_media(&query).map_err(stringify)
+}
+
+/// How many rows the query matches per week, for the timeline's bars.
+///
+/// Ignores the query's own date range — the bars keep showing the whole span
+/// while a selection narrows the grid, or nothing outside it could be grabbed.
+#[tauri::command(async)]
+async fn media_timeline(
+    state: State<'_, AppState>,
+    query: MediaQuery,
+) -> Result<Vec<types::TimelineBucket>, String> {
+    state.db.media_timeline(&query).map_err(stringify)
 }
 
 #[tauri::command(async)]
@@ -328,6 +348,23 @@ async fn upscale_media(
 #[tauri::command(async)]
 async fn set_stars(state: State<'_, AppState>, id: i64, stars: Option<i64>) -> Result<(), String> {
     state.db.set_stars(id, stars).map_err(stringify)
+}
+
+/// Rate a whole selection at once, returning how many rows changed.
+///
+/// One call rather than one per id, for the same reason `delete_media` is one:
+/// a selection can be hundreds, and that many IPC round trips is both slow and
+/// impossible to report on sensibly.
+#[tauri::command(async)]
+async fn set_stars_many(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+    stars: Option<i64>,
+) -> Result<usize, String> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    state.db.set_stars_many(&ids, stars).map_err(stringify)
 }
 
 /// Import 1-5 star ratings from a Stable Diffusion Image Browser database.
@@ -693,6 +730,88 @@ async fn forge_status(state: State<'_, AppState>) -> Result<ForgeStatus, String>
     })
 }
 
+// ---------------------------------------------------------------------------
+// DeviantArt
+// ---------------------------------------------------------------------------
+
+#[tauri::command(async)]
+async fn deviantart_account(state: State<'_, AppState>) -> Result<DeviantArtAccount, String> {
+    Ok(state.deviantart.account())
+}
+
+/// Record the application registered on DeviantArt.
+///
+/// The secret is optional — an app registered as *public* has none, which is
+/// the honest shape for something running on a desktop where a secret cannot
+/// actually be kept. PKCE protects the exchange either way.
+#[tauri::command(async)]
+async fn deviantart_configure(
+    state: State<'_, AppState>,
+    client_id: String,
+    client_secret: Option<String>,
+) -> Result<DeviantArtAccount, String> {
+    state
+        .deviantart
+        .configure(&client_id, client_secret.as_deref())
+        .map_err(stringify)?;
+    Ok(state.deviantart.account())
+}
+
+#[tauri::command(async)]
+async fn deviantart_set_redirect(state: State<'_, AppState>, uri: String) -> Result<(), String> {
+    state.deviantart.set_redirect_uri(&uri).map_err(stringify)
+}
+
+/// Open the browser, wait for the redirect, and keep the tokens.
+///
+/// Blocking for the caller, deliberately: there is nothing to show until it
+/// finishes, and the alternative is a UI that has to poll for whether an
+/// authorization it started has landed yet.
+#[tauri::command(async)]
+async fn deviantart_connect(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DeviantArtAccount, String> {
+    state.deviantart.connect(&app).await.map_err(stringify)
+}
+
+#[tauri::command(async)]
+async fn deviantart_disconnect(state: State<'_, AppState>) -> Result<(), String> {
+    state.deviantart.disconnect();
+    Ok(())
+}
+
+/// Upload a reviewed selection, optionally publishing each as it lands.
+///
+/// Takes drafts, not ids: what gets posted is what a person approved in the
+/// panel, and re-deriving it here would silently discard their edits. The file
+/// itself is still resolved from the index by id, so the webview never names a
+/// path for the backend to read and upload.
+#[tauri::command(async)]
+async fn deviantart_send(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    drafts: Vec<DeviantArtDraft>,
+    publish: bool,
+    stack: Option<String>,
+) -> Result<DeviantArtSummary, String> {
+    if drafts.is_empty() {
+        return Err("nothing selected".to_string());
+    }
+    if publish && !state.deviantart.account().can_publish {
+        return Err(
+            "this connection was not granted the publish scope — upload to Sta.sh and submit \
+             from DeviantArt instead, or reconnect"
+                .to_string(),
+        );
+    }
+    let stack = stack.filter(|name| !name.trim().is_empty());
+    Ok(state
+        .deviantart
+        .send(&app, &drafts, publish, stack.as_deref())
+        .await)
+}
+
 const FORGE_URL_KEY: &str = "forge_url";
 /// Forge's own default. `127.0.0.1` rather than `localhost` because the latter
 /// can resolve to IPv6 first and Gradio binds v4.
@@ -930,6 +1049,7 @@ pub fn run() {
                 frame_root,
             });
             app.manage(AppState {
+                deviantart: Arc::new(DeviantArt::new(Arc::clone(&db))),
                 db,
                 pipeline: Arc::clone(&pipeline),
                 watcher,
@@ -956,6 +1076,7 @@ pub fn run() {
             remove_folder,
             rescan_folder,
             query_media,
+            media_timeline,
             recent_media,
             media_frames,
             media_by_id,
@@ -963,6 +1084,7 @@ pub fn run() {
             upscale_media,
             library_stats,
             set_stars,
+            set_stars_many,
             import_image_browser_db,
             retry_failed,
             reveal_item,
@@ -982,6 +1104,12 @@ pub fn run() {
             list_exclusions,
             exclude_folder,
             include_folder,
+            deviantart_account,
+            deviantart_configure,
+            deviantart_set_redirect,
+            deviantart_connect,
+            deviantart_disconnect,
+            deviantart_send,
         ])
         .run(tauri::generate_context!())
         .expect("cannot start luma-vault");

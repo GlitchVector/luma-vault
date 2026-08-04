@@ -73,6 +73,38 @@ export {
 export { highlight, excerpt, searchTerms, type HighlightPart } from './highlight.ts'
 
 export {
+  WEEK_MS,
+  fillWeeks,
+  trimIslands,
+  mergeWeeks,
+  weekRange,
+  selectionRange,
+  barAt,
+  dragEdge,
+  barHeights,
+  type BarSelection,
+  type TimelineBar,
+} from './timeline.ts'
+
+export {
+  MAX_TAGS,
+  MAX_TITLE,
+  POSE_TAGS,
+  describeForDeviantArt,
+  poseFromLabel,
+  poseOf,
+  promptSubjects,
+  toTag,
+} from './publish.ts'
+export type {
+  DeviantArtDraft,
+  DraftOptions,
+  MatureClassification,
+  MatureLevel,
+  Pose,
+} from './publish.ts'
+
+export {
   detectionSchema,
   ratingSchema,
   frameVerdictSchema,
@@ -91,6 +123,13 @@ export {
   sortOrderSchema,
   mediaQuerySchema,
   mediaPageSchema,
+  timelineBucketSchema,
+  matureLevelSchema,
+  matureClassificationSchema,
+  deviantArtDraftSchema,
+  deviantArtAccountSchema,
+  deviantArtResultSchema,
+  deviantArtSummarySchema,
 } from './schemas.ts'
 export type {
   Detection,
@@ -111,4 +150,8 @@ export type {
   SortOrder,
   MediaQuery,
   MediaPage,
+  TimelineBucket,
+  DeviantArtAccount,
+  DeviantArtResult,
+  DeviantArtSummary,
 } from './schemas.ts'

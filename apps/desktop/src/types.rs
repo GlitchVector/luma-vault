@@ -271,6 +271,12 @@ pub struct MediaQuery {
     /// "anything I have rated at all".
     #[serde(default)]
     pub min_stars: Option<i64>,
+    /// Show only rows nobody has starred yet — the triage queue.
+    ///
+    /// A separate field rather than `min_stars: Some(0)`, which under an
+    /// *at least* comparison means "everything" and would quietly do nothing.
+    #[serde(default)]
+    pub unstarred: bool,
     /// Show only rows whose longest edge is at least this many pixels.
     ///
     /// A number rather than a `four_k_only` flag, because the rule is a number
@@ -288,9 +294,25 @@ pub struct MediaQuery {
     /// the second is the reason this exists.
     #[serde(default)]
     pub hide_tags: Vec<String>,
+    /// Show only rows modified inside `[modified_after, modified_before)`,
+    /// unix ms. Half-open, so adjacent week selections share a boundary
+    /// without double-counting the file sitting exactly on it.
+    #[serde(default)]
+    pub modified_after: Option<i64>,
+    #[serde(default)]
+    pub modified_before: Option<i64>,
     pub sort: SortOrder,
     pub limit: i64,
     pub offset: i64,
+}
+
+/// One week of the library, for the timeline's bars. `start` is the Monday
+/// 00:00 UTC of the week, unix ms. Empty weeks are not sent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineBucket {
+    pub start: i64,
+    pub count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -299,4 +321,82 @@ pub struct MediaPage {
     pub items: Vec<MediaItem>,
     pub total: i64,
     pub offset: i64,
+}
+
+// ---------------------------------------------------------------------------
+// DeviantArt
+// ---------------------------------------------------------------------------
+
+/// One submission, as a person approved it.
+///
+/// Deserialized rather than derived. `packages/core/src/publish.ts` works out
+/// what a row *should* say and the panel lets someone change it; this side
+/// uploads what it is handed and decides nothing, which is why the mapping has
+/// no second copy here to drift out of sync with the first.
+///
+/// `media_id` rather than a path: the webview never names a file for the
+/// backend to read, the same rule the upscaler follows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviantArtDraft {
+    pub media_id: i64,
+    pub title: String,
+    /// `artist_comments` on the wire.
+    pub description: String,
+    pub tags: Vec<String>,
+    pub is_mature: bool,
+    /// `moderate` or `strict`. `None` exactly when `is_mature` is false — the
+    /// API rejects a level without the flag and the flag without a level.
+    pub mature_level: Option<String>,
+    pub mature_classification: Vec<String>,
+    pub is_ai_generated: bool,
+    pub noai: bool,
+}
+
+/// Which account is connected, and what it is actually allowed to do.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviantArtAccount {
+    /// A client id has been entered. Without one there is nothing to connect.
+    pub configured: bool,
+    /// A refresh token is held. Says nothing about whether it still works —
+    /// DeviantArt expires them after three months.
+    pub connected: bool,
+    pub username: Option<String>,
+    pub client_id: Option<String>,
+    /// Shown in the settings panel, because it has to be pasted into the app's
+    /// whitelist on DeviantArt *exactly* or the callback never arrives.
+    pub redirect_uri: String,
+    /// What the last authorization actually granted, which is not necessarily
+    /// what was asked for.
+    pub scopes: Vec<String>,
+    /// Whether `publish` came back among them. A freshly registered app may not
+    /// get it, and finding that out at connect time is far better than finding
+    /// out on the first upload.
+    pub can_publish: bool,
+}
+
+/// What became of one picture.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviantArtResult {
+    pub media_id: i64,
+    pub title: String,
+    /// The Sta.sh item, once staged. Publishing needs it.
+    pub item_id: Option<i64>,
+    /// The public deviation, once published.
+    pub url: Option<String>,
+    pub deviation_id: Option<String>,
+    pub published: bool,
+    pub error: Option<String>,
+}
+
+/// What a batch did. Per-item failures are rows here, never an early return.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviantArtSummary {
+    pub staged: i64,
+    pub published: i64,
+    pub failed: i64,
+    pub results: Vec<DeviantArtResult>,
 }

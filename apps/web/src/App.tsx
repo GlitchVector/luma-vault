@@ -1,5 +1,11 @@
 import { Button, EmptyState } from '@luma/ui'
-import { hasRecycleBin, rangeBetween, retainVisible, toggleSelected } from '@luma/core'
+import {
+  hasRecycleBin,
+  rangeBetween,
+  retainVisible,
+  toggleSelected,
+  type MediaItem,
+} from '@luma/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FilterBar } from '#/components/FilterBar.tsx'
 import { FolderSidebar } from '#/components/FolderSidebar.tsx'
@@ -7,8 +13,11 @@ import { Lightbox } from '#/components/Lightbox.tsx'
 import { MediaGrid } from '#/components/MediaGrid.tsx'
 import { DEFAULT_TILE_SIZE, MAX_TILE_SIZE, MIN_TILE_SIZE } from '#/components/MediaTile.tsx'
 import { SearchBar } from '#/components/SearchBar.tsx'
+import { DeviantArtPanel } from '#/components/DeviantArtPanel.tsx'
 import { DialogHost } from '#/components/DialogHost.tsx'
 import { StatusBar } from '#/components/StatusBar.tsx'
+import { TimelinePanel } from '#/components/TimelinePanel.tsx'
+import { ToastHost } from '#/components/ToastHost.tsx'
 import { UpscaleResults } from '#/components/UpscaleResults.tsx'
 import { askConfirm, showMessage } from '#/lib/dialogs.ts'
 import {
@@ -16,6 +25,7 @@ import {
   forgeStatus,
   isTauri,
   onUpscaleProgress,
+  setStarsMany,
   upscaleMedia,
   type ForgeStatus,
   type UpscaleProgress,
@@ -69,8 +79,16 @@ export function App() {
   // the summary only exists once it has finished.
   const [upscaling, setUpscaling] = useState<UpscaleProgress | null>(null)
   const [upscaleResults, setUpscaleResults] = useState<UpscaleSummary | null>(null)
+  // The pictures being reviewed for DeviantArt. A snapshot taken when the panel
+  // opens rather than a live read of `selected`: the panel holds edited drafts,
+  // and a filter change underneath it must not silently drop a row someone has
+  // already written a title for.
+  const [publishing, setPublishing] = useState<MediaItem[] | null>(null)
   const [forge, setForge] = useState<ForgeStatus | null>(null)
   const [showBoxes, setShowBoxes] = useState(false)
+  // The timeline strip under the filter bar. Open/closed is UI state; the
+  // range it selects lives in the query like any other filter.
+  const [showTimeline, setShowTimeline] = useState(false)
   // Lives here rather than in the Lightbox so it survives closing one. The
   // Lightbox is mounted per-item, so local state reset the toggle every time
   // you opened a file. Deliberately separate from `showBoxes` above, which is
@@ -83,7 +101,18 @@ export function App() {
   const [showLightboxBoxes, setShowLightboxBoxes] = useState(false)
   // Here for the same reason, and it matters more: stepping through a folder of
   // generations is exactly when you want the prompt to stay on screen.
-  const [showGeneration, setShowGeneration] = useState(false)
+  //
+  // **On by default**, unlike the two above it. Those answer a question you
+  // occasionally have; for a library that is almost entirely generated, the
+  // prompt is what the picture *is*, and having to press a key on every file to
+  // read it is the wrong way round. It costs nothing on a file that has no
+  // parameter block: the lightbox gates the panel on `item.generation`, so a
+  // scan or a photo shows no panel and no button either way.
+  //
+  // Sticky rather than re-opened per picture, deliberately. Forcing it open on
+  // every generated file would make the close button useless — one arrow key
+  // and it would be back.
+  const [showGeneration, setShowGeneration] = useState(true)
   const { items, query, setQuery, actions, folders, progress } = library
 
   // Stepping through the lightbox walks the *currently filtered* list, which is
@@ -198,6 +227,30 @@ export function App() {
     })
   }, [selected, items, library])
 
+  /**
+   * Open the DeviantArt review panel over the selection.
+   *
+   * Images only. Sta.sh takes other kinds of file, but everything downstream
+   * here — the mime type, the derived tags, the thumbnail in the panel — is
+   * written for a still, and quietly uploading a video as `image/jpeg` is worse
+   * than declining to.
+   */
+  const reviewForDeviantArt = useCallback(() => {
+    const picked = items.filter((item) => selected.has(item.id) && item.kind === 'image')
+    if (picked.length === 0) {
+      void showMessage('None of the selected files is an image.', { title: 'Nothing to send' })
+      return
+    }
+    const videos = selected.size - picked.length
+    if (videos > 0) {
+      void showMessage(
+        `${videos.toLocaleString()} video${videos === 1 ? '' : 's'} left out — this posts still images.`,
+        { title: 'Videos skipped' },
+      )
+    }
+    setPublishing(picked)
+  }, [items, selected])
+
   /** Upscale everything picked, then show what came out. */
   const runUpscale = useCallback(() => {
     const ids = [...selected]
@@ -233,6 +286,55 @@ export function App() {
       ),
     )
   }, [selected, library])
+
+  /**
+   * The lightbox's judgement keys, over a selection, from the grid.
+   *
+   * The same gesture has to mean the same thing in both places. Having Delete
+   * and 1-5 work over one picture in the lightbox but do nothing over fifty in
+   * the grid is the kind of gap you only notice by pressing a key and watching
+   * nothing happen.
+   *
+   * Only while a selection exists and the lightbox is closed — the lightbox
+   * owns the keyboard when it is up, and these must not fire twice.
+   */
+  useEffect(() => {
+    if (openId !== null || selected.size === 0) return
+
+    const onKey = (event: KeyboardEvent) => {
+      // Never steal a key from a field. The search box is one Tab away and a
+      // stray listener eating digits is exactly how "00166" becomes unsearchable.
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName
+      if (target?.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+        return
+      }
+      // Bare keys only: Ctrl-0 resets the browser zoom, and stealing that would
+      // be worse than not having the shortcut.
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+
+      if (event.key === 'Delete') {
+        // Auto-repeat ignored, so holding the key cannot open the confirmation
+        // and answer it in one gesture.
+        if (event.repeat) return
+        event.preventDefault()
+        deleteSelected()
+        return
+      }
+
+      if (!/^[0-5]$/.test(event.key)) return
+      event.preventDefault()
+      const digit = Number(event.key)
+      const ids = [...selected]
+      void setStarsMany(ids, digit === 0 ? null : digit).then(
+        () => library.reload(),
+        (error: unknown) => showMessage(String(error), { title: 'Could not rate' }),
+      )
+    }
+
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [openId, selected, deleteSelected, library])
 
   // Ctrl turns selecting on, from the grid, the moment it goes down.
   //
@@ -429,6 +531,16 @@ export function App() {
             shown={items.length}
             showBoxes={showBoxes}
             onToggleBoxes={() => setShowBoxes((previous) => !previous)}
+            timeline={showTimeline}
+            onToggleTimeline={() => {
+              setShowTimeline((previous) => {
+                // Closing the panel clears its narrowing. A range with no bars
+                // on screen would be an invisible filter — the grid quietly
+                // small and nothing saying why.
+                if (previous) setQuery({ modifiedAfter: null, modifiedBefore: null })
+                return !previous
+              })
+            }}
             selecting={selecting}
             onToggleSelecting={() => {
               // Leaving the mode drops the selection. Keeping it would mean
@@ -466,6 +578,19 @@ export function App() {
             onChange={setQuery}
           />
 
+          {showTimeline ? (
+            <TimelinePanel
+              query={query}
+              onRange={(range) =>
+                setQuery(
+                  range
+                    ? { modifiedAfter: range.after, modifiedBefore: range.before }
+                    : { modifiedAfter: null, modifiedBefore: null },
+                )
+              }
+            />
+          ) : null}
+
           <SearchBar
             value={query.search}
             onChange={(search) => setQuery({ search })}
@@ -502,6 +627,16 @@ export function App() {
                   : forge?.busy
                     ? 'Forge is busy'
                     : `Upscale ${selected.size.toLocaleString()} to 4K`}
+              </button>
+
+              <button
+                type="button"
+                disabled={selected.size === 0 || upscaling !== null}
+                onClick={reviewForDeviantArt}
+                title="Review titles, tags and mature flags, then upload to DeviantArt. Nothing is posted without a second click."
+                className="mr-2 rounded-full bg-white/5 px-3 py-1 text-[11px] font-medium text-zinc-300 hover:bg-white/10 hover:text-zinc-100 disabled:cursor-default disabled:bg-white/5 disabled:text-zinc-600"
+              >
+                DeviantArt…
               </button>
 
               <button
@@ -601,6 +736,7 @@ export function App() {
           // walking the filtered list the way `onStep` does.
           onOpenId={setOpenId}
           onToggleSelect={toggleSelect}
+          selected={selected.has(openId)}
           showBoxes={showLightboxBoxes}
           onToggleBoxes={() => setShowLightboxBoxes((previous) => !previous)}
           showGeneration={showGeneration}
@@ -633,7 +769,12 @@ export function App() {
         <UpscaleResults summary={upscaleResults} onClose={() => setUpscaleResults(null)} />
       ) : null}
 
+      {publishing ? (
+        <DeviantArtPanel items={publishing} onClose={() => setPublishing(null)} />
+      ) : null}
+
       <DialogHost />
+      <ToastHost />
     </div>
   )
 }
