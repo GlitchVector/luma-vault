@@ -19,6 +19,8 @@
     "lint": "oxlint --config .oxlintrc.json apps packages",
     "lint:fix": "oxlint --config .oxlintrc.json --fix apps packages",
     "setup:python": "node scripts/setup-python.mjs",
+    "setup:upscaler": "node scripts/setup-upscaler.mjs",
+    "upscale": "node scripts/upscale.mjs",
     "setup:forge": "node scripts/install-forge-extension.mjs",
     "rust:check": "cargo clippy --locked --manifest-path apps/desktop/Cargo.toml --all-targets -- -D warnings",
     "rust:test": "cargo test --locked --manifest-path apps/desktop/Cargo.toml",

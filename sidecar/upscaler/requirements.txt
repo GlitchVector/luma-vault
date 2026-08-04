@@ -1,0 +1,25 @@
+# Pinned. An upscale that produces different pixels after a routine `pip
+# install` is not reproducible, and these versions are the ones the tiling and
+# fp16 paths were measured against.
+#
+# torch is NOT listed here: the CUDA build has to come from PyTorch's own index
+# rather than PyPI, so `scripts/setup-upscaler.mjs` installs it separately with
+# `--index-url`. Putting it here would silently pull the CPU-only wheel and the
+# whole thing would run about fifty times slower with no error to explain it.
+#
+#   torch==2.13.0+cu126
+#   torchvision==0.28.0+cu126
+
+# Architecture-agnostic model loading. The reason a model downloaded next year
+# loads without editing the script: spandrel reads the arch out of the state
+# dict, so ESRGAN, DAT, SPAN and RealPLKSR all arrive through one call.
+spandrel==0.4.2
+
+# Pulled in by spandrel, pinned so a resolver cannot drift them.
+einops==0.8.2
+safetensors==0.8.0
+
+# Decode, Lanczos resampling, and the PNG text chunks that carry the generation
+# parameters.
+pillow==12.2.0
+numpy==2.4.4

@@ -4,8 +4,9 @@ out/
 target/
 *.tsbuildinfo
 
-# Python classifier virtualenv — recreated by `pnpm setup:python`
+# Python virtualenvs — recreated by `pnpm setup:python` / `pnpm setup:upscaler`
 venv-classifier/
+venv-upscaler/
 
 # Downloaded model weights — fetched by `pnpm setup:python`, never vendored.
 models/
