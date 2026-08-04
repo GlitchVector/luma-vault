@@ -231,6 +231,27 @@ export interface UpscaleSummary {
   errors: string[]
 }
 
+export interface ForgeStatus {
+  /** False when Forge is not running, which is not a reason to block anything. */
+  reachable: boolean
+  busy: boolean
+  /** What it is doing — "Batch 3 out of 3". */
+  job: string | null
+  progress: number
+}
+
+/**
+ * Whether Forge is mid-generation.
+ *
+ * Both it and the upscaler want the whole GPU, and running them together does
+ * not fail — it makes each take about twice as long. Unreachable reads as not
+ * busy: a Forge that is not running is not a reason to stop anything.
+ */
+export async function forgeStatus(): Promise<ForgeStatus> {
+  if (!isTauri()) return { reachable: false, busy: false, job: null, progress: 0 }
+  return invoke<ForgeStatus>('forge_status')
+}
+
 export interface UpscaleProgress {
   phase: string
   done: number

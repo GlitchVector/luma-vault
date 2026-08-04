@@ -13,9 +13,11 @@ import { UpscaleResults } from '#/components/UpscaleResults.tsx'
 import { askConfirm, showMessage } from '#/lib/dialogs.ts'
 import {
   deleteMedia,
+  forgeStatus,
   isTauri,
   onUpscaleProgress,
   upscaleMedia,
+  type ForgeStatus,
   type UpscaleProgress,
   type UpscaleSummary,
 } from '#/lib/native.ts'
@@ -67,6 +69,7 @@ export function App() {
   // the summary only exists once it has finished.
   const [upscaling, setUpscaling] = useState<UpscaleProgress | null>(null)
   const [upscaleResults, setUpscaleResults] = useState<UpscaleSummary | null>(null)
+  const [forge, setForge] = useState<ForgeStatus | null>(null)
   const [showBoxes, setShowBoxes] = useState(false)
   // Lives here rather than in the Lightbox so it survives closing one. The
   // Lightbox is mounted per-item, so local state reset the toggle every time
@@ -302,6 +305,39 @@ export function App() {
     }
   }, [openId])
 
+  // Watch Forge while a selection is open, so the upscale button can decline
+  // to compete for the GPU.
+  //
+  // Only while selecting: this is a request per tick to another local process,
+  // and there is no reason to make it when the button it guards is not on
+  // screen. Stops again the moment a run starts, because by then the answer no
+  // longer changes anything.
+  useEffect(() => {
+    if (!selecting || upscaling !== null) {
+      setForge(null)
+      return
+    }
+    let cancelled = false
+    const poll = () => {
+      void forgeStatus().then(
+        (status) => {
+          if (!cancelled) setForge(status)
+        },
+        // A failure here must not disable the button — it is a gate against a
+        // busy Forge, not against an unreachable one.
+        () => {
+          if (!cancelled) setForge(null)
+        },
+      )
+    }
+    poll()
+    const timer = setInterval(poll, 2000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [selecting, upscaling])
+
   // A selection outlives the filter it was made under. Without this, narrowing
   // and then acting would run over rows that left the screen some time ago.
   useEffect(() => {
@@ -452,14 +488,20 @@ export function App() {
               </span>
               <button
                 type="button"
-                disabled={selected.size === 0 || upscaling !== null}
+                disabled={selected.size === 0 || upscaling !== null || forge?.busy === true}
                 onClick={runUpscale}
-                title="Run each through a local upscale model and resample to 3840px on the long edge. Results are written beside the originals."
+                title={
+                  forge?.busy
+                    ? `Forge is generating${forge.job ? ` — ${forge.job}` : ''}. Both want the whole GPU, so running them together makes each take about twice as long.`
+                    : 'Run each through a local upscale model and resample to 3840px on the long edge. Results are written beside the originals.'
+                }
                 className="ml-auto mr-2 rounded-full bg-indigo-500 px-3 py-1 text-[11px] font-medium text-white hover:bg-indigo-400 disabled:cursor-default disabled:bg-indigo-500/30 disabled:text-white/50"
               >
                 {upscaling
                   ? `Upscaling ${upscaling.done}/${upscaling.total}…`
-                  : `Upscale ${selected.size.toLocaleString()} to 4K`}
+                  : forge?.busy
+                    ? 'Forge is busy'
+                    : `Upscale ${selected.size.toLocaleString()} to 4K`}
               </button>
 
               <button

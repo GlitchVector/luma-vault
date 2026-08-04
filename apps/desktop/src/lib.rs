@@ -229,6 +229,19 @@ async fn upscale_media(
         });
     }
 
+    // Checked here as well as in the UI. The button polls every couple of
+    // seconds, so a click can land in the gap after a generation started — and
+    // a gate that a race walks through is not one. Unreachable means Forge is
+    // not running, which is not a reason to refuse.
+    if let Ok(status) = forge_status(state.clone()).await {
+        if status.busy {
+            return Err(match status.job {
+                Some(job) => format!("Forge is generating ({job}). Both want the whole GPU."),
+                None => "Forge is generating. Both want the whole GPU.".to_string(),
+            });
+        }
+    }
+
     let (python, script) = state
         .upscaler
         .clone()
@@ -614,6 +627,72 @@ async fn forge_select_checkpoint(
     }
 }
 
+/// Whether Forge is mid-generation, so an upscale can decline to compete.
+///
+/// Both want the whole GPU. Running them together does not fail — it makes each
+/// take roughly twice as long and can push a large batch into swapping, which
+/// is worse than either waiting for the other.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeStatus {
+    /// False when Forge is not running at all, which is not a reason to block.
+    pub reachable: bool,
+    pub busy: bool,
+    /// What it is doing, for the tooltip — "Batch 3 out of 3".
+    pub job: Option<String>,
+    /// 0.0 to 1.0 through the current job.
+    pub progress: f64,
+}
+
+#[tauri::command(async)]
+async fn forge_status(state: State<'_, AppState>) -> Result<ForgeStatus, String> {
+    let base = state
+        .db
+        .setting(FORGE_URL_KEY)
+        .map_err(stringify)?
+        .unwrap_or_else(|| DEFAULT_FORGE_URL.to_string());
+    let endpoint = format!(
+        "{}/sdapi/v1/progress?skip_current_image=true",
+        base.trim_end_matches('/')
+    );
+
+    let client = reqwest::Client::builder()
+        // Very short. This is polled while a selection is open, and a Forge that
+        // is wedged must not make the button feel wedged too — unreachable
+        // reads as "not busy", which is the safe answer for a gate.
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let unreachable = ForgeStatus {
+        reachable: false,
+        busy: false,
+        job: None,
+        progress: 0.0,
+    };
+
+    let Ok(response) = client.get(&endpoint).send().await else {
+        return Ok(unreachable);
+    };
+    let Ok(body) = response.json::<serde_json::Value>().await else {
+        return Ok(unreachable);
+    };
+
+    let job = body["state"]["job"].as_str().unwrap_or_default().to_string();
+    let job_count = body["state"]["job_count"].as_i64().unwrap_or(0);
+    let progress = body["progress"].as_f64().unwrap_or(0.0);
+
+    Ok(ForgeStatus {
+        reachable: true,
+        // Any of the three. Forge reports the transition between queued jobs
+        // with a zero progress and an empty job name for a moment, and a gate
+        // that flickers open there is not a gate.
+        busy: job_count > 0 || !job.is_empty() || progress > 0.0,
+        job: (!job.is_empty()).then_some(job),
+        progress,
+    })
+}
+
 const FORGE_URL_KEY: &str = "forge_url";
 /// Forge's own default. `127.0.0.1` rather than `localhost` because the latter
 /// can resolve to IPv6 first and Gradio binds v4.
@@ -899,6 +978,7 @@ pub fn run() {
             forge_url,
             set_forge_url,
             forge_select_checkpoint,
+            forge_status,
             list_exclusions,
             exclude_folder,
             include_folder,

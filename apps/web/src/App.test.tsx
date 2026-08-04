@@ -58,6 +58,8 @@ const starCalls: Array<{ id: number; stars: number | null }> = []
 const queries: Array<{ minStars?: number | null; minLongestEdge?: number | null }> = []
 /** Ids each upscale run was asked for. */
 const upscaleCalls: number[][] = []
+/** What Forge claims to be doing, for the upscale gate. */
+let forgeState = { reachable: true, busy: false, job: null as string | null, progress: 0 }
 /** Each batch delete, so one call for the whole set can be asserted. */
 const deleteBatches: Array<{ ids: number[]; permanent: boolean }> = []
 
@@ -168,6 +170,7 @@ vi.mock('#/lib/native.ts', () => ({
     })
   },
   onUpscaleProgress: () => Promise.resolve(() => {}),
+  forgeStatus: () => Promise.resolve(forgeState),
   deleteMedia: (ids: number[], permanent: boolean) => {
     deleteBatches.push({ ids, permanent })
     library = library.filter((item) => !ids.includes(item.id))
@@ -182,6 +185,7 @@ beforeEach(() => {
   queries.length = 0
   upscaleCalls.length = 0
   deleteBatches.length = 0
+  forgeState = { reachable: true, busy: false, job: null, progress: 0 }
   // The tile size is remembered here, so a case that sets it would otherwise
   // decide the starting size of every case after it.
   localStorage.clear()
@@ -789,6 +793,27 @@ describe('upscaling a selection', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
 
     await waitFor(() => expect(screen.queryByText('2 upscaled')).toBeNull())
+  })
+
+  it('refuses to compete with a running generation', async () => {
+    // Both want the whole GPU. Running them together does not fail, it just
+    // makes each take about twice as long — which is worse than waiting.
+    forgeState = { reachable: true, busy: true, job: 'Batch 3 out of 3', progress: 0.85 }
+    await selectTwo()
+
+    const button = await screen.findByRole('button', { name: 'Forge is busy' })
+    expect(button.hasAttribute('disabled')).toBe(true)
+    button.click()
+    expect(upscaleCalls).toHaveLength(0)
+  })
+
+  it('is unblocked by a Forge that is simply not running', async () => {
+    // Unreachable is not busy. A gate that fires when the thing it guards
+    // against is switched off is just a broken button.
+    forgeState = { reachable: false, busy: false, job: null, progress: 0 }
+    await selectTwo()
+
+    expect(await screen.findByRole('button', { name: 'Upscale 2 to 4K' })).toBeTruthy()
   })
 
   it('cannot be started with nothing picked', async () => {
