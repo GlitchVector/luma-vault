@@ -136,7 +136,16 @@ if (uninstall) {
 // stale file left behind by an older version is a bug nobody would think to
 // look for.
 rmSync(target, { recursive: true, force: true });
-cpSync(source, target, { recursive: true });
+cpSync(source, target, {
+  recursive: true,
+  // Never the bytecode. Anything that has imported these modules — a test, an
+  // editor — leaves a `__pycache__` behind, compiled by whichever interpreter
+  // happened to run, which is not the one embedded in the webui. Python
+  // invalidates a stale `.pyc` by timestamp so it would not actually be loaded,
+  // but shipping another runtime's bytecode into someone else's install is the
+  // kind of thing that gets blamed for the next unrelated failure.
+  filter: (path) => !path.includes("__pycache__") && !path.endsWith(".pyc"),
+});
 
 console.log(`Installed the Luma Vault prefill extension.`);
 console.log(``);

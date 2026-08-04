@@ -83,6 +83,76 @@ def _architecture(filename):
     return "sd"
 
 
+def _normalise_choices(component):
+    """Put a dropdown's `choices` back into the shape Gradio 4 expects.
+
+    # The bug this works around
+
+    Forge's refresh buttons assign the raw list straight onto the component:
+
+        for k, v in args.items():          # {"choices": sd_vae_items()}
+            setattr(comp, k, v)            # -> ['Automatic', 'None', 'x.safetensors']
+
+    which skips the normalisation `gr.Dropdown.__init__` does. Gradio 4 stores
+    choices as `(label, value)` pairs and its `postprocess` reads them back with
+
+        [value for _, value in self.choices]
+
+    so once a refresh has been pressed, the next update to that dropdown tries
+    to unpack a 35-character filename into two variables and raises
+    `ValueError: too many values to unpack (expected 2)`.
+
+    # Why it matters more than a bad-looking dropdown
+
+    The exception escapes through Gradio's event pipeline, which kills the
+    session's event stream. The generation carries on server-side and the
+    browser stops hearing about it — the UI sits on "Waiting..." at 0% while
+    the job runs to completion invisibly. That is the whole symptom.
+
+    `ui_vae` is the one that bites: `on_preset_change` is wired to the page's
+    `load` event and lists `ui_vae` among its outputs, so this fires on *every
+    page load* once a VAE refresh has happened — including the tab this
+    extension opens. `ui_checkpoint` is not in those outputs, which is why only
+    half of this was noticed before.
+
+    Not a patch of the refresh button itself, deliberately: monkey-patching a
+    host app is how you end up debugging someone else's upgrade. This repairs
+    the state we are about to disturb, immediately before disturbing it.
+    """
+    choices = getattr(component, "choices", None)
+    if not choices:
+        return
+
+    repaired = []
+    for choice in choices:
+        if isinstance(choice, (tuple, list)):
+            if len(choice) != 2:
+                return  # not a shape we understand; leave it entirely alone
+            repaired.append((choice[0], choice[1]))
+        elif isinstance(choice, str):
+            repaired.append((choice, choice))
+        else:
+            return
+    component.choices = repaired
+
+
+def _repair_dropdowns():
+    """Both of Forge's own dropdowns, before anything makes them re-render."""
+    try:
+        from modules_forge import main_entry
+    except ImportError:
+        return
+    for name in ("ui_checkpoint", "ui_vae"):
+        component = getattr(main_entry, name, None)
+        if component is not None:
+            try:
+                _normalise_choices(component)
+            except Exception:
+                # Best effort. A broken dropdown is a cosmetic problem; refusing
+                # to switch the model over it is not.
+                pass
+
+
 def _dropdown_value(info):
     """The string the checkpoint dropdown will actually match.
 
@@ -164,6 +234,12 @@ def on_app_started(_demo, app):
 
         preset = _architecture(info.filename)
 
+        # Before anything below causes a re-render. Setting the preset makes the
+        # page's load handler update `ui_vae`, and if a refresh button has been
+        # pressed since startup that update raises and takes the session's event
+        # stream with it.
+        _repair_dropdowns()
+
         try:
             # Forge's own path: sets the option *and* refreshes the loading
             # parameters, which is the half the options endpoint skips.
@@ -196,6 +272,8 @@ def on_app_started(_demo, app):
     def set_vae(name: str = Body(..., embed=True)):
         from modules import shared
 
+        _repair_dropdowns()
+
         try:
             from modules_forge import main_entry
 
@@ -203,6 +281,29 @@ def on_app_started(_demo, app):
         except ImportError:
             shared.opts.set("sd_vae", name)
         return {"vae": name}
+
+    @app.post("/luma/v1/repair-dropdowns")
+    def repair_dropdowns():
+        """Put both dropdowns back into a shape Gradio can render.
+
+        Exposed as well as called internally, because the corruption is caused
+        by *Forge's* refresh buttons and can therefore happen with nothing of
+        ours involved — press refresh, reload the page, and the event stream
+        dies before anything reaches this extension.
+        """
+        _repair_dropdowns()
+        try:
+            from modules_forge import main_entry
+
+            return {
+                name: [
+                    c if isinstance(c, str) else list(c)
+                    for c in (getattr(getattr(main_entry, name, None), "choices", None) or [])[:3]
+                ]
+                for name in ("ui_checkpoint", "ui_vae")
+            }
+        except ImportError:
+            return {}
 
     @app.get("/luma/v1/loaded")
     def loaded():

@@ -112,3 +112,43 @@ curl -s localhost:7860/luma/v1/checkpoints
 curl -s -X POST localhost:7860/luma/v1/checkpoint \
      -H 'Content-Type: application/json' -d '{"name":"revAnimated_v122EOL"}'
 ```
+
+
+## The dropdown repair
+
+Forge's refresh buttons (the 🔄 beside Checkpoint and VAE) assign the new list
+straight onto the Gradio component:
+
+```python
+for k, v in args.items():        # {"choices": sd_vae_items()}
+    setattr(comp, k, v)          # -> ['Automatic', 'None', 'x.safetensors']
+```
+
+That skips the normalisation `gr.Dropdown.__init__` performs. Gradio 4 keeps
+choices as `(label, value)` pairs and reads them back with
+`[value for _, value in self.choices]`, so the next update to that dropdown
+tries to unpack a filename into two variables:
+
+```
+ValueError: too many values to unpack (expected 2)
+```
+
+It matters more than a red badge on the dropdown. The exception escapes through
+Gradio's event pipeline and takes the session's event stream with it — the
+generation continues server-side while the browser stops hearing about it, so
+the UI sits on **"Waiting…"** at 0% for a job that is already running. Ask
+`/sdapi/v1/progress` if you ever want the truth.
+
+`ui_vae` is the one that bites, because `on_preset_change` is wired to the
+page's `load` event and lists it among its outputs — so once a VAE refresh has
+happened, this fires on *every page load*, including the tab this extension
+opens. `ui_checkpoint` is not among those outputs.
+
+`_repair_dropdowns()` runs before anything here disturbs the UI, and is also
+exposed as `POST /luma/v1/repair-dropdowns` for the case where nothing of ours
+is involved at all: press refresh, reload the page, and the stream dies before
+this extension is ever reached.
+
+Forge's refresh button is deliberately **not** patched. Monkey-patching a host
+app is how you end up debugging someone else's upgrade — this repairs the state
+it is about to disturb, and nothing more.
