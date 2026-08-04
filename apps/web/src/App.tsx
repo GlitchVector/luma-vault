@@ -72,7 +72,12 @@ export function App() {
   // Lightbox is mounted per-item, so local state reset the toggle every time
   // you opened a file. Deliberately separate from `showBoxes` above, which is
   // the grid's label pill and a different question.
-  const [showLightboxBoxes, setShowLightboxBoxes] = useState(true)
+  //
+  // Off to begin with. Detection boxes are a diagnostic view — they answer "why
+  // did this get rated that way", which is a question you occasionally have and
+  // never have by default. Opening a picture should show the picture, not a
+  // rectangle over every part of it.
+  const [showLightboxBoxes, setShowLightboxBoxes] = useState(false)
   // Here for the same reason, and it matters more: stepping through a folder of
   // generations is exactly when you want the prompt to stay on screen.
   const [showGeneration, setShowGeneration] = useState(false)

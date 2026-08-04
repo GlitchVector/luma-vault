@@ -397,6 +397,34 @@ describe('selecting images', () => {
   })
 })
 
+describe('opening the lightbox', () => {
+  it('does not draw detection boxes until asked', async () => {
+    // A diagnostic view answering "why was this rated that way" — a question you
+    // occasionally have and never have by default. Opening a picture should show
+    // the picture.
+    render(<App />)
+    ;(await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)).click()
+
+    expect(await screen.findByRole('button', { name: 'Show boxes' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Hide boxes' })).toBeNull()
+  })
+
+  it('keeps the choice across openings once it is made', async () => {
+    // The toggle lives in the app rather than the lightbox precisely so it
+    // survives closing one — turning it on for every file in a folder would
+    // make it useless for the case it exists for.
+    render(<App />)
+    ;(await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)).click()
+    ;(await screen.findByRole('button', { name: 'Show boxes' })).click()
+    await screen.findByRole('button', { name: 'Hide boxes' })
+
+    screen.getByRole('button', { name: 'Close' }).click()
+    ;(await screen.findByTitle(`image-${LIBRARY_SIZE - 1}.png`)).click()
+
+    expect(await screen.findByRole('button', { name: 'Hide boxes' })).toBeTruthy()
+  })
+})
+
 describe('the lightbox shortcuts a review pass leans on', () => {
   // Wrapped, unlike `fireEvent`, which Testing Library wraps for you. Three raw
   // dispatches in a row never let React re-render between them, so every one
