@@ -386,6 +386,7 @@ mod tests {
             search: String::new(),
             tag: None,
             min_stars: None,
+            min_longest_edge: None,
             duplicates_only: false,
             hide_tags: Vec::new(),
             sort: crate::types::SortOrder::Recent,

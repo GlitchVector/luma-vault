@@ -4,11 +4,15 @@ import { MediaTile } from './MediaTile.tsx'
 
 interface MediaGridProps {
   items: MediaItem[]
-  onOpen: (id: number) => void
+  onOpen: (id: number, range: boolean) => void
   onReachEnd: () => void
   showBoxes: boolean
   /** Draw each set of duplicates inside its own frame. */
   groupDuplicates: boolean
+  /** Longest edge of a tile, in CSS pixels. */
+  tileSize: number
+  /** Ids drawn as picked. Empty when the grid is not selecting. */
+  selected: ReadonlySet<number>
 }
 
 /**
@@ -61,6 +65,8 @@ export function MediaGrid({
   onReachEnd,
   showBoxes,
   groupDuplicates,
+  tileSize,
+  selected,
 }: MediaGridProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const reachEndRef = useRef(onReachEnd)
@@ -87,7 +93,7 @@ export function MediaGrid({
     return () => observer.disconnect()
   }, [])
 
-  const handleOpen = useCallback((id: number) => onOpen(id), [onOpen])
+  const handleOpen = useCallback((id: number, range: boolean) => onOpen(id, range), [onOpen])
 
   return (
     <>
@@ -115,6 +121,8 @@ export function MediaGrid({
                     item={item}
                     onOpen={handleOpen}
                     showBoxes={showBoxes}
+                    size={tileSize}
+                    selected={selected.has(item.id)}
                   />
                 ))}
               </div>
@@ -124,7 +132,14 @@ export function MediaGrid({
       ) : (
         <div className="flex flex-wrap content-start gap-2">
           {items.map((item) => (
-            <MediaTile key={item.id} item={item} onOpen={handleOpen} showBoxes={showBoxes} />
+            <MediaTile
+              key={item.id}
+              item={item}
+              onOpen={handleOpen}
+              showBoxes={showBoxes}
+              size={tileSize}
+              selected={selected.has(item.id)}
+            />
           ))}
         </div>
       )}

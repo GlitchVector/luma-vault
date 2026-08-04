@@ -48,8 +48,12 @@ pub const IGNORE_MARKER: &str = ".lumaignore";
 ///   frames here, roughly 73 JPEGs per video across 718 videos. Pointing this
 ///   scanner at a vault root that contains it added ~52,000 frame grabs that
 ///   duplicated the videos they came from.
+/// - `*-grids` — see [`is_generated_grid_dir`].
 ///
 /// Anything not on this list is excluded with `.lumaignore` instead.
+///
+/// **Changing this list means bumping [`IGNORE_RULES_VERSION`]**, or the new
+/// name stops future walks without reaching anything already indexed under it.
 fn is_ignored_dir(name: &str) -> bool {
     matches!(
         name,
@@ -62,6 +66,56 @@ fn is_ignored_dir(name: &str) -> bool {
             | ".luma"
             | "_corndog_meta"
     ) || name == ".thumbnails"
+        || is_generated_grid_dir(name)
+}
+
+/// Stable Diffusion's contact sheets.
+///
+/// A1111 and Forge write one montage per batch into a directory named for the
+/// tab that produced it — `txt2img-grids`, `img2img-grids` — beside the
+/// `-images` directory holding the pictures themselves. So every grid is a
+/// composite of files that are *already indexed individually*, which makes it
+/// the same derived-copy problem as `@eaDir`, only worse in three ways:
+///
+/// - it is one row standing for a whole batch, so a rating applies to the
+///   montage rather than to any picture in it,
+/// - the montage is enormous — a 2x2 of 1040x1520 is 2080x3040 and megabytes —
+///   so it is expensive to thumbnail and to rate,
+/// - and it is a near-duplicate of several rows at once, which is noise the
+///   perceptual hash cannot resolve into anything useful.
+///
+/// Matched on the suffix rather than the two literal names, because the prefix
+/// is whatever tab made it and extensions add their own.
+fn is_generated_grid_dir(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.ends_with("-grids") || lower.ends_with("-grid")
+}
+
+/// Bump when a name is added to or removed from the ignore list above.
+///
+/// The index sweep that applies these rules retroactively is a table scan, and
+/// on a real library `media` is hundreds of megabytes — so it runs once per
+/// rule change rather than once per launch. Forgetting to bump this means a
+/// newly-ignored directory stops being walked but its existing rows stay, which
+/// is the exact failure the sweep exists to prevent.
+pub const IGNORE_RULES_VERSION: &str = "1-grids";
+
+/// Would the walk have skipped the directory this file sits in?
+///
+/// The index needs to be able to ask the same question the walk does, for rows
+/// that were added *before* a name joined the list above. Without it, adding a
+/// name only stops future walks and leaves everything already indexed sitting
+/// in the grid — which reads as the rule not working.
+///
+/// Split on both separators regardless of host: the index stores whatever the
+/// filesystem reported, so a database written on Windows carries backslashes
+/// and must still be readable by a build that is not running there.
+pub fn is_in_ignored_dir(path: &str) -> bool {
+    let mut segments: Vec<&str> = path.split(['/', '\\']).collect();
+    // The file's own name is not a directory, and a picture called `x-grid.png`
+    // is a picture.
+    segments.pop();
+    segments.iter().any(|segment| is_ignored_dir(segment))
 }
 
 /// Is this a Stable Diffusion Image Browser database?
@@ -218,6 +272,67 @@ mod tests {
             "a sibling project's extracted-frame cache is 52k derived JPEGs"
         );
         assert!(!is_ignored_dir("Holiday 2024"));
+    }
+
+    #[test]
+    fn skips_stable_diffusions_contact_sheets() {
+        // Every one is a montage of files already indexed one by one, so it is
+        // a near-duplicate of several rows at once and its rating belongs to
+        // none of them.
+        assert!(is_ignored_dir("txt2img-grids"));
+        assert!(is_ignored_dir("img2img-grids"));
+        assert!(is_ignored_dir("TXT2IMG-GRIDS"), "case is the filesystem's to choose");
+        assert!(is_ignored_dir("extras-grid"), "singular, for an extension that spells it that way");
+
+        // The suffix is the rule, so a folder that merely mentions grids is not
+        // one of these.
+        assert!(!is_ignored_dir("txt2img-images"));
+        assert!(!is_ignored_dir("grids and things"));
+        assert!(!is_ignored_dir("my-grids-backup"));
+    }
+
+    #[test]
+    fn reads_the_rule_off_a_whole_path_either_way_round() {
+        // Windows, as the index actually stores it — including the
+        // extended-length prefix every path on a share carries.
+        assert!(is_in_ignored_dir(
+            r"\\?\UNC\jebpot\devs\AI\Stable Diffusion\outputs\txt2img-grids\2026-08-04\grid-0008.png"
+        ));
+        // Posix, and a build that is not running on the machine that wrote it.
+        assert!(is_in_ignored_dir("/vault/outputs/txt2img-grids/a.png"));
+        assert!(is_in_ignored_dir("/vault/sub/@eaDir/thumb.jpg"));
+
+        // The sibling directory holding the actual generations, which is the
+        // entire point of the distinction.
+        assert!(!is_in_ignored_dir(
+            r"\\?\UNC\jebpot\devs\AI\Stable Diffusion\outputs\txt2img-images\2026-08-04\00166.png"
+        ));
+
+        // Only directories. A picture whose own name ends that way is a
+        // picture — the last segment is never tested.
+        assert!(!is_in_ignored_dir("/vault/photos/wedding-grid.png"));
+        assert!(!is_in_ignored_dir("/vault/photos/holiday.jpg"));
+    }
+
+    #[test]
+    fn a_grid_directory_is_walked_straight_past() {
+        // The layout Automatic1111 and Forge actually write.
+        let root = tempfile::tempdir().unwrap();
+        let outputs = root.path().join("outputs");
+        let images = outputs.join("txt2img-images").join("2026-08-04");
+        let grids = outputs.join("txt2img-grids").join("2026-08-04");
+        std::fs::create_dir_all(&images).unwrap();
+        std::fs::create_dir_all(&grids).unwrap();
+        std::fs::write(images.join("00166-3997412987.png"), b"x").unwrap();
+        std::fs::write(grids.join("grid-0008.png"), b"x").unwrap();
+
+        let walk = walk_folder(root.path(), &[], |_, _| {});
+        let names: Vec<&str> = walk.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["00166-3997412987.png"],
+            "the generations are indexed and the contact sheet is not"
+        );
     }
 
     #[test]

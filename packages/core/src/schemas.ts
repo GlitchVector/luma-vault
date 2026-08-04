@@ -159,6 +159,22 @@ export const mediaItemSchema = z.object({
    * arrangement reshuffling under someone half way through reviewing it.
    */
   dupeGroup: z.number().nullable(),
+  /**
+   * The picture this row is an upscaled variant of, by path.
+   *
+   * Non-null only on a variant. The grid never shows what this names — the
+   * variant stands in for it — so this doubles as the only route back to the
+   * original, which the lightbox footer offers.
+   */
+  upscaledFrom: z.string().nullable().default(null),
+  /**
+   * The variant made from this row, when one exists.
+   *
+   * The other end of `upscaledFrom`. Non-null only on an original that has
+   * been upscaled — which the grid is hiding, so in practice this is only
+   * ever seen in the lightbox, where it is the way back to the variant.
+   */
+  upscaledTo: z.string().nullable().default(null),
 })
 export type MediaItem = z.infer<typeof mediaItemSchema>
 
@@ -299,6 +315,14 @@ export const mediaQuerySchema = z.object({
   tag: z.string().nullable().default(null),
   /** Show only items rated at least this many stars. `1` means "rated at all". */
   minStars: z.number().nullable().default(null),
+  /**
+   * Show only items whose longest edge is at least this many pixels.
+   *
+   * A number rather than a `fourKOnly` flag because the rule *is* a number —
+   * the 4K filter sends `FOUR_K_EDGE`, and the index applies the same
+   * comparison the grid's badge does.
+   */
+  minLongestEdge: z.number().nullable().default(null),
   /**
    * Show only files that have at least one duplicate.
    *

@@ -6,10 +6,12 @@ import {
   displayPath,
   extensionOf,
   hasRecycleBin,
+  fitInside,
   fitWithin,
   formatBytes,
   formatDuration,
   isAnimatedImage,
+  isFourK,
   kindOf,
 } from './media.ts'
 
@@ -68,6 +70,62 @@ describe('fitWithin', () => {
 
   it('degrades to a square for a degenerate size rather than dividing by zero', () => {
     expect(fitWithin(0, 0, 320)).toEqual({ width: 320, height: 320 })
+  })
+})
+
+describe('isFourK', () => {
+  it('counts UHD and anything larger', () => {
+    expect(isFourK(3840, 2160)).toBe(true)
+    expect(isFourK(4096, 2160)).toBe(true)
+    expect(isFourK(6000, 4000)).toBe(true)
+    expect(isFourK(3839, 2160)).toBe(false)
+  })
+
+  it('measures the longest edge, not the width', () => {
+    // A library is not all landscape, and a portrait shot is the same picture
+    // turned ninety degrees. Keying on width would badge one and not the other.
+    expect(isFourK(2160, 3840)).toBe(true)
+    expect(isFourK(3840, 2160)).toBe(isFourK(2160, 3840))
+  })
+
+  it('is not an area test', () => {
+    // 9MP, and still unable to fill a 4K display.
+    expect(isFourK(3000, 3000)).toBe(false)
+  })
+
+  it('says no for a row the scanner has not measured', () => {
+    expect(isFourK(0, 0)).toBe(false)
+  })
+})
+
+describe('fitInside', () => {
+  it('fits by whichever axis runs out first', () => {
+    // Landscape in a landscape window: width binds.
+    expect(fitInside(4000, 3000, 1000, 800)).toEqual({ width: 1000, height: 750 })
+    // Portrait in the same window: height binds.
+    expect(fitInside(3000, 4000, 1000, 800)).toEqual({ width: 600, height: 800 })
+  })
+
+  it('never scales a small picture up to fill the window', () => {
+    // The lightbox has always shown a 200px image at 200px. Blowing it up shows
+    // its pixels and says nothing the original did not.
+    expect(fitInside(200, 150, 1000, 800)).toEqual({ width: 200, height: 150 })
+  })
+
+  it('gives the poster and the original the same box', () => {
+    // The whole point: the thumbnail is painted into this rectangle and the
+    // original lands in it, so the swap changes sharpness and nothing else. A
+    // thumbnail is a different size but the same shape, so both must agree.
+    const original = fitInside(4000, 3000, 1000, 800)
+    const thumbnail = fitInside(512, 384, 1000, 800)
+    expect(original.width / original.height).toBeCloseTo(thumbnail.width / thumbnail.height, 5)
+  })
+
+  it('returns nothing for a size the scanner has not measured yet', () => {
+    // Zero is what an unmeasured row carries, and the caller falls back to
+    // letting the image size itself rather than drawing a collapsed box.
+    expect(fitInside(0, 0, 1000, 800)).toEqual({ width: 0, height: 0 })
+    expect(fitInside(4000, 3000, 0, 0)).toEqual({ width: 0, height: 0 })
   })
 })
 

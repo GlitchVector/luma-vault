@@ -20,6 +20,8 @@ export interface DialogRequest {
   /** Absent on a notice, which has nothing to cancel. */
   cancelLabel?: string
   tone: 'neutral' | 'danger'
+  /** Keys that confirm besides Enter — see {@link AskOptions.confirmKeys}. */
+  confirmKeys?: readonly string[]
   answer: (confirmed: boolean) => void
 }
 
@@ -28,6 +30,13 @@ interface AskOptions {
   confirmLabel?: string
   cancelLabel?: string
   tone?: 'neutral' | 'danger'
+  /**
+   * Extra keys that mean yes, for a question a key press raised.
+   *
+   * Belongs to the *asker*, not the dialog: only the code that knows which key
+   * opened the question knows which key should answer it.
+   */
+  confirmKeys?: readonly string[]
 }
 
 let queue: DialogRequest[] = []
@@ -55,6 +64,7 @@ export function askConfirm(message: string, options: AskOptions = {}): Promise<b
     confirmLabel: options.confirmLabel ?? 'Confirm',
     cancelLabel: options.cancelLabel ?? 'Cancel',
     tone: options.tone ?? 'neutral',
+    confirmKeys: options.confirmKeys,
   })
 }
 

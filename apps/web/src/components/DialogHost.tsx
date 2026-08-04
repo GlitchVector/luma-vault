@@ -20,6 +20,7 @@ export function DialogHost() {
       confirmLabel={current.confirmLabel}
       cancelLabel={current.cancelLabel}
       tone={current.tone}
+      confirmKeys={current.confirmKeys}
       onConfirm={() => answerCurrent(true)}
       onCancel={() => answerCurrent(false)}
     />

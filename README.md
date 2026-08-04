@@ -61,6 +61,12 @@ Star ratings are the exception: they exist only in a
 PNG. Any `wib*.sqlite3` found while scanning a folder is read automatically, and
 ratings for folders you have not scanned yet are kept until you do.
 
+The `txt2img-grids` and `img2img-grids` directories are skipped. Every file in
+them is a montage of pictures indexed individually next door, so a grid is a
+near-duplicate of several rows at once, and any rating it earns belongs to the
+sheet rather than to anything on it. Point the app at an `outputs` root and you
+get the generations, not the contact sheets.
+
 **Open in Forge** hands a picture's parameters back to a running webui. Forge is
 a Gradio app whose component state cannot be set from a URL, so a small
 companion extension does the last step:
@@ -87,10 +93,17 @@ work mid-scan: a phase can abandon its pass and be re-run at a new size,
 because re-running costs a query.
 
 1. **Glob.** Walk the tree, skipping VCS directories, dot-files, Synology's
-   `@eaDir` mirrors and any folder you excluded. New files are inserted; rows
-   whose file has vanished are dropped. Existing rows are left untouched, so a
-   rescan is cheap and a backup tool rewriting mtimes cannot wipe your verdicts.
-   Any `wib*.sqlite3` seen on the way past is imported for its star ratings.
+   `@eaDir` mirrors, Stable Diffusion's `*-grids` contact sheets and any folder
+   you excluded. New files are inserted; rows whose file has vanished are
+   dropped. Existing rows are left untouched, so a rescan is cheap and a backup
+   tool rewriting mtimes cannot wipe your verdicts. Any `wib*.sqlite3` seen on
+   the way past is imported for its star ratings.
+
+   The skipped names are applied to the *index* too, the first time you open
+   the app after one is added. A rescan cannot do it: its pruning is a set
+   difference against what the walk returned, and a walk that skips a directory
+   reports nothing about it either way — so adding a name would otherwise only
+   stop future walks and leave everything already indexed sitting in the grid.
 2. **Measure.** Read each file's dimensions from its header. Its own phase
    because it is what lets a tile be sized before anything is painted.
 3. **Thumbnail.** Every file gets a 512px JPEG — unconditionally, even when the

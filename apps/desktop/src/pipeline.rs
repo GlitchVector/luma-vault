@@ -256,6 +256,52 @@ pub fn run_scan(pipeline: Arc<Pipeline>, app: AppHandle, folder_id: i64, root: P
     );
 }
 
+/// Drop rows sitting in directories the walk now skips.
+///
+/// The scan's own pruning cannot do this. It is a set difference against what
+/// the walk returned, and a walk that skips a directory reports nothing about
+/// it — so to that pass the rows look like files in a folder it did not visit,
+/// which is exactly the case it must *not* delete. Adding a name to the ignore
+/// list therefore only stops future walks; this is what makes it retroactive.
+///
+/// Runs once per change to that list rather than once per launch: the sweep is
+/// a table scan, and on a real library `media` is hundreds of megabytes, which
+/// is not a cost worth paying every time the app opens to find nothing.
+fn prune_ignored(pipeline: &Arc<Pipeline>) {
+    let key = "pruned_ignore_rules";
+    if pipeline.db.setting(key).ok().flatten().as_deref() == Some(scan::IGNORE_RULES_VERSION) {
+        return;
+    }
+
+    let pruned = match pipeline.db.prune_media_where(scan::is_in_ignored_dir) {
+        Ok(pruned) => pruned,
+        Err(error) => {
+            // Left unrecorded, so the next launch tries again rather than
+            // treating a failed sweep as a done one.
+            eprintln!("[luma] could not prune ignored directories: {error:#}");
+            return;
+        }
+    };
+    let _ = pipeline.db.set_setting(key, scan::IGNORE_RULES_VERSION);
+    if pruned.rows == 0 {
+        return;
+    }
+
+    // Derived files outlive their rows deliberately: a thumbnail is addressed
+    // by content, so the same key can belong to a copy of the file that is
+    // still indexed elsewhere. Only what nothing claims any more is removed.
+    for key in &pruned.keys {
+        if pipeline.db.rows_with_content_key(key).unwrap_or(1) == 0 {
+            thumbs::forget_derived(&pipeline.thumb_root, &pipeline.frame_root, key);
+        }
+    }
+
+    eprintln!(
+        "[luma] dropped {} indexed file(s) from directories the scanner now skips",
+        pruned.rows
+    );
+}
+
 /// Re-walk every watched folder, then drain the pipeline. Run once at startup.
 ///
 /// The watcher only sees changes while the app is running, so anything added,
@@ -273,6 +319,11 @@ pub fn run_startup(pipeline: Arc<Pipeline>, app: AppHandle) {
     }
 
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // 0. Bring the index into line with what the walk would do today.
+        //    First, so that nothing below spends a thumbnail, a verdict or an
+        //    anime pass on a row that is about to be dropped anyway.
+        prune_ignored(&pipeline);
+
         let folders = pipeline.db.list_folders().unwrap_or_default();
 
         // 1. Folders that have never been scanned. Nothing else can happen for

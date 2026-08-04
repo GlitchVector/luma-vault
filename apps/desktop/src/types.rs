@@ -140,6 +140,23 @@ pub struct MediaItem {
     /// by every member, and numbered from the lowest — see `dupes::group`.
     #[serde(default)]
     pub dupe_group: Option<i64>,
+    /// The picture this row is an upscaled variant of, by path, or `None` when
+    /// it is not one — see `upscales::original_of`.
+    ///
+    /// A path rather than a row id because the pair is derived from the
+    /// filename the moment the variant is indexed, and the original may not
+    /// have been walked yet. The grid hides whatever a variant names here; the
+    /// lightbox offers it as the way back.
+    #[serde(default)]
+    pub upscaled_from: Option<String>,
+    /// The upscaled variant made *from* this row, by path, when one exists.
+    ///
+    /// The other direction of the same pair. Derived per query rather than
+    /// stored, because it is a fact about a different row: storing it would
+    /// mean writing to the original every time a variant appeared or was
+    /// deleted, and getting that wrong leaves a link pointing at nothing.
+    #[serde(default)]
+    pub upscaled_to: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -254,6 +271,14 @@ pub struct MediaQuery {
     /// "anything I have rated at all".
     #[serde(default)]
     pub min_stars: Option<i64>,
+    /// Show only rows whose longest edge is at least this many pixels.
+    ///
+    /// A number rather than a `four_k_only` flag, because the rule is a number
+    /// and it is defined once — in `FOUR_K_EDGE` in the TypeScript core, which
+    /// the grid's badge also reads. Sending the threshold rather than a name
+    /// keeps the badge and the filter from ever disagreeing about what 4K is.
+    #[serde(default)]
+    pub min_longest_edge: Option<i64>,
     /// Show only files that have at least one duplicate, grouped together.
     #[serde(default)]
     pub duplicates_only: bool,

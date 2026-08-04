@@ -2,7 +2,7 @@ import type { MediaItem } from '@luma/core'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetInViewRegistry } from '#/lib/useInView.ts'
-import { MediaTile, TILE_SIZE } from './MediaTile.tsx'
+import { DEFAULT_TILE_SIZE, MediaTile } from './MediaTile.tsx'
 
 /**
  * These tests pin the two properties the grid's performance rests on, both of
@@ -53,6 +53,8 @@ const item: MediaItem = {
   stars: null,
   generation: null,
   dupeGroup: null,
+  upscaledFrom: null,
+  upscaledTo: null,
 }
 
 afterEach(() => {
@@ -69,11 +71,11 @@ describe('MediaTile', () => {
     beforeEach(() => mockObserver(false))
 
     it('reserves its exact final size with no image mounted', () => {
-      render(<MediaTile item={item} onOpen={() => {}} showBoxes={false} />)
+      render(<MediaTile item={item} onOpen={() => {}} showBoxes={false} size={DEFAULT_TILE_SIZE} />)
 
       const tile = screen.getByTitle('holiday.jpg')
       // 512x384 fitted into a 260px box.
-      expect(tile.style.width).toBe(`${TILE_SIZE}px`)
+      expect(tile.style.width).toBe(`${DEFAULT_TILE_SIZE}px`)
       expect(tile.style.height).toBe('195px')
       expect(document.querySelector('img')).toBeNull()
     })
@@ -83,7 +85,7 @@ describe('MediaTile', () => {
     beforeEach(() => mockObserver(true))
 
     it('renders the thumbnail through the luma protocol, not the original', () => {
-      render(<MediaTile item={item} onOpen={() => {}} showBoxes={false} />)
+      render(<MediaTile item={item} onOpen={() => {}} showBoxes={false} size={DEFAULT_TILE_SIZE} />)
 
       const image = document.querySelector('img')
       expect(image?.getAttribute('src')).toBe(
@@ -98,6 +100,8 @@ describe('MediaTile', () => {
           item={{ ...item, path: '/media/loop.gif', name: 'loop.gif' }}
           onOpen={() => {}}
           showBoxes={false}
+
+          size={DEFAULT_TILE_SIZE}
         />,
       )
 
@@ -112,6 +116,8 @@ describe('MediaTile', () => {
           item={{ ...item, thumbPath: null, thumbWidth: null, thumbHeight: null }}
           onOpen={() => {}}
           showBoxes={false}
+
+          size={DEFAULT_TILE_SIZE}
         />,
       )
 
@@ -131,6 +137,8 @@ describe('MediaTile', () => {
           item={{ ...item, thumbPath: null, thumbWidth: null, thumbHeight: null }}
           onOpen={() => {}}
           showBoxes={false}
+
+          size={DEFAULT_TILE_SIZE}
         />,
       )
 
@@ -143,6 +151,8 @@ describe('MediaTile', () => {
           item={{ ...item, path: '/media/loop.gif', name: 'loop.gif', thumbPath: null }}
           onOpen={() => {}}
           showBoxes={false}
+
+          size={DEFAULT_TILE_SIZE}
         />,
       )
 
@@ -151,12 +161,57 @@ describe('MediaTile', () => {
       )
     })
 
+    it('is sized from the size it is given, not a constant', () => {
+      // The property the grid rests on is that a tile knows its size before
+      // anything loads — which has to keep holding when that size is a setting
+      // rather than a compile-time number.
+      render(<MediaTile item={item} onOpen={() => {}} showBoxes={false} size={140} />)
+
+      const tile = screen.getByTitle('holiday.jpg')
+      // 512x384 fitted into 140.
+      expect(tile.style.width).toBe('140px')
+      expect(tile.style.height).toBe('105px')
+    })
+
+    it('badges a 4K source, and says so from the source size', () => {
+      // 4000x3000. The thumbnail beside it is 512px, so reading the badge off
+      // the thumbnail would mean no tile in the library ever earns one.
+      render(<MediaTile item={item} onOpen={() => {}} showBoxes={false} size={DEFAULT_TILE_SIZE} />)
+      expect(screen.getByText('4K')).toBeTruthy()
+    })
+
+    it('leaves a smaller picture unbadged', () => {
+      render(
+        <MediaTile
+          item={{ ...item, width: 1920, height: 1080 }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+      expect(screen.queryByText('4K')).toBeNull()
+    })
+
+    it('badges a portrait shot of the same size', () => {
+      render(
+        <MediaTile
+          item={{ ...item, width: 2160, height: 3840 }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+      expect(screen.getByText('4K')).toBeTruthy()
+    })
+
     it('shows a duration badge for videos', () => {
       render(
         <MediaTile
           item={{ ...item, kind: 'video', durationSec: 247 }}
           onOpen={() => {}}
           showBoxes={false}
+
+          size={DEFAULT_TILE_SIZE}
         />,
       )
       expect(screen.getByText('4:07')).toBeTruthy()

@@ -1,4 +1,4 @@
-import type { MediaQuery, Rating, SortOrder } from '@luma/core'
+import { FOUR_K_EDGE, type MediaQuery, type Rating, type SortOrder } from '@luma/core'
 import { Pill } from '@luma/ui'
 
 interface FilterBarProps {
@@ -8,6 +8,8 @@ interface FilterBarProps {
   shown: number
   showBoxes: boolean
   onToggleBoxes: () => void
+  selecting: boolean
+  onToggleSelecting: () => void
   onChange: (patch: Partial<MediaQuery>) => void
 }
 
@@ -54,6 +56,8 @@ export function FilterBar({
   shown,
   showBoxes,
   onToggleBoxes,
+  selecting,
+  onToggleSelecting,
   onChange,
 }: FilterBarProps) {
   return (
@@ -133,13 +137,45 @@ export function FilterBar({
       })}
 
       {/* Stars are a person's judgement, so the filter is "at least", not
-          "exactly" — nobody looks for their 3-star pictures specifically. */}
+          "exactly" — nobody looks for their 3-star pictures specifically.
+
+          Two settings of one value rather than two filters, so they cannot both
+          be on and mean nothing. Each toggles itself off, and picking one
+          replaces the other. */}
       <Pill
-        active={query.minStars !== null}
+        active={query.minStars === 4}
         title="Only pictures you rated 4 stars or better, including ratings imported from an Image Browser database"
-        onClick={() => onChange({ minStars: query.minStars === null ? 4 : null })}
+        onClick={() => onChange({ minStars: query.minStars === 4 ? null : 4 })}
       >
         ★ 4+
+      </Pill>
+
+      {/* Five is the top of the scale, so "at least five" is exactly five —
+          which is what a favourite is. No separate column and no second
+          concept: the heart is a view of the rating already there, so a picture
+          becomes a favourite by being rated 5 in the lightbox. */}
+      <Pill
+        active={query.minStars === 5}
+        ariaLabel="Favourites only"
+        title="Favourites — only the pictures you rated 5 stars. Rate one with 5 in the lightbox."
+        onClick={() => onChange({ minStars: query.minStars === 5 ? null : 5 })}
+      >
+        ♥
+      </Pill>
+
+      {/* The same threshold the grid's badge uses, sent to the index rather
+          than named — so the filter cannot come to mean something the badge
+          does not, which is the usual way these two drift apart. */}
+      <Pill
+        active={query.minLongestEdge === FOUR_K_EDGE}
+        title={`Only pictures whose longest edge is at least ${FOUR_K_EDGE}px — the ones carrying a 4K badge`}
+        onClick={() =>
+          onChange({
+            minLongestEdge: query.minLongestEdge === FOUR_K_EDGE ? null : FOUR_K_EDGE,
+          })
+        }
+      >
+        4K
       </Pill>
 
       <span className="mx-1 h-4 w-px bg-white/10" />
@@ -158,6 +194,17 @@ export function FilterBar({
 
       <Pill active={showBoxes} onClick={onToggleBoxes} title="Show what the classifier found">
         Labels
+      </Pill>
+
+      {/* A mode, not a modifier. What follows a selection is destructive or
+          expensive, so clicking a picture has to keep meaning "open it" the
+          rest of the time. */}
+      <Pill
+        active={selecting}
+        onClick={onToggleSelecting}
+        title="Pick several pictures. Click to add one, shift-click to take everything between."
+      >
+        {selecting ? 'Selecting' : 'Select'}
       </Pill>
 
       {/* Toggling off is a filter change; toggling on runs the search first,

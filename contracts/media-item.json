@@ -39,7 +39,9 @@
       "cfgScale": "7",
       "needsSourceImage": false
     },
-    "dupeGroup": 1
+    "dupeGroup": 1,
+    "upscaledFrom": "/Volumes/vault/Images/holiday.png",
+    "upscaledTo": null
   },
   {
     "id": 2,
@@ -71,7 +73,9 @@
     "classifiedAt": 1753900500000,
     "stars": null,
     "generation": null,
-    "dupeGroup": 1
+    "dupeGroup": 1,
+    "upscaledFrom": null,
+    "upscaledTo": "/Volumes/vault/Images/holiday_upscaled_4k.png"
   },
   {
     "id": 3,
@@ -92,6 +96,8 @@
     "classifiedAt": null,
     "stars": null,
     "generation": null,
-    "dupeGroup": null
+    "dupeGroup": null,
+    "upscaledFrom": null,
+    "upscaledTo": null
   }
 ]

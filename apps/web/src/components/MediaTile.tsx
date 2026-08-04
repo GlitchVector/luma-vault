@@ -1,16 +1,41 @@
-import { fitWithin, formatDuration, isAnimatedImage, type MediaItem } from '@luma/core'
+import { fitWithin, formatDuration, isAnimatedImage, isFourK, type MediaItem } from '@luma/core'
 import { cn } from '@luma/ui'
 import { memo } from 'react'
 import { fileUrl } from '#/lib/native.ts'
 import { useInView } from '#/lib/useInView.ts'
 
 /** Longest edge of a tile, in CSS pixels. Tiles never exceed this in either axis. */
-export const TILE_SIZE = 260
+export const DEFAULT_TILE_SIZE = 260
+
+/**
+ * How small tiles may go.
+ *
+ * Not a taste limit — a memory one. Every mounted tile decodes the same 512px
+ * thumbnail whatever size it is drawn at, so halving the tile roughly
+ * quadruples how many are in view and therefore how many bitmaps are resident.
+ * At 140 a wide window holds around a hundred, which is the point where that
+ * stops being free.
+ */
+export const MIN_TILE_SIZE = 140
+
+/** How large. Past this a "grid" is a single column of pictures. */
+export const MAX_TILE_SIZE = 480
 
 interface MediaTileProps {
   item: MediaItem
-  onOpen: (id: number) => void
+  /**
+   * Clicked.
+   *
+   * `range` is the shift key, passed on rather than acted on here: a tile knows
+   * nothing about what came before it, and "everything between" is a question
+   * only the list can answer.
+   */
+  onOpen: (id: number, range: boolean) => void
   showBoxes: boolean
+  /** Longest edge, in CSS pixels. See {@link DEFAULT_TILE_SIZE}. */
+  size: number
+  /** Drawn as picked. Only meaningful while the grid is selecting. */
+  selected?: boolean
 }
 
 /**
@@ -33,7 +58,13 @@ interface MediaTileProps {
  * filter toggle, a progress event arriving four times a second during a scan —
  * re-renders every tile in the list.
  */
-export const MediaTile = memo(function MediaTile({ item, onOpen, showBoxes }: MediaTileProps) {
+export const MediaTile = memo(function MediaTile({
+  item,
+  onOpen,
+  showBoxes,
+  size,
+  selected = false,
+}: MediaTileProps) {
   const { ref, inView } = useInView()
 
   // Prefer the thumbnail. Animated images are the one exception: a still
@@ -58,23 +89,40 @@ export const MediaTile = memo(function MediaTile({ item, onOpen, showBoxes }: Me
   // yet, so a mid-scan tile still gets a correctly-shaped placeholder.
   const intrinsicWidth = item.thumbWidth ?? item.width
   const intrinsicHeight = item.thumbHeight ?? item.height
-  const { width, height } = fitWithin(intrinsicWidth || 1, intrinsicHeight || 1, TILE_SIZE)
+  const { width, height } = fitWithin(intrinsicWidth || 1, intrinsicHeight || 1, size)
 
   const verdict = item.verdict
   const isVideo = item.kind === 'video'
+  // The source's own size, never the thumbnail's — the badge is a claim about
+  // the file, and every thumbnail in the library is 512px.
+  const fourK = isFourK(item.width, item.height)
 
   return (
     <button
       type="button"
       ref={ref}
-      onClick={() => onOpen(item.id)}
+      onClick={(event) => onOpen(item.id, event.shiftKey)}
       style={{ width, height }}
       title={item.name}
+      aria-pressed={selected || undefined}
       className={cn(
         'group relative shrink-0 overflow-hidden rounded-md bg-zinc-800/80',
         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400',
+        // An inset ring rather than an outline: the grid packs tiles two
+        // pixels apart, and anything drawn outside the box would overlap the
+        // neighbour and read as though both were picked.
+        selected && 'ring-2 ring-inset ring-indigo-400',
       )}
     >
+      {selected ? (
+        <span className="pointer-events-none absolute inset-0 z-10 bg-indigo-500/25" />
+      ) : null}
+      {selected ? (
+        <span className="pointer-events-none absolute bottom-1.5 left-1.5 z-10 grid size-4 place-items-center rounded-full bg-indigo-500 text-[10px] font-bold leading-none text-white">
+          ✓
+        </span>
+      ) : null}
+
       {inView ? (
         <>
           {source ? (
@@ -99,9 +147,22 @@ export const MediaTile = memo(function MediaTile({ item, onOpen, showBoxes }: Me
               )
             : null}
 
-          {isVideo ? (
-            <span className="pointer-events-none absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-zinc-100">
-              {formatDuration(item.durationSec)}
+          {/* One row, so a 4K video does not stack two badges on one corner. */}
+          {isVideo || fourK ? (
+            <span className="pointer-events-none absolute left-1.5 top-1.5 flex gap-1">
+              {isVideo ? (
+                <span className="rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-zinc-100">
+                  {formatDuration(item.durationSec)}
+                </span>
+              ) : null}
+              {fourK ? (
+                <span
+                  className="rounded bg-black/70 px-1 py-0.5 text-[10px] font-semibold tracking-wide text-zinc-100"
+                  title={`${item.width}×${item.height}`}
+                >
+                  4K
+                </span>
+              ) : null}
             </span>
           ) : null}
 

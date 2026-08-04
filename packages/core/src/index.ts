@@ -28,8 +28,21 @@ export {
 } from './classify.ts'
 export type { ClassifyOptions } from './classify.ts'
 
+export { rangeBetween, toggleSelected, retainVisible } from './selection.ts'
+
 export { DEFAULT_SAMPLING, planFrameTimestamps } from './sampling.ts'
 export type { SamplingOptions } from './sampling.ts'
+
+export {
+  MAX_SCALE,
+  fitScale,
+  fitView,
+  clampView,
+  zoomAbout,
+  isOverPicture,
+  isZoomed,
+} from './zoom.ts'
+export type { View, Point, Size } from './zoom.ts'
 
 export {
   IMAGE_EXTENSIONS,
@@ -42,7 +55,10 @@ export {
   toParameterBlock,
   kindOf,
   isAnimatedImage,
+  FOUR_K_EDGE,
+  isFourK,
   fitWithin,
+  fitInside,
   formatBytes,
   formatDuration,
 } from './media.ts'

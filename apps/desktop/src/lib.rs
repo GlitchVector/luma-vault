@@ -25,6 +25,8 @@ mod scan;
 mod throttle;
 mod thumbs;
 mod types;
+mod upscaler;
+mod upscales;
 mod video;
 mod watcher;
 
@@ -46,6 +48,10 @@ pub struct AppState {
     db: Arc<Db>,
     pipeline: Arc<Pipeline>,
     watcher: Arc<FolderWatcher>,
+    /// Interpreter and script, resolved once at startup. `None` when the venv
+    /// has not been built, which the command reports as a setup step rather
+    /// than a failure.
+    upscaler: Option<(PathBuf, PathBuf)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +162,127 @@ async fn media_frames(state: State<'_, AppState>, media_id: i64) -> Result<Vec<M
 #[tauri::command(async)]
 async fn media_by_id(state: State<'_, AppState>, id: i64) -> Result<Option<MediaItem>, String> {
     state.db.media_by_id(id).map_err(stringify)
+}
+
+/// One row by path, for a picture no list contains.
+///
+/// The grid hides an original once an upscaled variant of it exists, so there
+/// is no id to hand for it anywhere in the UI — only the path its variant
+/// carries.
+#[tauri::command(async)]
+async fn media_by_path(state: State<'_, AppState>, path: String) -> Result<Option<MediaItem>, String> {
+    state.db.media_by_path(&path).map_err(stringify)
+}
+
+/// Upscale a selection, writing each result beside its source.
+///
+/// Blocking for the caller, deliberately: a batch is minutes of GPU work and the
+/// UI needs a result to show, so this awaits the run and reports progress
+/// through `luma://upscale` while it goes. It is `async`, so it does not hold
+/// the main thread.
+#[tauri::command(async)]
+async fn upscale_media(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+    long_edge: Option<i64>,
+) -> Result<upscaler::UpscaleSummary, String> {
+    if ids.is_empty() {
+        return Err("nothing selected".to_string());
+    }
+
+    let long_edge = long_edge.unwrap_or(3840);
+
+    // Resolved here rather than trusting paths from the frontend: the webview
+    // must never be able to name an arbitrary file for a process to write next
+    // to. Videos are dropped — the upscaler reads still images.
+    //
+    // So is anything already at or past the target. "Upscale to 4K" means
+    // nothing for a picture that is 4K, and running it anyway is not merely
+    // wasteful: the model produces 15360px, the mandatory downscale brings it
+    // straight back to the size it started at, and the near-identical copy then
+    // *hides its own source* in the grid. Ten seconds of GPU to replace a
+    // picture with itself. Selecting an already-upscaled variant is the same
+    // case — it is 3840 by construction — which is what stops a second pass
+    // producing `x_upscaled_4k_upscaled_4k.png`.
+    let mut sources = Vec::new();
+    let mut already_large = 0_i64;
+    for id in &ids {
+        if let Ok(Some(item)) = state.db.media_by_id(*id) {
+            if item.kind != types::MediaKind::Image {
+                continue;
+            }
+            if item.width.max(item.height) >= long_edge {
+                already_large += 1;
+                continue;
+            }
+            sources.push(item.path);
+        }
+    }
+    if sources.is_empty() {
+        return Err(if already_large > 0 {
+            format!(
+                "nothing to do: {already_large} of the selected file(s) already reach {long_edge}px"
+            )
+        } else {
+            "none of the selected files is an image".to_string()
+        });
+    }
+
+    let (python, script) = state
+        .upscaler
+        .clone()
+        .ok_or_else(|| "the upscaler is not installed. Run `pnpm setup:upscaler`.".to_string())?;
+
+    let configured = state.db.setting("upscale_model").ok().flatten();
+    let model = upscaler::find_models(configured.as_deref())
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            "no upscale model found. Put a .pth in the webui's models/ESRGAN folder, or set one."
+                .to_string()
+        })?;
+
+    let db = Arc::clone(&state.db);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut summary = upscaler::run(&app, &python, &script, &model, &sources, long_edge)?;
+        summary.already_large = already_large;
+
+        // Indexed here rather than left to the watcher. The watcher does see
+        // these files, but on its own schedule — so closing the results panel
+        // showed the originals still in place and the swap happened some seconds
+        // later, which reads as the grid rearranging itself for no reason. Doing
+        // it before returning means the reload the UI runs next already sees the
+        // finished state.
+        for output in &summary.outputs {
+            let Ok(Some(original)) = db.media_by_path(&output.source) else {
+                continue;
+            };
+            let Ok(metadata) = std::fs::metadata(&output.destination) else {
+                continue;
+            };
+            let name = std::path::Path::new(&output.destination)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| output.name.clone());
+            let entry = db::ScannedFile {
+                path: output.destination.clone(),
+                name,
+                kind: types::MediaKind::Image,
+                size_bytes: metadata.len() as i64,
+                // The original's, so the variant sorts where the picture it
+                // replaces did. `insert_media_batch` re-applies this from the
+                // row anyway; passing it here keeps the two agreeing even if the
+                // original has not been thumbnailed yet.
+                modified_at: original.modified_at,
+            };
+            let _ = db.insert_media_batch(original.folder_id, &[entry], pipeline::now_ms());
+        }
+        Ok::<_, anyhow::Error>(summary)
+    })
+    .await
+    .map_err(|error| format!("the upscale task panicked: {error}"))?
+    .map_err(|error| format!("{error:#}"))
 }
 
 /// A person's judgement, 1-5, or `None` to clear it.
@@ -276,6 +403,65 @@ async fn delete_item(state: State<'_, AppState>, id: i64, permanent: bool) -> Re
 
     state.db.delete_media_by_path(&item.path).map_err(stringify)?;
     Ok(())
+}
+
+/// Delete many files, reporting how many went and what refused.
+///
+/// One command rather than a call per id: a selection can be hundreds, and that
+/// many IPC round trips is both slow and impossible to report on sensibly. One
+/// failure does not stop the rest — a file that vanished under you must not
+/// cost the other ninety-nine their deletion.
+#[tauri::command(async)]
+async fn delete_media(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+    permanent: bool,
+) -> Result<DeleteSummary, String> {
+    let mut summary = DeleteSummary::default();
+    for id in ids {
+        let Ok(Some(item)) = state.db.media_by_id(id) else {
+            summary.missing += 1;
+            continue;
+        };
+        let target = crate::paths::external_path(&item.path);
+
+        let outcome = if crate::paths::has_recycle_bin(&target) {
+            trash::delete(&target).map_err(|error| format!("{}: {error}", item.name))
+        } else if permanent {
+            std::fs::remove_file(&target).map_err(|error| format!("{}: {error}", item.name))
+        } else {
+            Err(format!(
+                "{}: on a network drive, where deleting is permanent",
+                item.name
+            ))
+        };
+
+        match outcome {
+            Ok(()) => {
+                let _ = state.db.delete_media_by_path(&item.path);
+                summary.deleted += 1;
+            }
+            Err(message) => {
+                summary.failed += 1;
+                // Capped: a hundred identical permission errors is not a more
+                // useful message than five, and the dialog has to stay readable.
+                if summary.errors.len() < 5 {
+                    summary.errors.push(message);
+                }
+            }
+        }
+    }
+    Ok(summary)
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSummary {
+    pub deleted: i64,
+    /// Already gone from the index — nothing to do, and not a failure.
+    pub missing: i64,
+    pub failed: i64,
+    pub errors: Vec<String>,
 }
 
 /// The verbatim parameter block a file records, for handing back to Forge.
@@ -603,6 +789,7 @@ pub fn run() {
                 db,
                 pipeline: Arc::clone(&pipeline),
                 watcher,
+                upscaler: upscaler::resolve(&repo_root, resource_dir.as_deref()),
             });
 
             // Re-walk every folder, then resume anything the last session left
@@ -628,6 +815,8 @@ pub fn run() {
             recent_media,
             media_frames,
             media_by_id,
+            media_by_path,
+            upscale_media,
             library_stats,
             set_stars,
             import_image_browser_db,
@@ -640,6 +829,7 @@ pub fn run() {
             find_duplicates,
             open_external,
             delete_item,
+            delete_media,
             generation_parameters,
             forge_url,
             set_forge_url,

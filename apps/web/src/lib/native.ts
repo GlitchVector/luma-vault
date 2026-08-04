@@ -193,6 +193,99 @@ export async function mediaFrames(mediaId: number): Promise<MediaFrame[]> {
  * Re-read one item. The detail view uses this rather than trusting the copy the
  * grid handed it, so opening something mid-scan shows its verdict once it lands.
  */
+/**
+ * One item by its exact stored path.
+ *
+ * For the original behind an upscaled variant. The grid hides it once a variant
+ * exists, so it is in no list and there is no id anywhere in the UI for it —
+ * only the path the variant carries.
+ */
+export async function mediaByPath(path: string): Promise<MediaItem | null> {
+  if (!isTauri()) return null
+  return mediaItemSchema.nullable().parse(await invoke('media_by_path', { path }))
+}
+
+/** One picture the upscaler produced. */
+export interface UpscaledFile {
+  source: string
+  destination: string
+  name: string
+  sourceWidth: number
+  sourceHeight: number
+  finalWidth: number
+  finalHeight: number
+  seconds: number
+}
+
+export interface UpscaleSummary {
+  upscaled: number
+  skipped: number
+  /** Selected but already at or past the target, so never sent to the model. */
+  alreadyLarge: number
+  failed: number
+  seconds: number
+  peakVramMb: number
+  model: string
+  architecture: string
+  outputs: UpscaledFile[]
+  errors: string[]
+}
+
+export interface UpscaleProgress {
+  phase: string
+  done: number
+  total: number
+  current: string | null
+  destination: string | null
+  finalWidth: number | null
+  finalHeight: number | null
+}
+
+/**
+ * Upscale the selected rows, writing each result beside its source.
+ *
+ * Takes ids, not paths. The backend resolves them, so the webview can never
+ * name an arbitrary file for a GPU process to write next to.
+ *
+ * Resolves when the whole batch is finished — minutes for a large one. Watch
+ * {@link onUpscaleProgress} for what it is doing meanwhile.
+ */
+export async function upscaleMedia(ids: number[], longEdge?: number): Promise<UpscaleSummary> {
+  return invoke<UpscaleSummary>('upscale_media', { ids, longEdge: longEdge ?? null })
+}
+
+/** Per-file progress while an upscale runs. Returns an unsubscribe. */
+export async function onUpscaleProgress(
+  handler: (progress: UpscaleProgress) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  const unlisten = await listen<UpscaleProgress>('luma://upscale', (event) => {
+    handler(event.payload)
+  })
+  return unlisten
+}
+
+export interface DeleteSummary {
+  deleted: number
+  /** Already gone from the index. Not a failure — nothing to do. */
+  missing: number
+  failed: number
+  errors: string[]
+}
+
+/**
+ * Delete many files at once.
+ *
+ * One call rather than one per id: a selection can be hundreds, and that many
+ * round trips is slow and impossible to report on sensibly. One failure does not
+ * stop the rest, so the summary says what actually happened.
+ */
+export async function deleteMedia(ids: number[], permanent: boolean): Promise<DeleteSummary> {
+  if (!isTauri()) return { deleted: 0, missing: 0, failed: 0, errors: [] }
+  return invoke<DeleteSummary>('delete_media', { ids, permanent })
+}
+
 export async function mediaById(id: number): Promise<MediaItem | null> {
   if (!isTauri()) return null
   return mediaItemSchema.nullable().parse(await invoke('media_by_id', { id }))

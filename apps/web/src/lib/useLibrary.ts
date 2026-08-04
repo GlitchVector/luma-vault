@@ -19,6 +19,7 @@ export const DEFAULT_QUERY: MediaQuery = {
   search: '',
   tag: null,
   minStars: null,
+  minLongestEdge: null,
   duplicatesOnly: false,
   // Nothing hidden by default. Documents are the reason this exists, but a
   // grid that silently omits files on first run is a bug report waiting to

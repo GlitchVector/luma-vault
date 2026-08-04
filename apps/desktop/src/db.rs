@@ -151,6 +151,29 @@ impl Db {
              WHERE content_key IS NOT NULL",
         )?;
 
+        // The picture an upscaled variant came from, derived from its filename
+        // at insert. Backfilled below rather than left to the next scan: the
+        // grid hides a superseded original, and a library that already holds
+        // variants would otherwise keep showing both until every folder had
+        // been walked again.
+        let has_upscaled_from = conn
+            .prepare("PRAGMA table_info(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "upscaled_from");
+        if !has_upscaled_from {
+            conn.execute_batch("ALTER TABLE media ADD COLUMN upscaled_from TEXT")?;
+        }
+        // The index the "is this one superseded" check runs against, once per
+        // queried row. Partial, because almost no row is a variant.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_upscaled_from ON media(upscaled_from)
+             WHERE upscaled_from IS NOT NULL",
+        )?;
+        if !has_upscaled_from {
+            Self::backfill_upscaled_from(&conn)?;
+        }
+
         // Partial index over exactly the rows the thumbnail queue scans.
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS media_thumb_queue
@@ -368,6 +391,37 @@ impl Db {
              ON media(modified_at DESC) WHERE labelled_at IS NULL AND error IS NULL",
         )?;
 
+        // Last, because it reads `settings` and rewrites `media`: every table
+        // has to exist by the time it runs.
+        //
+        // Variants indexed before a variant inherited anything keep whatever
+        // dates they were written with, which puts them at the front of a
+        // newest-first grid instead of beside the picture they replace. The
+        // inheritance at insert cannot reach them — that deliberately skips a
+        // row which already has a thumbnail — so they are repaired once, here.
+        let repaired: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'variant_inheritance'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if repaired.as_deref() != Some(VARIANT_INHERITANCE_VERSION) {
+            conn.execute(
+                "UPDATE media AS m
+                    SET modified_at = (SELECT o.modified_at FROM media o WHERE o.path = m.upscaled_from),
+                        added_at = (SELECT o.added_at FROM media o WHERE o.path = m.upscaled_from)
+                  WHERE m.upscaled_from IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM media o WHERE o.path = m.upscaled_from)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('variant_inheritance', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![VARIANT_INHERITANCE_VERSION],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -448,6 +502,31 @@ impl Db {
     // Media
     // -----------------------------------------------------------------------
 
+    /// Name the original for every variant already indexed.
+    ///
+    /// Runs once, when the column is added. Everything after that is handled at
+    /// insert, so this is a migration rather than a phase.
+    fn backfill_upscaled_from(conn: &Connection) -> Result<()> {
+        let rows: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, path FROM media WHERE path LIKE '%{}%'",
+                crate::upscales::UPSCALE_SUFFIX
+            ))?;
+            let found = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            found.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let mut stmt = conn.prepare("UPDATE media SET upscaled_from = ?2 WHERE id = ?1")?;
+        for (id, path) in rows {
+            // The LIKE above is a coarse prefilter; `original_of` is the rule,
+            // and it rejects a name that merely contains the suffix.
+            if let Some(original) = crate::upscales::original_of(&path) {
+                stmt.execute(params![id, original])?;
+            }
+        }
+        Ok(())
+    }
+
     /// Insert newly-seen files in one transaction, returning how many were new.
     ///
     /// Existing rows are left completely alone rather than updated: a file whose
@@ -460,8 +539,9 @@ impl Db {
         let mut inserted = 0_usize;
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO media (folder_id, path, name, kind, size_bytes, modified_at, added_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO media
+                     (folder_id, path, name, kind, size_bytes, modified_at, added_at, upscaled_from)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(path) DO NOTHING",
             )?;
             for entry in entries {
@@ -473,9 +553,54 @@ impl Db {
                     entry.size_bytes,
                     entry.modified_at,
                     now,
+                    // Derived from the name, so the pair is established the
+                    // moment the variant is seen — the original may not even be
+                    // indexed yet, and does not need to be.
+                    crate::upscales::original_of(&entry.path),
                 ])?;
             }
         }
+
+        // A variant takes the thumbnail its original already has.
+        //
+        // It is the same picture — that is the entire premise of the pairing —
+        // so generating a second one would decode a 12MB, 2627x3840 file off a
+        // network share to arrive at an image already sitting on local disk.
+        // Inheriting also closes the window where the variant is indexed but
+        // not yet drawable, which is what made three pictures vanish out of the
+        // grid: it is showable the moment it is inserted.
+        //
+        // The content key comes with it, and has to. Derived files are addressed
+        // by key and deleted when no row claims them any more, so a variant
+        // pointing at a thumbnail it does not claim would lose its picture the
+        // moment the original was deleted.
+        //
+        // Both dates come with it too. A variant that stands in for a picture
+        // has to stand where that picture stood: written today, it would
+        // otherwise jump to the front of a newest-first grid and drag itself out
+        // of the run of images it belongs to, so upscaling a handful quietly
+        // reshuffles the library. `added_at` for the same reason under
+        // "Recently added".
+        //
+        // Dimensions are deliberately *not* inherited: the variant's own size is
+        // the whole point of it, and it earns a 4K badge the original cannot.
+        tx.execute(
+            "UPDATE media AS m
+                SET thumb_path = (SELECT o.thumb_path FROM media o WHERE o.path = m.upscaled_from),
+                    thumb_width = (SELECT o.thumb_width FROM media o WHERE o.path = m.upscaled_from),
+                    thumb_height = (SELECT o.thumb_height FROM media o WHERE o.path = m.upscaled_from),
+                    content_key = (SELECT o.content_key FROM media o WHERE o.path = m.upscaled_from),
+                    modified_at = (SELECT o.modified_at FROM media o WHERE o.path = m.upscaled_from),
+                    added_at = (SELECT o.added_at FROM media o WHERE o.path = m.upscaled_from)
+              WHERE m.upscaled_from IS NOT NULL
+                AND m.thumb_path IS NULL
+                AND EXISTS (
+                    SELECT 1 FROM media o
+                     WHERE o.path = m.upscaled_from AND o.thumb_path IS NOT NULL
+                )",
+            [],
+        )?;
+
         tx.commit()?;
         Ok(inserted)
     }
@@ -632,6 +757,64 @@ impl Db {
         )?;
         tx.commit()?;
         Ok(keys)
+    }
+
+    /// Drop every row whose path `should_drop` rejects.
+    ///
+    /// For rules that are *about the path*, applied to an index that already
+    /// exists. Adding a directory name to the walk's ignore list only stops
+    /// future walks; everything indexed under that name before it was added
+    /// stays until something prunes it, and a rescan will not — the scan's own
+    /// pruning is a set difference against what the walk returned, and a walk
+    /// that now skips a directory reports nothing about it either way.
+    ///
+    /// The predicate is passed in rather than expressed in SQL so the rule
+    /// lives in exactly one place: whatever the walk skips is what this drops,
+    /// and the two cannot drift into disagreeing.
+    ///
+    /// One table scan of `path`, which is the price of asking a question no
+    /// index can answer. Rows are filtered as they stream, so only the matches
+    /// are ever held in memory — on a clean library that is none of them.
+    pub fn prune_media_where<F>(&self, should_drop: F) -> Result<Pruned>
+    where
+        F: Fn(&str) -> bool,
+    {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let tx = conn.transaction()?;
+
+        let doomed: Vec<(String, Option<String>)> = {
+            let mut stmt = tx.prepare("SELECT path, content_key FROM media")?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            let mut doomed = Vec::new();
+            for row in rows {
+                let (path, key): (String, Option<String>) = row?;
+                if should_drop(&path) {
+                    doomed.push((path, key));
+                }
+            }
+            doomed
+        };
+
+        {
+            let mut stmt = tx.prepare("DELETE FROM media WHERE path = ?1")?;
+            for (path, _) in &doomed {
+                stmt.execute(params![path])?;
+            }
+        }
+        tx.commit()?;
+
+        // Keys, not rows: derived files are addressed by content, so the same
+        // thumbnail can belong to a copy of the file that is still indexed
+        // elsewhere. The caller decides which are orphaned now that the rows
+        // are gone.
+        let mut keys: Vec<String> = doomed.iter().filter_map(|(_, key)| key.clone()).collect();
+        keys.sort();
+        keys.dedup();
+
+        Ok(Pruned {
+            rows: doomed.len(),
+            keys,
+        })
     }
 
     /// Whether any row still uses this content key. See [`Db::delete_media_under`].
@@ -1311,6 +1494,23 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// One row by its exact stored path.
+    ///
+    /// For reaching a picture the grid is deliberately not showing — the
+    /// original behind an upscaled variant, which no list contains and so no
+    /// id is to hand for.
+    pub fn media_by_path(&self, path: &str) -> Result<Option<MediaItem>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let item = conn
+            .query_row(
+                &format!("SELECT {MEDIA_COLUMNS} FROM media WHERE path = ?1"),
+                params![path],
+                map_media_row,
+            )
+            .optional()?;
+        Ok(item)
+    }
+
     pub fn media_by_id(&self, id: i64) -> Result<Option<MediaItem>> {
         let conn = self.conn.lock().expect("index mutex poisoned");
         let item = conn
@@ -1332,6 +1532,28 @@ impl Db {
 
         let mut where_parts: Vec<String> = Vec::new();
         let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        // A picture that has been upscaled is represented by its variant, not by
+        // both. Unconditional rather than a filter: two rows of the same picture
+        // at different resolutions is not a view anyone wants, and the original
+        // stays reachable from the variant's own footer.
+        //
+        // **Only once the variant has a thumbnail.** A variant is indexed the
+        // moment it is written — the watcher sees the file immediately — but it
+        // cannot be *drawn* until the pipeline has thumbnailed it, and a tile
+        // with no thumbnail renders as empty space. Hiding on the row alone
+        // therefore takes the original away before its replacement can stand in,
+        // and the picture simply vanishes from the grid for as long as the
+        // thumbnail queue takes to reach it. Standing in is the whole claim, so
+        // it has to be true before it is acted on.
+        //
+        // Correlated, but against a partial index over the handful of rows that
+        // are variants at all, so it costs a lookup per candidate row.
+        where_parts.push(
+            "NOT EXISTS (SELECT 1 FROM media v \
+             WHERE v.upscaled_from = media.path AND v.thumb_path IS NOT NULL)"
+                .to_string(),
+        );
 
         if let Some(folder_id) = query.folder_id {
             where_parts.push(format!("folder_id = ?{}", binds.len() + 1));
@@ -1377,6 +1599,13 @@ impl Db {
         }
         if let Some(min) = query.min_stars {
             where_parts.push(format!("stars >= ?{}", binds.len() + 1));
+            binds.push(Box::new(min));
+        }
+        if let Some(min) = query.min_longest_edge {
+            // A row the measure phase has not reached yet has no dimensions, so
+            // `MAX` is NULL and the comparison excludes it — which is right.
+            // "At least 4K" is a claim, and an unmeasured row cannot support it.
+            where_parts.push(format!("MAX(width, height) >= ?{}", binds.len() + 1));
             binds.push(Box::new(min));
         }
         if query.duplicates_only {
@@ -1523,9 +1752,16 @@ fn fts_expression(input: &str) -> Option<String> {
 /// keeps an index that no longer matches the queries run against it.
 const FTS_VERSION: &str = "1-trigram-name-prompt";
 
+/// Bump when what an upscaled variant inherits from its original changes.
+///
+/// Rows indexed under an older rule are repaired once on the next launch.
+/// Without it, only variants created *after* the change behave correctly and the
+/// grid is inconsistent in a way nothing on screen explains.
+const VARIANT_INHERITANCE_VERSION: &str = "1-dates";
+
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
-                             duration_sec, verdict_json, classified_at, stars,                              generation_json, dupe_group";
+                             duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to";
 
 fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
     let kind: String = row.get(4)?;
@@ -1559,6 +1795,8 @@ fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
             .get::<_, Option<String>>(17)?
             .and_then(|json| serde_json::from_str(&json).ok()),
         dupe_group: row.get(18)?,
+        upscaled_from: row.get(19)?,
+        upscaled_to: row.get(20)?,
     })
 }
 
@@ -1625,6 +1863,15 @@ pub struct ScannedFile {
     pub kind: MediaKind,
     pub size_bytes: i64,
     pub modified_at: i64,
+}
+
+/// What one sweep of [`Db::prune_media_where`] removed.
+#[derive(Debug, Clone, Default)]
+pub struct Pruned {
+    pub rows: usize,
+    /// Content keys the dropped rows used, deduped. Some may still be claimed
+    /// by rows elsewhere, so these are candidates rather than garbage.
+    pub keys: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1700,6 +1947,7 @@ mod tests {
             search: String::new(),
             tag: None,
             min_stars: None,
+            min_longest_edge: None,
             duplicates_only: false,
             hide_tags: Vec::new(),
             sort: SortOrder::Recent,
@@ -1722,6 +1970,286 @@ mod tests {
         )
         .expect("insert");
         (db, folder)
+    }
+
+    #[test]
+    fn variants_indexed_under_the_old_rule_are_repaired_on_open() {
+        // A variant created before dates were inherited keeps the date it was
+        // written with, and sits at the front of a newest-first grid instead of
+        // beside the picture it replaces. The inheritance at insert cannot fix
+        // it — that skips a row which already has a thumbnail — so opening the
+        // index repairs it once.
+        let file = tempfile::NamedTempFile::new().expect("temp");
+        let path = file.path().to_path_buf();
+        drop(file);
+
+        {
+            let db = Db::open(&path).expect("open");
+            let folder = db.add_folder("/out", 1).expect("add folder");
+            db.insert_media_batch(
+                folder,
+                &[super::tests::file("/out/00091.png", MediaKind::Image, 111)],
+                222,
+            )
+            .expect("insert");
+            let original = db.media_by_path("/out/00091.png").expect("lookup").expect("row");
+            db.update_poster(original.id, "/thumbs/o.jpg").expect("thumb");
+
+            // Written as the old code would have: its own dates, its own
+            // thumbnail, so nothing at insert will touch it again.
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO media
+                     (folder_id, path, name, kind, size_bytes, modified_at, added_at,
+                      upscaled_from, thumb_path)
+                 VALUES (?1, '/out/00091_upscaled_4k.png', '00091_upscaled_4k.png', 'image',
+                         1, 999999, 999999, '/out/00091.png', '/thumbs/v.jpg')",
+                params![folder],
+            )
+            .expect("insert variant");
+
+            // An index that predates the rule has no such setting at all. The
+            // first open above recorded one before this row existed, so it is
+            // cleared to put the file in the state a real library is in.
+            conn.execute("DELETE FROM settings WHERE key = 'variant_inheritance'", [])
+                .expect("clear the marker");
+        }
+
+        // Reopened: the repair runs.
+        let db = Db::open(&path).expect("reopen");
+        let variant = db
+            .media_by_path("/out/00091_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        assert_eq!(variant.modified_at, 111);
+        assert_eq!(variant.added_at, 222);
+
+        // And once only — a second open must not undo a later legitimate edit.
+        drop(db);
+        let db = Db::open(&path).expect("third open");
+        assert_eq!(
+            db.media_by_path("/out/00091_upscaled_4k.png")
+                .unwrap()
+                .unwrap()
+                .modified_at,
+            111
+        );
+    }
+
+    #[test]
+    fn a_variant_takes_its_originals_thumbnail_and_place() {
+        // What the user should see: select, upscale, come back, and the picture
+        // is exactly where it was with a 4K badge on it. That needs three things
+        // inherited — the thumbnail (so it is drawable at once and nothing is
+        // decoded twice), and both dates (so it does not jump to the front of a
+        // newest-first grid and drag itself out of the run it belongs to).
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(folder, &[file("/out/00091.png", MediaKind::Image, 111)], 222)
+            .expect("insert original");
+
+        let original = db.media_by_path("/out/00091.png").expect("lookup").expect("row");
+        db.update_thumbnail(
+            original.id,
+            &ThumbnailUpdate {
+                thumb_path: "/thumbs/ab/cd/original.jpg".to_string(),
+                thumb_width: 360,
+                thumb_height: 512,
+                width: 1040,
+                height: 1520,
+                duration_sec: None,
+            },
+        )
+        .expect("thumbnail");
+
+        // The variant arrives later, with today's dates.
+        db.insert_media_batch(
+            folder,
+            &[file("/out/00091_upscaled_4k.png", MediaKind::Image, 999_999)],
+            999_999,
+        )
+        .expect("insert variant");
+
+        let variant = db
+            .media_by_path("/out/00091_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        assert_eq!(
+            variant.thumb_path.as_deref(),
+            Some("/thumbs/ab/cd/original.jpg"),
+            "the same picture, so the same thumbnail rather than a second decode",
+        );
+        assert_eq!(variant.thumb_width, Some(360));
+        assert_eq!(variant.modified_at, 111, "sorts where the original sorted");
+        assert_eq!(variant.added_at, 222);
+
+        // And it is the one shown, immediately — no window where neither is.
+        let page = db.query_media(&query()).expect("query");
+        let names: Vec<&str> = page.items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["00091_upscaled_4k.png"]);
+    }
+
+    #[test]
+    fn a_variant_without_a_thumbnail_does_not_hide_anything_yet() {
+        // The bug this exists for: the watcher indexes a variant the instant it
+        // is written, seconds before the pipeline can thumbnail it. Hiding on
+        // the row alone took the original away while its replacement was still
+        // an undrawable empty tile, so three pictures vanished out of the grid.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/00091.png", MediaKind::Image, 300),
+                file("/out/00091_upscaled_4k.png", MediaKind::Image, 200),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        // Nothing thumbnailed: both are visible, because hiding one would leave
+        // a hole rather than a substitution.
+        let names = |page: MediaPage| {
+            let mut names: Vec<String> = page.items.iter().map(|i| i.name.clone()).collect();
+            names.sort();
+            names
+        };
+        assert_eq!(
+            names(db.query_media(&query()).expect("query")),
+            vec!["00091.png", "00091_upscaled_4k.png"],
+        );
+
+        // The variant becomes drawable, and only now stands in.
+        let variant = db
+            .media_by_path("/out/00091_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        db.update_poster(variant.id, "/thumbs/ab/cd/variant.jpg").expect("thumb");
+
+        assert_eq!(
+            names(db.query_media(&query()).expect("query")),
+            vec!["00091_upscaled_4k.png"],
+        );
+    }
+
+    #[test]
+    fn an_upscaled_variant_stands_in_for_what_it_came_from() {
+        // The grid shows one row per picture. Both would be the same picture at
+        // two resolutions, which is not a view anyone asked for.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/00118.png", MediaKind::Image, 300),
+                file("/out/00118_upscaled_4k.png", MediaKind::Image, 200),
+                file("/out/00119.png", MediaKind::Image, 100),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        // Thumbnailed, because a variant only stands in once it can be drawn —
+        // see `a_variant_without_a_thumbnail_does_not_hide_anything_yet`.
+        let variant = db
+            .media_by_path("/out/00118_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        db.update_poster(variant.id, "/thumbs/ab/cd/v.jpg").expect("thumb");
+
+        let page = db.query_media(&query()).expect("query");
+        let mut names: Vec<&str> = page.items.iter().map(|i| i.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["00118_upscaled_4k.png", "00119.png"]);
+        assert_eq!(page.total, 2, "the count has to agree with the rows");
+
+        // And the variant names its original, which is the only route back.
+        let variant = page
+            .items
+            .iter()
+            .find(|i| i.name == "00118_upscaled_4k.png")
+            .expect("variant");
+        assert_eq!(variant.upscaled_from.as_deref(), Some("/out/00118.png"));
+    }
+
+    #[test]
+    fn the_hidden_original_is_still_reachable_by_path() {
+        // It is in no list, so `media_by_path` is the only way the lightbox can
+        // offer it. If this stops working the footer label goes nowhere.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/00118.png", MediaKind::Image, 300),
+                file("/out/00118_upscaled_4k.png", MediaKind::Image, 200),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let original = db.media_by_path("/out/00118.png").expect("lookup").expect("row");
+        assert_eq!(original.name, "00118.png");
+        assert_eq!(original.upscaled_from, None);
+        assert!(db.media_by_path("/out/nope.png").expect("lookup").is_none());
+    }
+
+    #[test]
+    fn a_variant_whose_original_was_never_indexed_still_shows() {
+        // Upscale a folder, then stop watching the one the sources were in.
+        // Hiding on a name that matches nothing would hide nothing, and the
+        // variant must not disappear along with it.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[file("/out/00118_upscaled_4k.png", MediaKind::Image, 200)],
+            1,
+        )
+        .expect("insert");
+
+        let page = db.query_media(&query()).expect("query");
+        assert_eq!(page.total, 1);
+    }
+
+    #[test]
+    fn filtering_by_longest_edge_reads_either_orientation() {
+        // The filter the grid's 4K badge is paired with. Both have to agree, so
+        // this pins the half that lives in SQL: the comparison is against the
+        // *longer* side, because a library is not all landscape.
+        let (db, _folder) = seeded();
+        let pending = db.pending_dimensions(10).expect("queue");
+        let by_path = |path: &str| pending.iter().find(|p| p.path == path).expect(path).id;
+
+        // Landscape 4K, portrait 4K, and one below it.
+        db.update_dimensions(by_path("/media/a.jpg"), 4000, 2500, None, None).unwrap();
+        db.update_dimensions(by_path("/media/b.mp4"), 2160, 3840, None, None).unwrap();
+        db.update_dimensions(by_path("/media/c_100%.png"), 1920, 1080, None, None).unwrap();
+
+        let four_k = MediaQuery {
+            min_longest_edge: Some(3840),
+            ..query()
+        };
+        let page = db.query_media(&four_k).expect("query");
+        let mut names: Vec<&str> = page.items.iter().map(|item| item.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a.jpg", "b.mp4"], "portrait counts too");
+
+        // And the filter absent means the filter is absent.
+        assert_eq!(db.query_media(&query()).unwrap().total, 3);
+    }
+
+    #[test]
+    fn an_unmeasured_row_cannot_claim_to_be_4k() {
+        // Mid-scan a row has no dimensions. "At least 4K" is a claim, and a row
+        // that has not been measured cannot support it — so it is excluded
+        // rather than let through on a NULL comparison.
+        let (db, _folder) = seeded();
+        let four_k = MediaQuery {
+            min_longest_edge: Some(3840),
+            ..query()
+        };
+        assert_eq!(db.query_media(&four_k).unwrap().total, 0);
     }
 
     #[test]
@@ -1834,6 +2362,71 @@ mod tests {
         assert_eq!(found(&db, "hoshinova beach"), 0);
         // Punctuation from a real prompt must not be parsed as query syntax.
         assert_eq!(found(&db, "(wide hips:1.3)"), 0);
+    }
+
+    #[test]
+    fn a_rule_added_after_the_scan_still_reaches_what_it_indexed() {
+        // The case this exists for: files were indexed, *then* the directory
+        // holding them joined the walk's ignore list. A rescan cannot fix that
+        // — its pruning is a set difference against what the walk returned, and
+        // the walk no longer reports the directory at all — so the rows would
+        // sit in the grid forever.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/txt2img-images/2026-08-04/00166.png", MediaKind::Image, 1),
+                file("/out/txt2img-grids/2026-08-04/grid-0008.png", MediaKind::Image, 2),
+                file("/out/txt2img-grids/2026-08-05/grid-0009.png", MediaKind::Image, 3),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let pruned = db
+            .prune_media_where(crate::scan::is_in_ignored_dir)
+            .expect("prune");
+        assert_eq!(pruned.rows, 2);
+
+        let left: Vec<String> = db
+            .media_paths_in_folder(folder)
+            .expect("paths")
+            .into_iter()
+            .collect();
+        assert_eq!(left, vec!["/out/txt2img-images/2026-08-04/00166.png"]);
+
+        // Idempotent: the second launch after a rule change has nothing to do,
+        // which is what lets this run unconditionally at every startup.
+        let again = db
+            .prune_media_where(crate::scan::is_in_ignored_dir)
+            .expect("prune");
+        assert_eq!(again.rows, 0);
+        assert!(again.keys.is_empty());
+    }
+
+    #[test]
+    fn pruning_reports_the_content_keys_it_orphaned() {
+        // Derived files are addressed by content, so the caller has to be told
+        // which keys the dropped rows were using — it cannot work them out
+        // afterwards, because the rows are gone.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[file("/out/txt2img-grids/grid-0008.png", MediaKind::Image, 1)],
+            1,
+        )
+        .expect("insert");
+        let id = db.pending_dimensions(10).expect("queue")[0].id;
+        db.update_dimensions(id, 2080, 3040, None, Some("deadbeef"))
+            .expect("key");
+
+        let pruned = db
+            .prune_media_where(crate::scan::is_in_ignored_dir)
+            .expect("prune");
+        assert_eq!(pruned.rows, 1);
+        assert_eq!(pruned.keys, vec!["deadbeef".to_string()]);
     }
 
     #[test]

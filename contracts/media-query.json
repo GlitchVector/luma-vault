@@ -9,6 +9,7 @@
     "document"
   ],
   "minStars": 4,
+  "minLongestEdge": 3840,
   "duplicatesOnly": false,
   "sort": "recent",
   "limit": 500,

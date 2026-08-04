@@ -10,9 +10,21 @@ interface DialogProps {
   /** A question when present, a notice when not: no cancel means one button. */
   cancelLabel?: string
   tone?: 'neutral' | 'danger'
+  /**
+   * Keys that also confirm, besides Enter.
+   *
+   * For a question raised *by* a key. Delete in the lightbox opens this, and
+   * pressing Delete again is the obvious way to mean yes — without it the
+   * gesture is press Delete, then move to Enter, which is two reaches for one
+   * decision.
+   */
+  confirmKeys?: readonly string[]
   onConfirm: () => void
   onCancel: () => void
 }
+
+/** Shared so the default does not change identity on every render. */
+const NO_EXTRA_KEYS: readonly string[] = []
 
 /**
  * The app's own modal, deliberately not the platform's.
@@ -28,6 +40,7 @@ export function Dialog({
   confirmLabel,
   cancelLabel,
   tone = 'neutral',
+  confirmKeys = NO_EXTRA_KEYS,
   onConfirm,
   onCancel,
 }: DialogProps) {
@@ -51,6 +64,16 @@ export function Dialog({
         onConfirm()
         return
       }
+      if (confirmKeys.includes(event.key)) {
+        // Never on auto-repeat. The key that opened this dialog is usually
+        // still held for a moment afterwards, and a repeat arriving here would
+        // answer a destructive question the user has not read yet. A real
+        // second press always reports `repeat: false`.
+        if (event.repeat) return
+        event.preventDefault()
+        onConfirm()
+        return
+      }
       if (event.key === 'Tab') {
         // A two-button trap. Enough for this dialog, and it keeps Tab from
         // walking into the interface underneath, which is still in the DOM.
@@ -66,7 +89,7 @@ export function Dialog({
 
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [onCancel, onConfirm])
+  }, [onCancel, onConfirm, confirmKeys])
 
   useEffect(() => {
     // Restored on close so dismissing a dialog does not dump focus on <body>

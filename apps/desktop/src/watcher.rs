@@ -136,6 +136,14 @@ fn handle_changes(
             continue;
         };
 
+        // The walk skips some directories outright; this has to agree with it.
+        // Without this the rule only holds for files that appeared while the
+        // app was closed — and for Stable Diffusion's grids that is almost
+        // none of them, because generating is exactly when the app is open.
+        if scan::is_in_ignored_dir(path_str) {
+            continue;
+        }
+
         if path.is_file() {
             let Some(kind) = scan::kind_of(&path) else {
                 continue;
