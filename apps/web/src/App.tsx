@@ -274,9 +274,17 @@ export function App() {
       }
       if (down) revert()
     }
-    // A Ctrl-click is a combination too, even though the second half is not a key.
+    // A click while Ctrl is still held is someone *using* the mode they just
+    // turned on — hold Ctrl, click several pictures, let go — not the second
+    // half of a Ctrl-click combination.
+    //
+    // So this does not take the mode back; it gives up the right to. Reverting
+    // here fired before the click reached the grid, so `selecting` was false by
+    // the time the tile was handled and it opened the lightbox instead. And
+    // once picking has started the mode has to be safe from a later Ctrl-C,
+    // which clearing this achieves.
     const onPointerDown = () => {
-      if (down) revert()
+      opened = false
     }
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key !== 'Control') return

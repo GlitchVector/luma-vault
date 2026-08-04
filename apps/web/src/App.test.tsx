@@ -543,6 +543,16 @@ describe('the lightbox shortcuts a review pass leans on', () => {
 })
 
 describe('starting selection with a tap of Ctrl', () => {
+  // A real click fires pointerdown first; `fireEvent.click` fires only the
+  // click. That ordering is the whole mechanism here — pointerdown is what
+  // tells the Ctrl handler the mode is being used rather than started — so the
+  // sequence has to be the real one or the test proves nothing.
+  const clickTile = (id: number) => {
+    const tile = screen.getByTitle(`image-${id}.png`)
+    fireEvent.pointerDown(tile, { ctrlKey: true, button: 0 })
+    fireEvent.click(tile, { ctrlKey: true })
+  }
+
   const ctrlDown = () =>
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Control', bubbles: true }))
@@ -582,17 +592,42 @@ describe('starting selection with a tap of Ctrl', () => {
     expect(screen.queryByText('Nothing selected')).toBeNull()
   })
 
-  it('takes it back on a Ctrl-click too', async () => {
+  it('lets you keep holding Ctrl and pick, which is the point', async () => {
+    // The flow this shortcut is for: hold Ctrl, click a few pictures, let go.
+    // Taking the mode back on the click fired *before* the tile was handled, so
+    // the click opened the lightbox instead of selecting.
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
 
     ctrlDown()
+    clickTile(LIBRARY_SIZE)
+
+    expect(await screen.findByText('1 selected')).toBeTruthy()
+    expect(screen.queryByRole('group', { name: 'Rating' })).toBeNull()
+
+    // Still holding Ctrl, and a second picture picks rather than opening.
+    clickTile(LIBRARY_SIZE - 1)
+    expect(await screen.findByText('2 selected')).toBeTruthy()
+    ctrlUp()
+    expect(screen.getByText('2 selected')).toBeTruthy()
+  })
+
+  it('is safe from a combination once picking has started', async () => {
+    // Ctrl is still down after the first pick. A Ctrl-C now must not revoke a
+    // mode that is visibly in use with a selection in it.
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    ctrlDown()
+    clickTile(LIBRARY_SIZE)
+    await screen.findByText('1 selected')
+
     act(() => {
-      window.dispatchEvent(new MouseEvent('pointerdown', { ctrlKey: true, bubbles: true }))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }))
     })
     ctrlUp()
 
-    expect(screen.queryByText('Nothing selected')).toBeNull()
+    expect(screen.getByText('1 selected')).toBeTruthy()
   })
 
   it('leaves a mode that was already on alone', async () => {

@@ -394,11 +394,19 @@ impl Db {
         // Last, because it reads `settings` and rewrites `media`: every table
         // has to exist by the time it runs.
         //
-        // Variants indexed before a variant inherited anything keep whatever
-        // dates they were written with, which puts them at the front of a
-        // newest-first grid instead of beside the picture they replace. The
-        // inheritance at insert cannot reach them — that deliberately skips a
-        // row which already has a thumbnail — so they are repaired once, here.
+        // Variants indexed under an older rule keep whatever the rule was then.
+        // The inheritance at insert cannot reach them — that deliberately skips
+        // a row which already has a thumbnail — so they are repaired once here.
+        //
+        // Dates, so they sit beside the picture they replace rather than at the
+        // front of a newest-first grid. And the judgements: a variant left
+        // unrated while its original was a favourite disappears entirely under
+        // the favourites filter, hidden by its own existence on one side and
+        // filtered out on the other.
+        //
+        // `COALESCE(m.x, ...)` rather than a plain assignment: a rating given to
+        // the variant *since* it was indexed is newer than the original's and
+        // must not be overwritten by a repair.
         let repaired: Option<String> = conn
             .query_row(
                 "SELECT value FROM settings WHERE key = 'variant_inheritance'",
@@ -410,7 +418,19 @@ impl Db {
             conn.execute(
                 "UPDATE media AS m
                     SET modified_at = (SELECT o.modified_at FROM media o WHERE o.path = m.upscaled_from),
-                        added_at = (SELECT o.added_at FROM media o WHERE o.path = m.upscaled_from)
+                        added_at = (SELECT o.added_at FROM media o WHERE o.path = m.upscaled_from),
+                        stars = COALESCE(
+                            m.stars,
+                            (SELECT o.stars FROM media o WHERE o.path = m.upscaled_from)
+                        ),
+                        verdict_json = COALESCE(
+                            m.verdict_json,
+                            (SELECT o.verdict_json FROM media o WHERE o.path = m.upscaled_from)
+                        ),
+                        classified_at = COALESCE(
+                            m.classified_at,
+                            (SELECT o.classified_at FROM media o WHERE o.path = m.upscaled_from)
+                        )
                   WHERE m.upscaled_from IS NOT NULL
                     AND EXISTS (SELECT 1 FROM media o WHERE o.path = m.upscaled_from)",
                 [],
@@ -582,6 +602,21 @@ impl Db {
         // reshuffles the library. `added_at` for the same reason under
         // "Recently added".
         //
+        // And every judgement made about the picture, because they are about
+        // the picture rather than the file.
+        //
+        // Stars are the one that bites hardest. A variant inserted without them
+        // is unrated while its original was a favourite — so with the
+        // favourites filter on, the original is hidden *because the variant
+        // exists* and the variant is filtered out *because it has no stars*,
+        // and a picture someone deliberately marked disappears from the library
+        // entirely.
+        //
+        // The verdict comes too, and is provably the same answer: the
+        // classifier reads the thumbnail, and the variant shares the original's
+        // thumbnail. Re-running it would spend a NudeNet pass and an anime
+        // tagger pass to arrive at the identical result.
+        //
         // Dimensions are deliberately *not* inherited: the variant's own size is
         // the whole point of it, and it earns a 4K badge the original cannot.
         tx.execute(
@@ -591,7 +626,10 @@ impl Db {
                     thumb_height = (SELECT o.thumb_height FROM media o WHERE o.path = m.upscaled_from),
                     content_key = (SELECT o.content_key FROM media o WHERE o.path = m.upscaled_from),
                     modified_at = (SELECT o.modified_at FROM media o WHERE o.path = m.upscaled_from),
-                    added_at = (SELECT o.added_at FROM media o WHERE o.path = m.upscaled_from)
+                    added_at = (SELECT o.added_at FROM media o WHERE o.path = m.upscaled_from),
+                    stars = (SELECT o.stars FROM media o WHERE o.path = m.upscaled_from),
+                    verdict_json = (SELECT o.verdict_json FROM media o WHERE o.path = m.upscaled_from),
+                    classified_at = (SELECT o.classified_at FROM media o WHERE o.path = m.upscaled_from)
               WHERE m.upscaled_from IS NOT NULL
                 AND m.thumb_path IS NULL
                 AND EXISTS (
@@ -1770,7 +1808,7 @@ const FTS_VERSION: &str = "1-trigram-name-prompt";
 /// Rows indexed under an older rule are repaired once on the next launch.
 /// Without it, only variants created *after* the change behave correctly and the
 /// grid is inconsistent in a way nothing on screen explains.
-const VARIANT_INHERITANCE_VERSION: &str = "1-dates";
+const VARIANT_INHERITANCE_VERSION: &str = "2-judgements";
 
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
@@ -2007,6 +2045,7 @@ mod tests {
             .expect("insert");
             let original = db.media_by_path("/out/00091.png").expect("lookup").expect("row");
             db.update_poster(original.id, "/thumbs/o.jpg").expect("thumb");
+            db.set_stars(original.id, Some(5)).expect("stars");
 
             // Written as the old code would have: its own dates, its own
             // thumbnail, so nothing at insert will touch it again.
@@ -2036,6 +2075,11 @@ mod tests {
             .expect("row");
         assert_eq!(variant.modified_at, 111);
         assert_eq!(variant.added_at, 222);
+        assert_eq!(
+            variant.stars,
+            Some(5),
+            "an unrated variant of a favourite vanishes under the favourites              filter — hidden by its own existence, filtered out for having no              rating of its own",
+        );
 
         // And once only — a second open must not undo a later legitimate edit.
         drop(db);
@@ -2074,6 +2118,7 @@ mod tests {
             },
         )
         .expect("thumbnail");
+        db.set_stars(original.id, Some(5)).expect("stars");
 
         // The variant arrives later, with today's dates.
         db.insert_media_batch(
@@ -2095,6 +2140,11 @@ mod tests {
         assert_eq!(variant.thumb_width, Some(360));
         assert_eq!(variant.modified_at, 111, "sorts where the original sorted");
         assert_eq!(variant.added_at, 222);
+        assert_eq!(
+            variant.stars,
+            Some(5),
+            "a rating is about the picture, and the favourites filter would              otherwise drop a variant whose original was a favourite — while              that original is hidden precisely because the variant exists",
+        );
 
         // And it is the one shown, immediately — no window where neither is.
         let page = db.query_media(&query()).expect("query");
