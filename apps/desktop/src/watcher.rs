@@ -112,6 +112,19 @@ impl Default for FolderWatcher {
     }
 }
 
+/// Is the file on disk different from the row the index already holds?
+///
+/// Size and mtime together. Neither alone is enough — an edit that preserves
+/// the length is ordinary (a re-save at the same quality, a metadata rewrite),
+/// and a copy restored from a backup keeps its length while its mtime moves.
+///
+/// Deliberately not a content hash. This runs on every event from a watcher
+/// pointed at an SMB share, and reading a 12MB file to decide whether to look
+/// at it would cost more than the mistake it prevents.
+fn has_changed(existing: &crate::types::MediaItem, size_bytes: i64, modified_at: i64) -> bool {
+    existing.size_bytes != size_bytes || existing.modified_at != modified_at
+}
+
 /// Apply a debounced batch of filesystem changes to the index.
 fn handle_changes(
     db: &Arc<Db>,
@@ -152,10 +165,33 @@ fn handle_changes(
                 continue;
             };
 
-            // A changed file must lose its derived data, or the grid keeps
-            // showing the old thumbnail and the old verdict forever. Its key
-            // has to be read before the row goes, since the key is what the
-            // derived files are addressed by.
+            let size_bytes = metadata.len() as i64;
+            let modified_at = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis() as i64)
+                .unwrap_or(0);
+
+            // Same size, same mtime: the same file, and the row stands.
+            //
+            // The teardown below is for a file whose *contents* changed — it
+            // drops the row so the thumbnail and the verdict are rebuilt rather
+            // than left describing the old picture. Applying it to a file that
+            // merely produced an event destroys everything the row had learned:
+            // its verdict, the stars someone gave it by hand, the generation
+            // parameters, and the dimensions the upscale command had just
+            // recorded. A watcher on an SMB share fires for plenty of reasons
+            // that are not edits, and the upscaler writing a file is one of
+            // them — the row it inserts is the row this event is about.
+            if let Ok(Some(existing)) = db.media_by_path(path_str) {
+                if !has_changed(&existing, size_bytes, modified_at) {
+                    continue;
+                }
+            }
+
+            // Its key has to be read before the row goes, since the key is what
+            // the derived files are addressed by.
             let key = db.content_key_for_path(path_str).ok().flatten();
             db.delete_media_by_path(path_str).ok();
             forget_if_unreferenced(db, &thumb_root, &frame_root, key.as_deref());
@@ -167,13 +203,8 @@ fn handle_changes(
                     .map(|name| name.to_string_lossy().to_string())
                     .unwrap_or_default(),
                 kind,
-                size_bytes: metadata.len() as i64,
-                modified_at: metadata
-                    .modified()
-                    .ok()
-                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|duration| duration.as_millis() as i64)
-                    .unwrap_or(0),
+                size_bytes,
+                modified_at,
             };
 
             if db.insert_media_batch(folder_id, &[entry], now_ms()).is_ok() {
@@ -219,5 +250,55 @@ fn forget_if_unreferenced(
     let Some(key) = key else { return };
     if db.rows_with_content_key(key).unwrap_or(1) == 0 {
         thumbs::forget_derived(thumb_root, frame_root, key);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{MediaItem, MediaKind};
+
+    fn row(size_bytes: i64, modified_at: i64) -> MediaItem {
+        MediaItem {
+            id: 1,
+            folder_id: 1,
+            path: "/out/00021_upscaled_4k.png".to_string(),
+            name: "00021_upscaled_4k.png".to_string(),
+            kind: MediaKind::Image,
+            width: 2627,
+            height: 3840,
+            size_bytes,
+            modified_at,
+            added_at: 0,
+            thumb_path: Some("/thumbs/ab/cd/o.jpg".to_string()),
+            thumb_width: Some(360),
+            thumb_height: Some(512),
+            duration_sec: None,
+            verdict: None,
+            classified_at: None,
+            stars: Some(5),
+            generation: None,
+            dupe_group: None,
+            upscaled_from: Some("/out/00021.png".to_string()),
+            upscaled_to: None,
+        }
+    }
+
+    #[test]
+    fn an_event_about_an_unchanged_file_changes_nothing() {
+        // The case that cost a 4K badge: the upscale command inserts the row and
+        // records its size, then the watcher's debounced event arrives about the
+        // same file and the old code tore the row down and rebuilt it at 0x0 —
+        // taking the stars and the verdict with it.
+        assert!(!has_changed(&row(9_900_000, 1_700_000_000_000), 9_900_000, 1_700_000_000_000));
+    }
+
+    #[test]
+    fn either_field_moving_is_a_change() {
+        // Neither alone is enough. An edit can preserve the length — a re-save
+        // at the same quality, a metadata rewrite — and a file restored from a
+        // backup keeps its length while its mtime moves.
+        assert!(has_changed(&row(9_900_000, 1_700_000_000_000), 9_900_001, 1_700_000_000_000));
+        assert!(has_changed(&row(9_900_000, 1_700_000_000_000), 9_900_000, 1_700_000_000_001));
     }
 }
