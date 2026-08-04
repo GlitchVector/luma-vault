@@ -170,9 +170,25 @@ async function resolveModel(wanted) {
 
 // --- putting it together ----------------------------------------------------
 
-const [imageName, targetName] = process.argv.slice(2)
-if (!imageName || !targetName) {
-  fail('usage: pnpm migrate-prompt <image-name> <target-model>', '', '  pnpm migrate-prompt 00166-3997412987 deliberate')
+/**
+ * The model to migrate onto when none is named.
+ *
+ * Naming the model is the part of this you almost never want to think about —
+ * there is usually one checkpoint you are moving everything onto, and typing it
+ * every time is friction on the common case. Overridable by the argument, and
+ * still a substring, so `deliberate` keeps picking the newest installed
+ * checkpoint whose filename contains it rather than pinning a version.
+ */
+const DEFAULT_MODEL = 'deliberate'
+
+const [imageName, targetName = DEFAULT_MODEL] = process.argv.slice(2)
+if (!imageName) {
+  fail(
+    'usage: pnpm migrate-prompt <image-name> [target-model]',
+    '',
+    `  pnpm migrate-prompt 00166-3997412987            # onto ${DEFAULT_MODEL}`,
+    '  pnpm migrate-prompt 00166-3997412987 illustrious',
+  )
 }
 
 const row = findImage(imageName)

@@ -1,20 +1,25 @@
 ---
-name: migrate-prompt
-description: Lift a generated image's prompt and settings onto a newer installed checkpoint and open it in Forge. Use when the user says something like "migrate prompt for image 00166 to deliberate", "redo this one on illustrious", "regenerate <image> with <model>", or asks to bring an old SD1.5 generation onto a current model.
+description: Migrate a generated image's prompt onto a newer checkpoint and open it in Forge
+argument-hint: <image> [model — defaults to deliberate]
 ---
 
 # Migrating a generation to a newer model
 
-Run the script. It does the whole thing:
+Run the script, passing the arguments through untouched. It does the whole
+thing:
 
 ```bash
-pnpm migrate-prompt <image-name> <target-model>
-pnpm migrate-prompt 00166-3997412987 deliberate
+pnpm migrate-prompt $ARGUMENTS
 ```
 
-Both arguments are substrings. `00166` finds the image, `deliberate` finds the
-newest installed checkpoint whose filename contains it. Report the change notes
-it prints — they say what was altered and why.
+Both arguments are substrings — `00301` finds the image, `illustrious` finds the
+newest installed checkpoint whose filename contains it. **The model is
+optional**; the script defaults to `deliberate` on its own, so do not supply one
+when the user did not.
+
+Then report the change notes it prints. They are the point of the command: each
+line says what was altered and why, and every one of them is a silent failure
+otherwise — Forge raises nothing and the picture simply comes out different.
 
 ## What it does
 
@@ -29,9 +34,6 @@ it prints — they say what was altered and why.
 7. Opens the tab; the prefill extension fills every field.
 
 ## The rewrite, when crossing SD1.5 → SDXL
-
-Each of these is a silent failure otherwise — Forge raises nothing and the
-picture simply comes out different:
 
 | Change | Why |
 |---|---|
@@ -48,6 +50,16 @@ architecture-agnostic, and changing them would alter the picture for no reason.
 
 Staying on the same architecture changes only the model and the seed.
 
+## Close with these, but only when the migration crossed into SDXL
+
+The notes will say whether it did. On a same-architecture move they are noise.
+
+- **Clip skip resets to 1 on every page load.** `on_preset_change` is wired to
+  `root_block.load` and every preset sets it to 1. If the block asked for 2,
+  check the slider in the top bar after the page settles.
+- **"Apply settings" reverts the checkpoint** to whatever the Settings page was
+  built with. Re-run this, or re-select the model, after using it.
+
 ## Requirements
 
 - Forge running with the `luma-vault-prefill` extension (`pnpm setup:forge`).
@@ -55,13 +67,8 @@ Staying on the same architecture changes only the model and the seed.
   Forge's own API cannot substitute for — see the extension README.
 - `LUMA_FORGE_URL` overrides the default `http://127.0.0.1:7860`.
 
-## Known Forge behaviour worth mentioning to the user
-
-- **Clip skip resets to 1 on every page load.** `on_preset_change` is wired to
-  `root_block.load` and every preset sets it to 1. If the block asked for 2,
-  check the slider in the top bar after the page settles.
-- **"Apply settings" reverts the checkpoint** to whatever the Settings page was
-  built with. Re-run the migration, or re-select the model, after using it.
+If the script fails because Forge is unreachable, say so plainly rather than
+retrying.
 
 ## Editing the rules
 
