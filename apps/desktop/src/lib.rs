@@ -277,6 +277,28 @@ async fn upscale_media(
                 modified_at: original.modified_at,
             };
             let _ = db.insert_media_batch(original.folder_id, &[entry], pipeline::now_ms());
+
+            // The size, from the run that just produced it. Without this the
+            // row sits at 0x0 until the measure phase happens to reach it, and
+            // three things read wrong in the meantime: no 4K badge, `—` for the
+            // resolution, and no zoom at all — the lightbox computes its box
+            // from these and silently falls back to a fixed view when it
+            // cannot. Nothing kicks the pipeline after an upscale, so "in the
+            // meantime" is until the next scan.
+            //
+            // Measuring again would be a decode of a 12MB file to learn a
+            // number the upscaler already reported. `None` for the content key
+            // leaves the one inherited from the original in place, which is
+            // what the shared thumbnail is addressed by.
+            if let Ok(Some(row)) = db.media_by_path(&output.destination) {
+                let _ = db.update_dimensions(
+                    row.id,
+                    output.final_width,
+                    output.final_height,
+                    None,
+                    None,
+                );
+            }
         }
         Ok::<_, anyhow::Error>(summary)
     })
@@ -376,10 +398,20 @@ async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String>
 /// as the button not working.
 #[tauri::command(async)]
 async fn delete_item(state: State<'_, AppState>, id: i64, permanent: bool) -> Result<(), String> {
-    let Some(item) = state.db.media_by_id(id).map_err(stringify)? else {
+    // Both halves of an upscale pair, if this is one — see `with_counterparts`.
+    // The original behind a variant is reachable only *through* that variant,
+    // so deleting the variant alone would strand it.
+    let rows = with_counterparts(&state.db, &[id]);
+    if rows.is_empty() {
         return Err("that file is no longer in the library".to_string());
-    };
+    }
+    for item in rows {
+        delete_one(&state, &item, permanent)?;
+    }
+    Ok(())
+}
 
+fn delete_one(state: &State<'_, AppState>, item: &MediaItem, permanent: bool) -> Result<(), String> {
     // The extended-length form the index stores is fine for `std::fs`, but the
     // shell APIs behind the bin cannot resolve it — the same prefix that broke
     // ffmpeg, Explorer and SQLite. See `paths::external_path`.
@@ -405,6 +437,40 @@ async fn delete_item(state: State<'_, AppState>, id: i64, permanent: bool) -> Re
     Ok(())
 }
 
+/// Every row a delete of these ids should actually remove.
+///
+/// An upscale pair is one picture kept as two files, and the grid already
+/// presents it that way — the variant stands in for the original and the
+/// original is not shown at all. Deleting one and silently keeping the other
+/// would leave a file nothing in the app can reach: the original is only
+/// reachable *through* its variant, so removing the variant alone orphans it
+/// forever. So a delete takes both, in whichever direction it was asked.
+///
+/// Deduplicated by path, because selecting a variant and then also reaching its
+/// original through the lightbox would otherwise queue the same file twice.
+fn with_counterparts(db: &Db, ids: &[i64]) -> Vec<MediaItem> {
+    let mut rows: Vec<MediaItem> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for id in ids {
+        let Ok(Some(item)) = db.media_by_id(*id) else {
+            continue;
+        };
+        let partner = item
+            .upscaled_from
+            .clone()
+            .or_else(|| item.upscaled_to.clone())
+            .and_then(|path| db.media_by_path(&path).ok().flatten());
+
+        for row in [Some(item), partner].into_iter().flatten() {
+            if seen.insert(row.path.clone()) {
+                rows.push(row);
+            }
+        }
+    }
+    rows
+}
+
 /// Delete many files, reporting how many went and what refused.
 ///
 /// One command rather than a call per id: a selection can be hundreds, and that
@@ -418,11 +484,10 @@ async fn delete_media(
     permanent: bool,
 ) -> Result<DeleteSummary, String> {
     let mut summary = DeleteSummary::default();
-    for id in ids {
-        let Ok(Some(item)) = state.db.media_by_id(id) else {
-            summary.missing += 1;
-            continue;
-        };
+    let rows = with_counterparts(&state.db, &ids);
+    summary.missing = ids.len() as i64 - rows.iter().filter(|r| ids.contains(&r.id)).count() as i64;
+
+    for item in rows {
         let target = crate::paths::external_path(&item.path);
 
         let outcome = if crate::paths::has_recycle_bin(&target) {

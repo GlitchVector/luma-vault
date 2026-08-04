@@ -265,12 +265,22 @@ export function Lightbox({
     // library is on one. Promising the bin there would be a lie that costs
     // someone a file, so the question changes instead.
     const recyclable = hasRecycleBin(item.path)
+    // An upscale pair is one picture kept as two files, and is deleted as one.
+    // The question has to say so rather than name a single file and take both.
+    const paired = item.upscaledFrom
+      ? 'This also removes the original it was made from.'
+      : item.upscaledTo
+        ? 'This also removes its 4K version.'
+        : null
     const message = [
       item.name,
+      paired,
       recyclable
         ? 'It leaves the library immediately. You can restore it from the bin.'
         : 'It is on a network drive, where Windows has no Recycle Bin. This cannot be undone.',
-    ].join('\n\n')
+    ]
+      .filter(Boolean)
+      .join('\n\n')
 
     return askConfirm(message, {
       title: recyclable ? 'Move to the Recycle Bin?' : 'Delete permanently?',

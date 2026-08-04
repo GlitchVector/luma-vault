@@ -649,6 +649,25 @@ describe('deleting a selection', () => {
     await waitFor(() => expect(screen.getByText('Nothing selected')).toBeTruthy())
   })
 
+  it('says how many files a pair actually costs', async () => {
+    // The backend takes both halves, so "3 files" over a selection of variants
+    // would remove six. A confirmation that undercounts is worse than none.
+    library[0]!.upscaledFrom = '/media/original-a.png'
+    library[1]!.upscaledFrom = '/media/original-b.png'
+    await selectThree()
+
+    screen.getByRole('button', { name: 'Delete 3' }).click()
+
+    expect(await screen.findByText(/3 pictures, 5 files/)).toBeTruthy()
+    expect(screen.getByText(/2 of them also have a 4K version/)).toBeTruthy()
+  })
+
+  it('counts plainly when nothing is paired', async () => {
+    await selectThree()
+    screen.getByRole('button', { name: 'Delete 3' }).click()
+    expect(await screen.findByText(/^3 files\.$/)).toBeTruthy()
+  })
+
   it('deletes nothing when the question is declined', async () => {
     await selectThree()
     screen.getByRole('button', { name: 'Delete 3' }).click()

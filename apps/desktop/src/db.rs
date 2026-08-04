@@ -1317,9 +1317,22 @@ impl Db {
     ) -> Result<()> {
         let conn = self.conn.lock().expect("index mutex poisoned");
         conn.execute(
+            // `COALESCE(content_key, ?5)`, not the other way round: the key
+            // already on the row wins.
+            //
+            // For an ordinary row this is identical — the key is NULL until
+            // something measures it. It matters for an upscaled variant, which
+            // inherits its original's key at insert *because it shares its
+            // original's thumbnail file*. Letting the measure phase replace
+            // that with a hash of the variant's own bytes leaves it pointing at
+            // derived data it no longer claims, and deleting the original then
+            // takes the variant's picture with it.
+            //
+            // A file whose contents change never reaches this with a stale key:
+            // the watcher drops the row and re-inserts it.
             "UPDATE media SET width = ?2, height = ?3,
                  duration_sec = COALESCE(?4, duration_sec),
-                 content_key = COALESCE(?5, content_key)
+                 content_key = COALESCE(content_key, ?5)
              WHERE id = ?1",
             params![id, width, height, duration_sec, content_key],
         )?;
@@ -2087,6 +2100,109 @@ mod tests {
         let page = db.query_media(&query()).expect("query");
         let names: Vec<&str> = page.items.iter().map(|i| i.name.as_str()).collect();
         assert_eq!(names, vec!["00091_upscaled_4k.png"]);
+    }
+
+    #[test]
+    fn each_half_of_a_pair_names_the_other() {
+        // What `with_counterparts` walks to delete both. The variant names its
+        // original directly; the original only learns about the variant through
+        // the derived `upscaled_to`, so both directions have to work or a
+        // delete started from the wrong end strands a file.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/00021.png", MediaKind::Image, 1),
+                file("/out/00021_upscaled_4k.png", MediaKind::Image, 2),
+                file("/out/00099.png", MediaKind::Image, 3),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let variant = db
+            .media_by_path("/out/00021_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        assert_eq!(variant.upscaled_from.as_deref(), Some("/out/00021.png"));
+        assert_eq!(variant.upscaled_to, None);
+
+        let original = db.media_by_path("/out/00021.png").expect("lookup").expect("row");
+        assert_eq!(original.upscaled_from, None);
+        assert_eq!(
+            original.upscaled_to.as_deref(),
+            Some("/out/00021_upscaled_4k.png"),
+            "the original has to be able to reach its variant, not only the reverse",
+        );
+
+        // A picture with no variant names nothing, so a delete of it takes one file.
+        let lone = db.media_by_path("/out/00099.png").expect("lookup").expect("row");
+        assert_eq!(lone.upscaled_from, None);
+        assert_eq!(lone.upscaled_to, None);
+    }
+
+    #[test]
+    fn a_variants_own_size_can_be_recorded_without_losing_the_shared_key() {
+        // The upscaler already knows what it produced, so the size is written
+        // straight from the run rather than measured again. It must not take
+        // the inherited content key with it — that is what the shared thumbnail
+        // is addressed by, and losing it orphans the variant's picture the
+        // moment the original is deleted.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(folder, &[file("/out/00021.png", MediaKind::Image, 1)], 1)
+            .expect("insert original");
+        let original = db.media_by_path("/out/00021.png").expect("lookup").expect("row");
+        db.update_thumbnail(
+            original.id,
+            &ThumbnailUpdate {
+                thumb_path: "/thumbs/ab/cd/o.jpg".to_string(),
+                thumb_width: 360,
+                thumb_height: 512,
+                width: 1040,
+                height: 1520,
+                duration_sec: None,
+            },
+        )
+        .expect("thumbnail");
+        db.update_dimensions(original.id, 1040, 1520, None, Some("sharedkey"))
+            .expect("key");
+
+        db.insert_media_batch(
+            folder,
+            &[file("/out/00021_upscaled_4k.png", MediaKind::Image, 2)],
+            2,
+        )
+        .expect("insert variant");
+        let variant = db
+            .media_by_path("/out/00021_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        assert_eq!(variant.width, 0, "nothing has measured it yet");
+        assert_eq!(
+            db.content_key_for_path("/out/00021_upscaled_4k.png").unwrap().as_deref(),
+            Some("sharedkey"),
+            "inherited with the thumbnail it addresses",
+        );
+
+        // The measure phase passes a key computed from the variant's own
+        // bytes. It must lose to the inherited one, or the shared thumbnail is
+        // left claimed by nobody.
+        db.update_dimensions(variant.id, 2627, 3840, None, Some("itsownhash"))
+            .expect("size");
+
+        let variant = db
+            .media_by_path("/out/00021_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        assert_eq!((variant.width, variant.height), (2627, 3840));
+        assert_eq!(variant.thumb_path.as_deref(), Some("/thumbs/ab/cd/o.jpg"));
+        assert_eq!(
+            db.content_key_for_path("/out/00021_upscaled_4k.png").unwrap().as_deref(),
+            Some("sharedkey"),
+            "the inherited key has to survive, or the shared thumbnail is orphaned",
+        );
     }
 
     #[test]

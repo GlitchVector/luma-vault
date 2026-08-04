@@ -146,9 +146,19 @@ export function App() {
     const recyclable = items.some(
       (item) => selected.has(item.id) && hasRecycleBin(item.path),
     )
+    // Each half of an upscale pair takes the other with it, so the number of
+    // files is not the number of pictures. Saying "3 files" and removing six is
+    // exactly the surprise a confirmation exists to prevent.
+    const paired = items.filter(
+      (item) => selected.has(item.id) && (item.upscaledFrom || item.upscaledTo),
+    ).length
     void askConfirm(
       [
-        `${ids.length.toLocaleString()} file${ids.length === 1 ? '' : 's'}.`,
+        paired > 0
+          ? `${ids.length.toLocaleString()} picture${ids.length === 1 ? '' : 's'}, ` +
+            `${(ids.length + paired).toLocaleString()} files — ${paired.toLocaleString()} ` +
+            `of them also have a 4K version, which goes too.`
+          : `${ids.length.toLocaleString()} file${ids.length === 1 ? '' : 's'}.`,
         recyclable
           ? 'They leave the library immediately. You can restore them from the bin.'
           : 'They are on a network drive, where Windows has no Recycle Bin. This cannot be undone.',
