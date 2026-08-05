@@ -1,0 +1,22 @@
+# One line-ending policy, in the repo instead of in every clone's autocrlf.
+#
+# Without this, a machine with `core.autocrlf=true` reports files "modified"
+# with an empty diff whenever a tool writes LF into the working tree — the
+# content is identical, only the ending differs, and the phantom reappears
+# every time git touches the file. Normalising to LF everywhere ends the whole
+# class: every tool in this repo (cargo, node, vite, python) is happy with LF
+# on Windows.
+* text=auto eol=lf
+
+# cmd.exe is the one thing that genuinely wants CRLF; PowerShell does not, but
+# keeping scripts it owns in its native ending costs nothing.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never touched: content-addressed or binary.
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.onnx binary
