@@ -81,6 +81,7 @@ export {
   selectionRange,
   barAt,
   dragEdge,
+  moveSelection,
   barHeights,
   type BarSelection,
   type TimelineBar,

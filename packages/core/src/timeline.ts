@@ -167,6 +167,10 @@ export function selectionRange(
 export function barAt(x: number, width: number, weekCount: number): number {
   if (weekCount === 0 || width <= 0) return 0
   const index = Math.floor((x / width) * weekCount)
+  // NaN slides through Math.min/Math.max untouched, so a pointer event with no
+  // coordinates would otherwise come out as bar NaN — which indexes nothing,
+  // reads as "no such bar", and silently cleared a drag's whole selection.
+  if (!Number.isFinite(index)) return 0
   return Math.max(0, Math.min(weekCount - 1, index))
 }
 
@@ -187,6 +191,25 @@ export function dragEdge(
   return moved.first <= moved.last
     ? moved
     : { first: moved.last, last: moved.first }
+}
+
+/**
+ * Slide the whole selection by `delta` bars, keeping its width.
+ *
+ * Clamped so the selection never leaves the strip: a drag past the end parks
+ * it flush against that end, the same way the edge handles clamp. Width is
+ * preserved *through* the clamp — grabbing a fortnight and shoving it hard
+ * right must land a fortnight at the end, not a squashed remnant.
+ */
+export function moveSelection(
+  selection: BarSelection,
+  delta: number,
+  barCount: number,
+): BarSelection {
+  if (barCount <= 0) return selection
+  const width = Math.min(selection.last - selection.first, barCount - 1)
+  const first = Math.max(0, Math.min(barCount - 1 - width, selection.first + delta))
+  return { first, last: first + width }
 }
 
 /**

@@ -1751,3 +1751,84 @@ describe('implausible dates on the timeline', () => {
     expect(screen.getByText(/1 with implausible dates not drawn/)).toBeTruthy()
   })
 })
+
+describe('moving the timeline selection', () => {
+  const WEEK = 7 * 24 * 60 * 60 * 1000
+  const MONDAY = 1_719_792_000_000
+
+  /** Four weeks of files, so the strip has four bars to slide across. */
+  async function openWithSelection() {
+    library = Array.from({ length: 4 }, (_, week) => ({
+      ...makeItem(week + 1),
+      modifiedAt: MONDAY + week * WEEK + 1000,
+    }))
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+    // jsdom has no layout, so the strip measures 0×0 and every pixel maps to
+    // bar 0. Real geometry is what makes this test mean anything.
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 400, bottom: 64, width: 400, height: 64,
+      toJSON: () => ({}),
+    } as DOMRect)
+    screen.getByRole('button', { name: 'Timeline' }).click()
+    const bars = await screen.findAllByTitle(/Click to show only/)
+    bars[0]!.click()
+    await screen.findByRole('button', { name: 'Drag to move the selection' })
+    queries.length = 0
+  }
+
+  const sent = () => queries.at(-1) as unknown as Record<string, unknown>
+
+  /**
+   * A pointer event with real coordinates. jsdom has no PointerEvent, and
+   * testing-library's fallback carries no clientX — which is exactly the
+   * coordinate-less event the NaN guard in `barAt` exists for, but not what a
+   * drag test wants to be exercising.
+   */
+  const point = (target: Element, type: string, clientX: number) =>
+    fireEvent(target, new MouseEvent(type, { bubbles: true, cancelable: true, clientX }))
+
+  it('slides the whole range where the body is dragged', async () => {
+    await openWithSelection()
+    const body = screen.getByRole('button', { name: 'Drag to move the selection' })
+
+    // Grab in bar 0 (x=50 of 400 across 4 bars) and carry to bar 2 (x=250).
+    point(body, 'pointerdown', 50)
+    point(body, 'pointermove', 250)
+    point(body, 'pointerup', 250)
+
+    await waitFor(() => expect(sent().modifiedAfter).toBe(MONDAY + 2 * WEEK))
+    expect(sent().modifiedBefore).toBe(MONDAY + 3 * WEEK)
+  })
+
+  it('a press that never crossed a bar is a click on the bar underneath', async () => {
+    // The body covers the bars inside the selection; without this fallback an
+    // active selection makes those bars unclickable, which reads as broken.
+    await openWithSelection()
+    // Slide to bar 1 first, so the click's effect is distinguishable from the
+    // selection that was already there.
+    const body = screen.getByRole('button', { name: 'Drag to move the selection' })
+    point(body, 'pointerdown', 50)
+    point(body, 'pointermove', 150)
+    point(body, 'pointerup', 150)
+    await waitFor(() => expect(sent().modifiedAfter).toBe(MONDAY + WEEK))
+    queries.length = 0
+
+    point(body, 'pointerdown', 150)
+    point(body, 'pointerup', 150)
+    await waitFor(() => expect(sent().modifiedBefore).toBe(MONDAY + 2 * WEEK))
+    expect(sent().modifiedAfter).toBe(MONDAY + WEEK)
+  })
+
+  it('a cancelled gesture selects nothing', async () => {
+    await openWithSelection()
+    const body = screen.getByRole('button', { name: 'Drag to move the selection' })
+    const strip = body.parentElement!
+
+    point(body, 'pointerdown', 50)
+    point(strip, 'pointercancel', 50)
+
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(queries).toHaveLength(0)
+  })
+})

@@ -6,6 +6,7 @@ import {
   dragEdge,
   fillWeeks,
   mergeWeeks,
+  moveSelection,
   selectionRange,
   trimIslands,
   weekRange,
@@ -62,6 +63,12 @@ describe('barAt', () => {
   it('survives degenerate geometry', () => {
     expect(barAt(50, 0, 10)).toBe(0)
     expect(barAt(50, 100, 0)).toBe(0)
+  })
+
+  it('treats a coordinate-less event as the first bar, never NaN', () => {
+    // NaN slides through Math.min/Math.max untouched, indexes nothing, and
+    // silently cleared a drag's whole selection before this guard existed.
+    expect(barAt(Number.NaN, 100, 10)).toBe(0)
   })
 })
 
@@ -247,5 +254,28 @@ describe('trimIslands', () => {
     expect(trimIslands([])).toEqual([])
     const one = [{ start: MONDAY, count: 7 }]
     expect(trimIslands(one)).toEqual(one)
+  })
+})
+
+describe('moveSelection', () => {
+  it('slides the whole selection, keeping its width', () => {
+    expect(moveSelection({ first: 2, last: 5 }, 3, 20)).toEqual({ first: 5, last: 8 })
+    expect(moveSelection({ first: 5, last: 8 }, -4, 20)).toEqual({ first: 1, last: 4 })
+  })
+
+  it('parks flush against an end rather than squashing', () => {
+    // A hard shove right must land the same-width selection at the end — the
+    // width is the thing being dragged, and the clamp must not eat it.
+    expect(moveSelection({ first: 2, last: 5 }, 100, 10)).toEqual({ first: 6, last: 9 })
+    expect(moveSelection({ first: 4, last: 7 }, -100, 10)).toEqual({ first: 0, last: 3 })
+  })
+
+  it('moves a single-bar selection like anything else', () => {
+    expect(moveSelection({ first: 3, last: 3 }, 2, 10)).toEqual({ first: 5, last: 5 })
+  })
+
+  it('is identity at delta zero, and inert on an empty strip', () => {
+    expect(moveSelection({ first: 2, last: 5 }, 0, 10)).toEqual({ first: 2, last: 5 })
+    expect(moveSelection({ first: 2, last: 5 }, 3, 0)).toEqual({ first: 2, last: 5 })
   })
 })

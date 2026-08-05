@@ -4,6 +4,7 @@ import {
   dragEdge,
   fillWeeks,
   mergeWeeks,
+  moveSelection,
   selectionRange,
   trimIslands,
   type BarSelection,
@@ -47,8 +48,18 @@ export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: Tim
   const [buckets, setBuckets] = useState<TimelineBucket[] | null>(null)
   const [selection, setSelection] = useState<BarSelection | null>(null)
   const stripRef = useRef<HTMLDivElement | null>(null)
-  /** Which edge a pointer is dragging, while one is. */
-  const dragging = useRef<'first' | 'last' | null>(null)
+  /**
+   * The drag in flight: an edge being resized, or the whole selection being
+   * carried. `moved` distinguishes a carry from a click on the body — a press
+   * that never crossed a bar boundary is someone clicking, not dragging, and
+   * gets the single-bar select the body otherwise covers up.
+   */
+  const dragging = useRef<
+    | { kind: 'first' }
+    | { kind: 'last' }
+    | { kind: 'move'; anchor: number; from: BarSelection; moved: boolean }
+    | null
+  >(null)
 
   // The histogram's inputs are everything about the query *except* the range
   // and the paging — the range is the one thing the timeline controls rather
@@ -132,21 +143,48 @@ export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: Tim
     return barAt(event.clientX - rect.left, rect.width, bars.length)
   }
 
+  /** Route further pointer events to the strip, wherever the pointer goes. */
+  const capture = (event: React.PointerEvent) => {
+    // Capture on the *strip*: the element the drag started on is about to move
+    // out from under the pointer, and losing the capture with it would end
+    // every drag after a few pixels. Optional-called — jsdom has no pointer
+    // capture, and a missing refinement must not take the handler down.
+    stripRef.current?.setPointerCapture?.(event.pointerId)
+  }
+
   const beginDrag = (edge: 'first' | 'last') => (event: React.PointerEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    dragging.current = edge
-    // Capture on the *strip*: the handle the drag started on is about to move
-    // out from under the pointer, and losing the capture with it would end
-    // every drag after a few pixels.
-    stripRef.current?.setPointerCapture(event.pointerId)
+    dragging.current = { kind: edge }
+    capture(event)
+  }
+
+  const beginMove = (event: React.PointerEvent) => {
+    if (!selection) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragging.current = { kind: 'move', anchor: barUnder(event), from: selection, moved: false }
+    capture(event)
   }
 
   const onPointerMove = (event: React.PointerEvent) => {
-    const edge = dragging.current
-    if (!edge || !selection) return
+    const drag = dragging.current
+    if (!drag || !selection) return
     const bar = barUnder(event)
-    const moved = dragEdge(selection, edge, bar)
+
+    if (drag.kind === 'move') {
+      // The delta is measured from where the body was *grabbed*, against the
+      // selection as it was then — accumulating against the current one would
+      // compound the clamp and creep the selection off its width at the ends.
+      const carried = moveSelection(drag.from, bar - drag.anchor, bars.length)
+      if (bar !== drag.anchor) drag.moved = true
+      if (carried.first !== selection.first || carried.last !== selection.last) {
+        apply(carried)
+      }
+      return
+    }
+
+    const moved = dragEdge(selection, drag.kind, bar)
 
     // The edges can cross mid-drag — pull the left handle past the right — and
     // `dragEdge` swaps them. The hand should then be dragging whichever edge is
@@ -155,7 +193,7 @@ export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: Tim
     // construction; when the selection is one bar wide it is both, and keeping
     // the current edge is what lets the next move decide the direction.
     if (moved.first !== moved.last) {
-      dragging.current = bar === moved.first ? 'first' : 'last'
+      dragging.current = { kind: bar === moved.first ? 'first' : 'last' }
     }
 
     if (moved.first !== selection.first || moved.last !== selection.last) {
@@ -163,8 +201,16 @@ export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: Tim
     }
   }
 
-  const endDrag = () => {
+  const endDrag = (event: React.PointerEvent) => {
+    const drag = dragging.current
     dragging.current = null
+    // A press on the body that never crossed a bar is a click, and the body
+    // sits over the bars — so the click does what the bar underneath would
+    // have: select just that one. Without this, an active selection makes the
+    // bars inside it unclickable, which reads as the timeline breaking.
+    if (drag?.kind === 'move' && !drag.moved) {
+      apply({ first: barUnder(event), last: barUnder(event) })
+    }
   }
 
   if (failure !== null) {
@@ -238,7 +284,11 @@ export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: Tim
         ref={stripRef}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        onPointerCancel={() => {
+          // Abandoned, not finished: the click fallback must not fire off a
+          // cancelled gesture, or a palm-brush selects a random week.
+          dragging.current = null
+        }}
         className="relative flex h-16 items-end"
       >
         {bars.map((bar, index) => {
@@ -282,6 +332,22 @@ export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: Tim
             <div
               className="pointer-events-none absolute inset-y-0 right-0 bg-zinc-950/60"
               style={{ width: `${((bars.length - selection.last - 1) / bars.length) * 100}%` }}
+            />
+
+            {/* The selection body: grab anywhere on it and slide the whole
+                range. Below the handles, so the edges still win where they
+                overlap on a narrow selection. A press that never crosses a
+                bar falls through as a click on the bar underneath. */}
+            <button
+              type="button"
+              aria-label="Drag to move the selection"
+              title="Drag to move the whole selection. Click to select just this bar."
+              onPointerDown={beginMove}
+              style={{
+                left: `${(selection.first / bars.length) * 100}%`,
+                width: `${((selection.last - selection.first + 1) / bars.length) * 100}%`,
+              }}
+              className="absolute inset-y-0 z-[5] cursor-grab touch-none active:cursor-grabbing"
             />
 
             {/* The handles. Outward-pointing arrows, on the outer face of each
