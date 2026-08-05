@@ -56,7 +56,7 @@ function item(overrides: Partial<MediaItem> = {}): MediaItem {
 function generation(overrides: Partial<Generation> = {}): Generation {
   return {
     tool: 'Stable Diffusion',
-    needsSourceImage: false,
+    needsSourceImage: false, postprocessed: false,
     ...overrides,
   }
 }

@@ -204,7 +204,7 @@ describe('toParameterBlock', () => {
     expect(
       toParameterBlock({
         tool: 'Stable Diffusion',
-        needsSourceImage: false,
+        needsSourceImage: false, postprocessed: false,
         prompt: 'a girl on a beach, masterpiece',
         negativePrompt: 'bad hands, blurry',
         steps: '28',
@@ -226,11 +226,11 @@ describe('toParameterBlock', () => {
     // A ComfyUI graph or a stripped JPEG may yield a prompt and nothing else.
     // Filling in a plausible `Steps: 20` would quietly generate something other
     // than the picture on screen.
-    expect(toParameterBlock({ tool: 'ComfyUI', needsSourceImage: false, prompt: 'a castle at dusk' })).toBe(
+    expect(toParameterBlock({ tool: 'ComfyUI', needsSourceImage: false, postprocessed: false, prompt: 'a castle at dusk' })).toBe(
       'a castle at dusk',
     )
     // An empty first line, because the prompt is where a prompt goes even when
     // there is not one — Forge's parser reads the settings off the last line.
-    expect(toParameterBlock({ tool: 'NovelAI', needsSourceImage: false, seed: '77' })).toBe(['', 'Seed: 77'].join('\n'))
+    expect(toParameterBlock({ tool: 'NovelAI', needsSourceImage: false, postprocessed: false, seed: '77' })).toBe(['', 'Seed: 77'].join('\n'))
   })
 })

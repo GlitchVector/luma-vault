@@ -1,4 +1,5 @@
 import type {
+  CharacterCount,
   Folder,
   LibraryStats,
   MediaItem,
@@ -20,6 +21,9 @@ export const DEFAULT_QUERY: MediaQuery = {
   tag: null,
   minStars: null,
   unstarred: false,
+  hasPrompt: null,
+  img2img: null,
+  extras: null,
   minLongestEdge: null,
   duplicatesOnly: false,
   modifiedAfter: null,
@@ -58,6 +62,7 @@ export function useLibrary() {
   const [progress, setProgress] = useState<ScanProgress>(IDLE_PROGRESS)
   const [environment, setEnvironment] = useState<native.Environment | null>(null)
   const [exclusions, setExclusions] = useState<string[]>([])
+  const [characters, setCharacters] = useState<CharacterCount[]>([])
 
   const [query, setQueryState] = useState<MediaQuery>(DEFAULT_QUERY)
   const [items, setItems] = useState<MediaItem[]>([])
@@ -68,20 +73,24 @@ export function useLibrary() {
   // Guards against an out-of-order response overwriting a newer one: a slow
   // query for the previous filter must not clobber the current results.
   const generation = useRef(0)
+  /** The query most recently sent, for refreshes that happen outside one. */
+  const queryRef = useRef<MediaQuery>(DEFAULT_QUERY)
   // How many rows are on screen right now. A ref rather than reading `items`,
   // so `reload` does not have to be rebuilt — and re-subscribed — on every
   // append.
   const loaded = useRef(0)
 
   const refreshFolders = useCallback(async () => {
-    const [nextFolders, nextStats, nextExclusions] = await Promise.all([
+    const [nextFolders, nextStats, nextExclusions, nextCharacters] = await Promise.all([
       native.listFolders(),
       native.libraryStats(),
       native.listExclusions(),
+      native.topCharacters({ ...queryRef.current, search: '' }, 30),
     ])
     setFolders(nextFolders)
     setStats(nextStats)
     setExclusions(nextExclusions)
+    setCharacters(nextCharacters)
   }, [])
 
   const runQuery = useCallback(async (next: MediaQuery, append: boolean) => {
@@ -89,7 +98,16 @@ export function useLibrary() {
     if (!append) setLoading(true)
 
     try {
-      const page = await native.queryMedia(next)
+      queryRef.current = next
+      const [page, nextCharacters] = await Promise.all([
+        native.queryMedia(next),
+        // The leaderboard follows the grid's filters — except the search term.
+        // Clicking a character IS a search, so a leaderboard narrowed by it
+        // would collapse to that one name and there would be no way to hop to
+        // another character from the list that just navigated you here.
+        native.topCharacters({ ...next, search: '' }, 30),
+      ])
+      setCharacters(nextCharacters)
       if (ticket !== generation.current) return
       setItems((previous) => {
         const merged = append ? [...previous, ...page.items] : page.items
@@ -297,6 +315,7 @@ export function useLibrary() {
   return {
     folders,
     exclusions,
+    characters,
     stats,
     progress,
     environment,

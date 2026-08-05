@@ -62,6 +62,13 @@ fn media_query_matches_the_shared_fixture() {
 }
 
 #[test]
+fn character_count_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::CharacterCount>>(include_str!(
+        "../../../contracts/character-count.json"
+    ));
+}
+
+#[test]
 fn timeline_matches_the_shared_fixture() {
     round_trip::<Vec<crate::types::TimelineBucket>>(include_str!(
         "../../../contracts/timeline.json"

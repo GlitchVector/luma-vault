@@ -277,6 +277,18 @@ pub struct MediaQuery {
     /// *at least* comparison means "everything" and would quietly do nothing.
     #[serde(default)]
     pub unstarred: bool,
+    /// Only rows with (true) or without (false) a recovered prompt. Not the
+    /// `generated` tag's axis: a marker can survive a re-encode that the
+    /// parameter block did not.
+    #[serde(default)]
+    pub has_prompt: Option<bool>,
+    /// Only rows made from another image (true) or not (false) — the block's
+    /// own `needsSourceImage` claim.
+    #[serde(default)]
+    pub img2img: Option<bool>,
+    /// Only rows from (true) or not from (false) the Extras tab.
+    #[serde(default)]
+    pub extras: Option<bool>,
     /// Show only rows whose longest edge is at least this many pixels.
     ///
     /// A number rather than a `four_k_only` flag, because the rule is a number
@@ -312,6 +324,15 @@ pub struct MediaQuery {
 #[serde(rename_all = "camelCase")]
 pub struct TimelineBucket {
     pub start: i64,
+    pub count: i64,
+}
+
+/// One row of the character leaderboard: a danbooru-form name and how many
+/// pictures the grid holds of them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CharacterCount {
+    pub name: String,
     pub count: i64,
 }
 

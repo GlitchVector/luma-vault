@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
+  characterCountSchema,
   deviantArtAccountSchema,
   deviantArtDraftSchema,
   deviantArtSummarySchema,
@@ -34,6 +35,7 @@ const CASES: Array<[file: string, schema: z.ZodType]> = [
   ['library-stats.json', libraryStatsSchema],
   ['media-query.json', mediaQuerySchema],
   ['timeline.json', z.array(timelineBucketSchema)],
+  ['character-count.json', z.array(characterCountSchema)],
   ['deviantart-draft.json', z.array(deviantArtDraftSchema)],
   ['deviantart-account.json', z.array(deviantArtAccountSchema)],
   ['deviantart-summary.json', deviantArtSummarySchema],

@@ -26,6 +26,8 @@ import {
   deviantArtAccountSchema,
   deviantArtSummarySchema,
   timelineBucketSchema,
+  characterCountSchema,
+  type CharacterCount,
   type TimelineBucket,
   type DeviantArtAccount,
   type DeviantArtDraft,
@@ -194,6 +196,19 @@ export async function queryMedia(query: MediaQuery): Promise<MediaPage> {
  * showing the whole span while a selection narrows the grid, so there is
  * always something outside the selection left to grab.
  */
+/**
+ * The most-depicted characters, biggest first. Detected from prompts at
+ * labelling time; the name is danbooru's `name (series)` form, which doubles
+ * as a search term because the prompt contains it verbatim.
+ */
+export async function topCharacters(query: MediaQuery, limit = 10): Promise<CharacterCount[]> {
+  if (!isTauri()) return []
+  // Outgoing parse fills defaults, the same lesson the timeline taught.
+  return z.array(characterCountSchema).parse(
+    await invoke('top_characters', { query: mediaQuerySchema.parse(query), limit }),
+  )
+}
+
 export async function mediaTimeline(query: MediaQuery): Promise<TimelineBucket[]> {
   if (!isTauri()) return []
   // Parsed on the way OUT as well as back. The schema fills defaults for any
@@ -332,6 +347,16 @@ export interface DeleteSummary {
 export async function deleteMedia(ids: number[], permanent: boolean): Promise<DeleteSummary> {
   if (!isTauri()) return { deleted: 0, missing: 0, failed: 0, errors: [] }
   return invoke<DeleteSummary>('delete_media', { ids, permanent })
+}
+
+/**
+ * The original an Extras-tab upscale was made from, linked perceptually via
+ * the duplicate grouping. Null when the pair has no dupe group yet — Find
+ * Duplicates has not run — which the panel says rather than hiding.
+ */
+export async function extrasOriginal(id: number): Promise<MediaItem | null> {
+  if (!isTauri()) return null
+  return mediaItemSchema.nullable().parse(await invoke('extras_original', { id }))
 }
 
 export async function mediaById(id: number): Promise<MediaItem | null> {

@@ -944,6 +944,27 @@ async fn include_folder(state: State<'_, AppState>, path: String) -> Result<(), 
     state.db.remove_excluded_folder(&path).map_err(stringify)
 }
 
+/// The original behind an Extras-tab upscale, linked perceptually through
+/// the duplicate grouping. Null when unlinked, which the UI explains.
+#[tauri::command(async)]
+async fn extras_original(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<Option<MediaItem>, String> {
+    state.db.extras_original(id).map_err(stringify)
+}
+
+/// The most-depicted characters, for the sidebar leaderboard. Detected from
+/// prompts at labelling time; this is only the ranking query.
+#[tauri::command(async)]
+async fn top_characters(
+    state: State<'_, AppState>,
+    query: MediaQuery,
+    limit: i64,
+) -> Result<Vec<types::CharacterCount>, String> {
+    state.db.top_characters(&query, limit.clamp(1, 50)).map_err(stringify)
+}
+
 /// What the environment can actually do, so the UI can explain a missing
 /// capability instead of silently producing unrated files.
 #[tauri::command(async)]
@@ -1077,6 +1098,8 @@ pub fn run() {
             rescan_folder,
             query_media,
             media_timeline,
+            top_characters,
+            extras_original,
             recent_media,
             media_frames,
             media_by_id,
