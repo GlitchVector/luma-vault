@@ -38,6 +38,23 @@ export interface MigrationTarget {
    * added. Naming the current value gives the paste nothing to override.
    */
   emphasis?: string
+  /**
+   * A framing rung to impose on the prompt — `full body`, `wide shot`, …
+   *
+   * This is the person changing the crop, not the migration translating
+   * anything, so it applies on every move including same-architecture ones.
+   * Whatever rung the prompt already carries is removed rather than argued
+   * with: two rungs in one prompt is a tug of war, and the result is neither
+   * framing.
+   */
+  shot?: string
+  /**
+   * Body tags to impose — `(gigantic ass:2), (wide hips:1.4)`, or the hips
+   * maximum combo. Same contract as `shot`: an explicit ask, applied on every
+   * move, and every rung the prompt already carries for a mentioned axis is
+   * removed rather than argued with.
+   */
+  body?: string
 }
 
 export interface Migration {
@@ -177,6 +194,106 @@ const XL_NEGATIVE = [
   'artist name',
 ]
 
+/**
+ * The framing ladder, tightest to widest. A prompt should carry at most one
+ * rung — the encoder treats two as competing instructions, not a midpoint —
+ * so a reframe removes every rung before adding the requested one.
+ */
+const SHOT_LADDER = [
+  'close-up',
+  'portrait',
+  'upper body',
+  'lower body',
+  'cowboy shot',
+  'full body',
+  'wide shot',
+  'very wide shot',
+]
+
+/** Shots wide enough to need the backstop against the model drifting tight. */
+const WIDE_SHOTS = ['full body', 'wide shot', 'very wide shot']
+
+/**
+ * The size-rung families of the four body axes the commands ask about. A body
+ * override that mentions an axis replaces that axis's rung outright — the
+ * family is cleared first so the prompt never argues a size with itself.
+ * Focus tags stay out of the ass family (nothing re-adds `ass focus`), but
+ * `hip focus`, `curvy` and `narrow waist` belong to hips because the hips
+ * maximum combo re-adds all three.
+ */
+const BODY_FAMILIES: ReadonlyArray<{ mentions: RegExp; rungs: string[] }> = [
+  {
+    mentions: /\b(ass|butt)\b/i,
+    rungs: ['big ass', 'large ass', 'fat ass', 'huge ass', 'gigantic ass', 'hyper ass', 'bubble butt'],
+  },
+  {
+    mentions: /\bbreasts?\b/i,
+    rungs: [
+      'small breasts',
+      'medium breasts',
+      'big breasts',
+      'large breasts',
+      'huge breasts',
+      'gigantic breasts',
+      'hyper breasts',
+      'busty',
+    ],
+  },
+  {
+    mentions: /\bthighs?\b/i,
+    rungs: ['thick thighs', 'huge thighs', 'fat thighs'],
+  },
+  {
+    mentions: /\bhips?\b|\bcurvy\b|\bnarrow waist\b/i,
+    rungs: [
+      'wide hips',
+      'big hips',
+      'large hips',
+      'huge hips',
+      'hyper hips',
+      'hip focus',
+      'curvy',
+      'narrow waist',
+    ],
+  },
+]
+
+/** The upscaler the Hires default names — the one installed on this machine. */
+const HIRES_UPSCALER = '4xUltrasharp_4xUltrasharpV10'
+
+/**
+ * The words in a prompt that describe a face, for ADetailer's own pass.
+ *
+ * The convention — "ADetailer jargon" — is a short prompt carrying only what
+ * the repainted region should contain: identity and expression, not pose or
+ * setting. Inheriting the full prompt instead makes the face pass re-argue
+ * about hips inside a 512px crop of a head.
+ */
+const FACE_WORDS =
+  /(hair|eyes?|face|facial|blush|lips?|mouth|teeth|tongue|freckle|mole|makeup|eyelash|eyebrow|eyeshadow|lipstick|smile|frown|expression|glasses|headband|hat|twintails|ponytail|braid|bangs|\w+ \(\w[^)]*\))/i
+
+/**
+ * Words that veto a fragment however face-like the rest of it is.
+ *
+ * The include-list matches on shared words: "Seductive Smile full body"
+ * carries "smile", and "(pubic hair:1.2)" carries "hair" — both sailed into a
+ * real face pass, which is exactly the body-inside-a-head-crop failure the
+ * whole jargon rule exists to prevent. Word-bounded, so "glasses" survives
+ * containing "ass".
+ */
+const NOT_FACE_WORDS =
+  /\b(pubic|body|breasts?|nipples?|ass|butt|hips?|thighs?|legs?|chest|stomach|belly|armpits?|navel|waist|shoulders?|feet|barefoot)\b/i
+
+export function facePrompt(prompt: string): string {
+  const kept = prompt
+    .split(/[,\n]/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && FACE_WORDS.test(part) && !NOT_FACE_WORDS.test(part))
+    .slice(0, 12)
+  if (kept.length === 0) return ''
+  return `masterpiece, best quality, detailed face, beautiful detailed eyes, ${kept.join(', ')}`
+}
+
 /** A settings line split into ordered pairs, quote-aware. */
 function settingsFields(line: string): Array<[string, string]> {
   const parts: string[] = []
@@ -249,6 +366,23 @@ function dropTerms(text: string, unwanted: string[]): { text: string; removed: s
       return !match
     })
   return { text: kept.join(', '), removed }
+}
+
+/** `dropTerms`, one line at a time, so BREAK boundaries survive the rejoin. */
+function dropTermsByLine(text: string, unwanted: string[]): { text: string; removed: string[] } {
+  const removed: string[] = []
+  const lines: string[] = []
+  for (const line of text.split('\n')) {
+    const result = dropTerms(line, unwanted)
+    removed.push(...result.removed)
+    // A newline is whitespace to the prompt parser, not a separator — a line
+    // that ended with a comma must keep it, or its last tag fuses with the
+    // first tag of the next line.
+    const trailing = /,\s*$/.test(line) && result.text ? ',' : ''
+    // A line the removal emptied is gone; a line that was already blank stays.
+    if (result.text || !line.trim()) lines.push(result.text + trailing)
+  }
+  return { text: lines.join('\n'), removed }
 }
 
 /** The bucket closest in shape to `width`x`height`. */
@@ -374,6 +508,52 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
 
   }
 
+  // Body-axis overrides from the command's questions, at the front where they
+  // carry the most weight. Not gated on `crossing` — see `MigrationTarget.body`.
+  if (target.body) {
+    const body = target.body.trim().replace(/,\s*$/, '')
+    const families = BODY_FAMILIES.filter(({ mentions }) => mentions.test(body))
+    const cleared = dropTermsByLine(
+      nextPrompt,
+      families.flatMap(({ rungs }) => rungs),
+    )
+    nextPrompt = cleared.text ? `${body},\n${cleared.text}` : body
+    const replaced = [...new Set(cleared.removed.map((rung) => rung.toLowerCase()))]
+    notes.push(
+      `Imposed the asked-for body (${body})` +
+        (replaced.length > 0 ? `, replacing ${replaced.join(', ')}` : '') +
+        '.',
+    )
+  }
+
+  // An explicit reframe, at the front of the prompt where it carries the most
+  // weight. Not gated on `crossing` — see `MigrationTarget.shot`.
+  if (target.shot) {
+    const shot = target.shot.trim().toLowerCase()
+    const wide = WIDE_SHOTS.includes(shot)
+    const cleared = dropTermsByLine(nextPrompt, SHOT_LADDER)
+    // A bare wide rung loses: every body tag pulls the camera in, and the
+    // model satisfies them by cropping. Weighted in, with the tight rungs
+    // named in the negative, it holds.
+    const rung = wide ? `(${shot}:1.3)` : shot
+    nextPrompt = cleared.text ? `${rung},\n${cleared.text}` : rung
+    const replaced = [
+      ...new Set(cleared.removed.map((r) => r.toLowerCase()).filter((r) => r !== shot)),
+    ]
+    let note = `Reframed to ${rung}` + (replaced.length > 0 ? `, replacing ${replaced.join(', ')}` : '')
+    if (wide) {
+      const already = nextNegative.toLowerCase()
+      const backstop = ['close-up', 'cropped', 'portrait', 'upper body'].filter(
+        (term) => !new RegExp(`(^|[^a-z])${term}([^a-z]|$)`).test(already),
+      )
+      if (backstop.length > 0) {
+        nextNegative = nextNegative ? `${nextNegative}, ${backstop.join(', ')}` : backstop.join(', ')
+        note += `; ${backstop.join(', ')} added to the negative as the backstop against drifting tight`
+      }
+    }
+    notes.push(note + '.')
+  }
+
   // --- settings -----------------------------------------------------------
   const next = new Map(fields)
   next.set('Model', target.checkpoint)
@@ -456,6 +636,34 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       'CFG 5, 28 steps, clip skip 2 — what booru-trained SDXL models are tuned for. Higher CFG ' +
         'burns contrast and steps past ~30 stop changing the image.',
     )
+  }
+
+  // Hires and ADetailer ride along on every XL move, added only when the block
+  // does not already carry them — a block that names its own hires pass or
+  // face pass knows better than a default.
+  if (target.architecture === 'xl') {
+    if (!next.has('Hires upscale') && !next.has('Hires upscaler')) {
+      next.set('Hires upscale', '1.65')
+      next.set('Hires steps', '30')
+      next.set('Hires upscaler', HIRES_UPSCALER)
+      if (!next.has('Denoising strength')) next.set('Denoising strength', '0.4')
+      notes.push(
+        'Turned Hires fix on (1.65x, 30 steps, denoise 0.4) — the first pass alone stops at ' +
+          'the training resolution, and every keeper gets upscaled anyway.',
+      )
+    }
+    if (!next.has('ADetailer model')) {
+      const face = facePrompt(nextPrompt)
+      next.set('ADetailer model', 'face_yolov8s.pt')
+      if (face) next.set('ADetailer prompt', `"${face}"`)
+      next.set('ADetailer negative prompt', `"${XL_NEGATIVE.join(', ')}"`)
+      next.set('ADetailer denoising strength', '0.4')
+      notes.push(
+        'Turned ADetailer on with a face pass' +
+          (face ? ` (${face})` : '') +
+          ' — faces are where a keeper fails, and the pass costs seconds.',
+      )
+    }
   }
 
   const ordered = [...next.entries()] as Array<[string, string]>

@@ -235,6 +235,55 @@
         if (name) send('vae', name)
     }
 
+    // Same trick as the textarea: Gradio's slider is bound by Svelte, and both
+    // of its inputs (the range and the number) have to be told.
+    function setInput(input, value) {
+        const proto = window.HTMLInputElement && window.HTMLInputElement.prototype
+        const descriptor = proto && Object.getOwnPropertyDescriptor(proto, 'value')
+        if (descriptor && descriptor.set) descriptor.set.call(input, value)
+        else input.value = value
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+
+    // Hold clip skip at what the block asked for.
+    //
+    // `on_preset_change` is wired to `root_block.load` and every preset stamps
+    // clip skip back to 1 — sometimes seconds after the paste has landed, since
+    // Gradio load events run whenever they get around to it. Setting the value
+    // once is therefore not setting it: the stomp arrives later and wins, and
+    // for months the workaround was a caveat in two skills telling a person to
+    // go check the slider by hand.
+    //
+    // So this watches for a while and puts it back. Check-counted rather than
+    // wall-clocked so the behaviour is deterministic under test; 30 checks at
+    // 400ms outlasts the slowest load handler by a wide margin.
+    function enforceClipSkip(params) {
+        const wanted = settingsField(params, 'Clip skip')
+        if (!wanted) return
+
+        const assertValue = () => {
+            const inputs = document.querySelectorAll('#setting_CLIP_stop_at_last_layers input')
+            let corrected = false
+            for (const input of inputs) {
+                if (String(input.value) !== String(wanted)) {
+                    setInput(input, wanted)
+                    corrected = true
+                }
+            }
+            return corrected
+        }
+
+        if (assertValue()) console.log('[luma-vault] clip skip -> %s', wanted)
+        let checks = 0
+        const timer = setInterval(() => {
+            checks += 1
+            if (assertValue()) {
+                console.log('[luma-vault] clip skip stomped by a load handler, re-asserted -> %s', wanted)
+            }
+            if (checks >= 30) clearInterval(timer)
+        }, 400)
+    }
+
     function syncToggles(params) {
         for (const toggle of TOGGLES) {
             const box = document.querySelector('#' + toggle.id + ' input[type=checkbox]')
@@ -322,6 +371,7 @@
                 whenPasteLands(prompt, () => {
                     syncToggles(params)
                     applyVae(params)
+                    enforceClipSkip(params)
                 })
             },
             // Longer when the scripts container is not up yet: there is nothing
