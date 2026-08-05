@@ -41,13 +41,14 @@ describe('rateFrame', () => {
   })
 
   it('ignores rated labels below the score threshold', () => {
-    const verdict = rateFrame([det('FEMALE_BREAST_EXPOSED', 0.3)])
+    // A label that is *not* presence-rated, so the threshold still governs it.
+    const verdict = rateFrame([det('FEMALE_BREAST_COVERED', 0.3)])
     expect(verdict.sexy).toBe(false)
     expect(verdict.person).toBe(false)
   })
 
   it('counts a low-but-present detection as a person before it counts as sexy', () => {
-    const verdict = rateFrame([det('FEMALE_BREAST_EXPOSED', 0.4)])
+    const verdict = rateFrame([det('FEMALE_BREAST_COVERED', 0.39)])
     expect(verdict).toMatchObject({ person: true, sexy: false })
   })
 
@@ -73,10 +74,18 @@ describe('rateFrame', () => {
     expect(verdict).toMatchObject({ person: true, sexy: false, rating: 'sfw' })
   })
 
-  it('honours raised thresholds', () => {
-    const strict = { ...DEFAULT_CLASSIFY_OPTIONS, explicitMinScore: 0.9 }
-    expect(rateFrame([det('ANUS_EXPOSED', 0.85)], strict).nude).toBe(false)
-    expect(rateFrame([det('ANUS_EXPOSED', 0.95)], strict).nude).toBe(true)
+  it('honours raised thresholds, for the labels a threshold still governs', () => {
+    // Not ANUS_EXPOSED any more: presence-rated labels ignore thresholds
+    // entirely, which is the point of them.
+    const strict = { ...DEFAULT_CLASSIFY_OPTIONS, suggestiveMinScore: 0.9 }
+    expect(rateFrame([det('FEMALE_BREAST_COVERED', 0.85)], strict).sexy).toBe(false)
+    expect(rateFrame([det('FEMALE_BREAST_COVERED', 0.95)], strict).sexy).toBe(true)
+  })
+
+  it('rates unambiguous anatomy on presence, whatever the threshold says', () => {
+    const strict = { ...DEFAULT_CLASSIFY_OPTIONS, explicitMinScore: 0.99, suggestiveMinScore: 0.99 }
+    expect(rateFrame([det('ANUS_EXPOSED', 0.26)], strict).nude).toBe(true)
+    expect(rateFrame([det('BUTTOCKS_COVERED', 0.26)], strict).sexy).toBe(true)
   })
 })
 

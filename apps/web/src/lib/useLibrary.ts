@@ -1,4 +1,11 @@
-import type { Folder, LibraryStats, MediaItem, MediaQuery, ScanProgress } from '@luma/core'
+import type {
+  Folder,
+  LibraryStats,
+  MediaItem,
+  MediaQuery,
+  ScanProgress,
+  ThrottleLevel,
+} from '@luma/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as native from './native.ts'
 
@@ -10,6 +17,17 @@ export const DEFAULT_QUERY: MediaQuery = {
   rating: null,
   sexyOnly: false,
   search: '',
+  tag: null,
+  minStars: null,
+  unstarred: false,
+  minLongestEdge: null,
+  duplicatesOnly: false,
+  modifiedAfter: null,
+  modifiedBefore: null,
+  // Nothing hidden by default. Documents are the reason this exists, but a
+  // grid that silently omits files on first run is a bug report waiting to
+  // happen — the "No Docs" pill is one click away.
+  hideTags: [],
   sort: 'recent',
   limit: PAGE_SIZE,
   offset: 0,
@@ -39,6 +57,7 @@ export function useLibrary() {
   const [stats, setStats] = useState<LibraryStats | null>(null)
   const [progress, setProgress] = useState<ScanProgress>(IDLE_PROGRESS)
   const [environment, setEnvironment] = useState<native.Environment | null>(null)
+  const [exclusions, setExclusions] = useState<string[]>([])
 
   const [query, setQueryState] = useState<MediaQuery>(DEFAULT_QUERY)
   const [items, setItems] = useState<MediaItem[]>([])
@@ -49,11 +68,20 @@ export function useLibrary() {
   // Guards against an out-of-order response overwriting a newer one: a slow
   // query for the previous filter must not clobber the current results.
   const generation = useRef(0)
+  // How many rows are on screen right now. A ref rather than reading `items`,
+  // so `reload` does not have to be rebuilt — and re-subscribed — on every
+  // append.
+  const loaded = useRef(0)
 
   const refreshFolders = useCallback(async () => {
-    const [nextFolders, nextStats] = await Promise.all([native.listFolders(), native.libraryStats()])
+    const [nextFolders, nextStats, nextExclusions] = await Promise.all([
+      native.listFolders(),
+      native.libraryStats(),
+      native.listExclusions(),
+    ])
     setFolders(nextFolders)
     setStats(nextStats)
+    setExclusions(nextExclusions)
   }, [])
 
   const runQuery = useCallback(async (next: MediaQuery, append: boolean) => {
@@ -63,12 +91,19 @@ export function useLibrary() {
     try {
       const page = await native.queryMedia(next)
       if (ticket !== generation.current) return
-      setItems((previous) => (append ? [...previous, ...page.items] : page.items))
+      setItems((previous) => {
+        const merged = append ? [...previous, ...page.items] : page.items
+        loaded.current = merged.length
+        return merged
+      })
       setTotal(page.total)
     } catch (error) {
       if (ticket === generation.current) {
         console.error('query failed', error)
-        if (!append) setItems([])
+        if (!append) {
+          setItems([])
+          loaded.current = 0
+        }
       }
     } finally {
       if (ticket === generation.current) setLoading(false)
@@ -97,11 +132,26 @@ export function useLibrary() {
     })
   }, [items.length, total, runQuery])
 
+  /**
+   * Re-fetch what is currently on screen.
+   *
+   * Deliberately *not* "go back to page one". A scan publishes progress four
+   * times a second, so this runs every few seconds while one is going; if it
+   * truncated the grid to a single page, every tile below the fold would
+   * unmount, the end-of-list sentinel would immediately re-fire, and the grid
+   * would re-append page by page — remounting tiles whose `inView` starts
+   * `false` and painting them as empty boxes for as long as the scan lasts.
+   *
+   * Refetching the whole loaded window in one query keeps the DOM stable: the
+   * tiles are replaced in place, so nothing unmounts and nothing blanks.
+   */
   const reload = useCallback(() => {
     setQueryState((previous) => {
-      const next = { ...previous, offset: 0 }
-      void runQuery(next, false)
-      return next
+      const window = Math.max(previous.limit, loaded.current)
+      void runQuery({ ...previous, offset: 0, limit: window }, false)
+      // Leave `offset` where the next append should continue from, which is the
+      // end of the window just re-fetched — not the end of one page.
+      return { ...previous, offset: Math.max(0, window - previous.limit) }
     })
     void refreshFolders()
   }, [runQuery, refreshFolders])
@@ -162,8 +212,78 @@ export function useLibrary() {
       async rescanFolder(id: number) {
         await native.rescanFolder(id)
       },
+      /**
+       * Cap background work. Re-reads the environment rather than assuming it
+       * took, so the checkbox reflects what the backend actually did.
+       */
+      async setThrottle(level: ThrottleLevel) {
+        await native.setThrottle(level)
+        setEnvironment(await native.environment())
+      },
+      /**
+       * Stop scanning a folder and drop its rows. Returns how many went.
+       *
+       * Reloads rather than filtering in place: the removal happened in the
+       * index, and the grid should show what the index now says.
+       */
+      /**
+       * Search for duplicates, then switch the grid to showing them.
+       *
+       * The search writes the grouping into the index, so the view is a plain
+       * query afterwards — no state to hold and nothing to invalidate.
+       */
+      async findDuplicates() {
+        const report = await native.findDuplicates()
+        setQueryState((previous) => {
+          // Every narrowing filter is cleared, **including the folder**, because
+          // a partial duplicate set is worse than none: two of three copies
+          // shown reads as "these two are the duplicates" and invites deleting
+          // the wrong one. The folder matters most of all — the usual reason to
+          // hold the same picture twice is that it is in two places, so a
+          // folder filter hides exactly the copy you are looking for and leaves
+          // groups of one behind.
+          const next = {
+            ...previous,
+            duplicatesOnly: report.files > 0,
+            folderId: null,
+            rating: null,
+            kind: null,
+            tag: null,
+            sexyOnly: false,
+            minStars: null,
+            unstarred: false,
+            offset: 0,
+          }
+          void runQuery(next, false)
+          return next
+        })
+        return report
+      },
+      async excludeFolder(path: string) {
+        const removed = await native.excludeFolder(path)
+        reload()
+        return removed
+      },
+      async includeFolder(path: string) {
+        await native.includeFolder(path)
+        await refreshFolders()
+      },
       async processPending() {
         await native.processPending()
+      },
+      /**
+       * Import star ratings from a Stable Diffusion Image Browser database.
+       *
+       * Reloads afterwards because ratings that matched already-indexed rows
+       * take effect immediately; the rest are staged and attach as their
+       * folders are scanned.
+       */
+      async importRatings() {
+        const path = await native.pickImageBrowserDb()
+        if (!path) return null
+        const summary = await native.importImageBrowserDb(path)
+        reload()
+        return summary
       },
       async retryFailed(folderId: number | null = null) {
         const cleared = await native.retryFailed(folderId)
@@ -171,11 +291,12 @@ export function useLibrary() {
         return cleared
       },
     }),
-    [refreshFolders, reload],
+    [refreshFolders, reload, runQuery],
   )
 
   return {
     folders,
+    exclusions,
     stats,
     progress,
     environment,

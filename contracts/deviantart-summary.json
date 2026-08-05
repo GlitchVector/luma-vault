@@ -1,0 +1,43 @@
+{
+  "staged": 3,
+  "published": 1,
+  "failed": 1,
+  "results": [
+    {
+      "mediaId": 4821,
+      "title": "1girl, Silver Hair, Red Dress",
+      "itemId": 998877665544,
+      "url": "https://www.deviantart.com/glitchvector/art/1girl-Silver-Hair-Red-Dress-1234567890",
+      "deviationId": "1A2B3C4D-5E6F-7081-9A0B-C1D2E3F40506",
+      "published": true,
+      "error": null
+    },
+    {
+      "mediaId": 4822,
+      "title": "Winter Market Study",
+      "itemId": 998877665545,
+      "url": null,
+      "deviationId": null,
+      "published": false,
+      "error": null
+    },
+    {
+      "mediaId": 4823,
+      "title": "Untitled",
+      "itemId": 998877665546,
+      "url": null,
+      "deviationId": null,
+      "published": false,
+      "error": "uploaded, but publishing failed: request failed validation (title: is too long). It is in your Studio."
+    },
+    {
+      "mediaId": 4824,
+      "title": "Gone",
+      "itemId": null,
+      "url": null,
+      "deviationId": null,
+      "published": false,
+      "error": "no longer in the library"
+    }
+  ]
+}

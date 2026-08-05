@@ -19,6 +19,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
+use crate::generated::Generation;
 use crate::types::{
     Folder, LibraryStats, MediaFrame, MediaItem, MediaKind, MediaPage, MediaQuery, MediaVerdict,
     Rating, SortOrder,
@@ -103,6 +104,13 @@ impl Db {
                 UNIQUE(media_id, frame_index)
             );
 
+            CREATE TABLE IF NOT EXISTS media_tags (
+                media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                tag      TEXT    NOT NULL,
+                PRIMARY KEY (media_id, tag)
+            );
+
+            CREATE INDEX IF NOT EXISTS tags_by_tag       ON media_tags(tag, media_id);
             CREATE INDEX IF NOT EXISTS media_folder      ON media(folder_id);
             CREATE INDEX IF NOT EXISTS media_recent      ON media(modified_at DESC);
             CREATE INDEX IF NOT EXISTS media_rating      ON media(rating);
@@ -126,11 +134,313 @@ impl Db {
             conn.execute_batch("ALTER TABLE media ADD COLUMN error TEXT")?;
         }
 
+        // Content key: what a derived file is addressed by. Nullable, and
+        // deliberately not backfilled — rows indexed before this existed keep
+        // the `thumb_path` they already recorded, so nothing regenerates. The
+        // measure phase fills the column in as it goes.
+        let has_content_key = conn
+            .prepare("PRAGMA table_info(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "content_key");
+        if !has_content_key {
+            conn.execute_batch("ALTER TABLE media ADD COLUMN content_key TEXT")?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_content_key ON media(content_key)
+             WHERE content_key IS NOT NULL",
+        )?;
+
+        // The picture an upscaled variant came from, derived from its filename
+        // at insert. Backfilled below rather than left to the next scan: the
+        // grid hides a superseded original, and a library that already holds
+        // variants would otherwise keep showing both until every folder had
+        // been walked again.
+        let has_upscaled_from = conn
+            .prepare("PRAGMA table_info(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "upscaled_from");
+        if !has_upscaled_from {
+            conn.execute_batch("ALTER TABLE media ADD COLUMN upscaled_from TEXT")?;
+        }
+        // The index the "is this one superseded" check runs against, once per
+        // queried row. Partial, because almost no row is a variant.
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_upscaled_from ON media(upscaled_from)
+             WHERE upscaled_from IS NOT NULL",
+        )?;
+        if !has_upscaled_from {
+            Self::backfill_upscaled_from(&conn)?;
+        }
+
         // Partial index over exactly the rows the thumbnail queue scans.
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS media_thumb_queue
              ON media(modified_at DESC) WHERE thumb_path IS NULL AND error IS NULL",
         )?;
+
+        // When the anime tagger last had an opinion about this row.
+        //
+        // Its own column rather than a flag on `classified_at`, because the two
+        // passes are independent: NudeNet decides every file, the tagger only
+        // revisits the ones NudeNet called SFW. A row can be fully classified
+        // and still be waiting for its second opinion.
+        let has_anime_at = conn
+            .prepare("PRAGMA table_info(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "anime_at");
+        if !has_anime_at {
+            conn.execute_batch("ALTER TABLE media ADD COLUMN anime_at INTEGER")?;
+
+            // Backfill rows that were classified while the tagger ran inline.
+            // Their detections already carry `ANIME_*` findings, so leaving
+            // them queued would append a second copy and double-count them.
+            // Matching on the stored JSON is exact here: no other producer
+            // writes that prefix.
+            conn.execute_batch(
+                "UPDATE media SET anime_at = classified_at
+                 WHERE classified_at IS NOT NULL
+                   AND verdict_json IS NOT NULL
+                   AND EXISTS (
+                       SELECT 1 FROM media_frames f
+                       WHERE f.media_id = media.id AND f.verdict_json LIKE '%ANIME\\_%' ESCAPE '\\'
+                   )",
+            )?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_anime_queue ON media(rating)
+             WHERE anime_at IS NULL AND classified_at IS NOT NULL",
+        )?;
+
+        // Small, durable app settings. A table rather than a file beside the
+        // index so a setting cannot survive a deleted index and reappear
+        // describing a library that no longer exists.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS settings (
+                 key   TEXT NOT NULL PRIMARY KEY,
+                 value TEXT NOT NULL
+             );",
+        )?;
+
+        // Stars (1-5) and what the file says about its own generation.
+        //
+        // `stars` is a *user* judgement and deliberately separate from
+        // `rating`: one says "I like this", the other says "this is explicit".
+        // Nothing in the pipeline ever writes `stars` from a model.
+        for (column, decl) in [
+            ("stars", "INTEGER"),
+            ("prompt", "TEXT"),
+            ("generation_json", "TEXT"),
+            // Perceptual hash of the thumbnail, images only. See `dupes`.
+            ("phash", "INTEGER"),
+            // 8x8 RGB alongside it: the hash is greyscale and cannot tell two
+            // differently-lit photographs apart on its own.
+            ("colour_sig", "BLOB"),
+            // Which set of duplicates this row belongs to, or NULL for none.
+            ("dupe_group", "INTEGER"),
+        ] {
+            let present = conn
+                .prepare("PRAGMA table_info(media)")?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .filter_map(Result::ok)
+                .any(|name| name == column);
+            if !present {
+                conn.execute_batch(&format!("ALTER TABLE media ADD COLUMN {column} {decl}"))?;
+            }
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_stars ON media(stars) WHERE stars IS NOT NULL",
+        )?;
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_dupes ON media(dupe_group, id)
+             WHERE dupe_group IS NOT NULL",
+        )?;
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_unhashed ON media(id)
+             WHERE phash IS NULL AND thumb_path IS NOT NULL AND kind = 'image'",
+        )?;
+
+        // Full-text search over filenames and prompts.
+        //
+        // **Trigram, not the default tokenizer.** The default indexes whole
+        // words, and a booru prompt is full of `1girl`, `2girls`,
+        // `moona_hoshinova` — searching "girl" against it finds 9,517 rows
+        // where a substring search finds 45,966. Trigram gives `LIKE '%x%'`
+        // semantics, which is what someone typing into a search box means.
+        //
+        // Measured on this library, 160,901 rows: `LIKE` needs 183-230ms for a
+        // count, which is far too slow to type against. Trigram answers the
+        // same queries in 0-7ms and builds once in 2.4s.
+        //
+        // `content='media'` so the text is not stored twice; the triggers below
+        // are what an external-content table requires to stay in step.
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
+                 name, prompt, content='media', content_rowid='id', tokenize='trigram'
+             )",
+        )?;
+        conn.execute_batch(
+            "CREATE TRIGGER IF NOT EXISTS media_fts_insert AFTER INSERT ON media BEGIN
+                 INSERT INTO media_fts(rowid, name, prompt) VALUES (new.id, new.name, new.prompt);
+             END;
+             CREATE TRIGGER IF NOT EXISTS media_fts_delete AFTER DELETE ON media BEGIN
+                 INSERT INTO media_fts(media_fts, rowid, name, prompt)
+                 VALUES ('delete', old.id, old.name, old.prompt);
+             END;
+             CREATE TRIGGER IF NOT EXISTS media_fts_update AFTER UPDATE ON media BEGIN
+                 INSERT INTO media_fts(media_fts, rowid, name, prompt)
+                 VALUES ('delete', old.id, old.name, old.prompt);
+                 INSERT INTO media_fts(rowid, name, prompt) VALUES (new.id, new.name, new.prompt);
+             END;",
+        )?;
+        // Backfill once, recorded by a flag rather than by inspecting the table.
+        //
+        // Counting rows does not work here and fails in the direction that
+        // looks fine: on an external-content table `SELECT count(*) FROM
+        // media_fts` is answered from `media`, so a *completely empty* index
+        // reports the full row count. The obvious guard — "rebuild when the
+        // index has fewer rows than the library" — is therefore never true, and
+        // every search silently returns nothing.
+        //
+        // The version lets a tokenizer or column change force one rebuild
+        // later; rebuilding every launch would cost 3.7s on this library.
+        let built: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key = 'fts_version'", [], |row| row.get(0))
+            .optional()?;
+        if built.as_deref() != Some(FTS_VERSION) {
+            conn.execute_batch("INSERT INTO media_fts(media_fts) VALUES ('rebuild')")?;
+            conn.execute(
+                "INSERT INTO settings(key, value) VALUES ('fts_version', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [FTS_VERSION],
+            )?;
+        }
+
+        // Ratings lifted out of a Stable Diffusion Image Browser database.
+        //
+        // Kept as their own table rather than written straight onto `media`,
+        // because an import usually happens *before* the folder it describes
+        // has been scanned — and because the files it names may not exist at
+        // all. Measured against two real databases: of 7,513 ratings, 3,042
+        // pointed at files that still existed and the rest had been deleted
+        // deliberately. Holding them here means the survivors attach to rows
+        // as those rows appear, and the others cost nothing but a row.
+        //
+        // `match_key` is the path from `outputs\` onwards, lowercased. That
+        // survives the whole tree being moved to another drive *and* the
+        // install directory being renamed, both of which had happened.
+        // Folders the scanner walks straight past.
+        //
+        // The app-managed twin of dropping a `.lumaignore` into a directory.
+        // Both exist because they suit different situations: the marker file
+        // travels with the folder and survives a reinstall, while this one can
+        // be set from the grid the moment you notice a texture pack in it —
+        // which is when you actually find out you wanted it.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS excluded_folders (
+                 path       TEXT    NOT NULL PRIMARY KEY,
+                 added_at   INTEGER NOT NULL
+             );",
+        )?;
+
+        // Which rating databases have already been read, so a scan that finds
+        // the same file again does not re-read 2 million rows every launch.
+        //
+        // Keyed on size and mtime as well as path: an Image Browser database
+        // belonging to a webui someone still uses gains ratings over time, and
+        // the point of importing automatically is that new ones arrive without
+        // being asked for.
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS imported_databases (
+                path        TEXT    NOT NULL PRIMARY KEY,
+                size_bytes  INTEGER NOT NULL,
+                modified_at INTEGER NOT NULL,
+                imported_at INTEGER NOT NULL,
+                staged      INTEGER NOT NULL
+            );
+            "#,
+        )?;
+
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS imported_stars (
+                match_key TEXT    NOT NULL PRIMARY KEY,
+                stars     INTEGER NOT NULL,
+                source    TEXT    NOT NULL,
+                imported_at INTEGER NOT NULL
+            );
+            "#,
+        )?;
+
+        // When this row was last examined for structural tags. Same shape as
+        // `anime_at` and for the same reason: the queue is a query, so the
+        // pass is restartable and a row is never examined twice.
+        let has_labelled_at = conn
+            .prepare("PRAGMA table_info(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "labelled_at");
+        if !has_labelled_at {
+            conn.execute_batch("ALTER TABLE media ADD COLUMN labelled_at INTEGER")?;
+        }
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS media_label_queue
+             ON media(modified_at DESC) WHERE labelled_at IS NULL AND error IS NULL",
+        )?;
+
+        // Last, because it reads `settings` and rewrites `media`: every table
+        // has to exist by the time it runs.
+        //
+        // Variants indexed under an older rule keep whatever the rule was then.
+        // The inheritance at insert cannot reach them — that deliberately skips
+        // a row which already has a thumbnail — so they are repaired once here.
+        //
+        // Dates, so they sit beside the picture they replace rather than at the
+        // front of a newest-first grid. And the judgements: a variant left
+        // unrated while its original was a favourite disappears entirely under
+        // the favourites filter, hidden by its own existence on one side and
+        // filtered out on the other.
+        //
+        // `COALESCE(m.x, ...)` rather than a plain assignment: a rating given to
+        // the variant *since* it was indexed is newer than the original's and
+        // must not be overwritten by a repair.
+        let repaired: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'variant_inheritance'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if repaired.as_deref() != Some(VARIANT_INHERITANCE_VERSION) {
+            conn.execute(
+                "UPDATE media AS m
+                    SET modified_at = (SELECT o.modified_at FROM media o WHERE o.path = m.upscaled_from),
+                        added_at = (SELECT o.added_at FROM media o WHERE o.path = m.upscaled_from),
+                        stars = COALESCE(
+                            m.stars,
+                            (SELECT o.stars FROM media o WHERE o.path = m.upscaled_from)
+                        ),
+                        verdict_json = COALESCE(
+                            m.verdict_json,
+                            (SELECT o.verdict_json FROM media o WHERE o.path = m.upscaled_from)
+                        ),
+                        classified_at = COALESCE(
+                            m.classified_at,
+                            (SELECT o.classified_at FROM media o WHERE o.path = m.upscaled_from)
+                        )
+                  WHERE m.upscaled_from IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM media o WHERE o.path = m.upscaled_from)",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('variant_inheritance', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![VARIANT_INHERITANCE_VERSION],
+            )?;
+        }
 
         Ok(())
     }
@@ -212,6 +522,31 @@ impl Db {
     // Media
     // -----------------------------------------------------------------------
 
+    /// Name the original for every variant already indexed.
+    ///
+    /// Runs once, when the column is added. Everything after that is handled at
+    /// insert, so this is a migration rather than a phase.
+    fn backfill_upscaled_from(conn: &Connection) -> Result<()> {
+        let rows: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, path FROM media WHERE path LIKE '%{}%'",
+                crate::upscales::UPSCALE_SUFFIX
+            ))?;
+            let found = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            found.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let mut stmt = conn.prepare("UPDATE media SET upscaled_from = ?2 WHERE id = ?1")?;
+        for (id, path) in rows {
+            // The LIKE above is a coarse prefilter; `original_of` is the rule,
+            // and it rejects a name that merely contains the suffix.
+            if let Some(original) = crate::upscales::original_of(&path) {
+                stmt.execute(params![id, original])?;
+            }
+        }
+        Ok(())
+    }
+
     /// Insert newly-seen files in one transaction, returning how many were new.
     ///
     /// Existing rows are left completely alone rather than updated: a file whose
@@ -224,8 +559,9 @@ impl Db {
         let mut inserted = 0_usize;
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO media (folder_id, path, name, kind, size_bytes, modified_at, added_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "INSERT INTO media
+                     (folder_id, path, name, kind, size_bytes, modified_at, added_at, upscaled_from)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(path) DO NOTHING",
             )?;
             for entry in entries {
@@ -237,9 +573,72 @@ impl Db {
                     entry.size_bytes,
                     entry.modified_at,
                     now,
+                    // Derived from the name, so the pair is established the
+                    // moment the variant is seen — the original may not even be
+                    // indexed yet, and does not need to be.
+                    crate::upscales::original_of(&entry.path),
                 ])?;
             }
         }
+
+        // A variant takes the thumbnail its original already has.
+        //
+        // It is the same picture — that is the entire premise of the pairing —
+        // so generating a second one would decode a 12MB, 2627x3840 file off a
+        // network share to arrive at an image already sitting on local disk.
+        // Inheriting also closes the window where the variant is indexed but
+        // not yet drawable, which is what made three pictures vanish out of the
+        // grid: it is showable the moment it is inserted.
+        //
+        // The content key comes with it, and has to. Derived files are addressed
+        // by key and deleted when no row claims them any more, so a variant
+        // pointing at a thumbnail it does not claim would lose its picture the
+        // moment the original was deleted.
+        //
+        // Both dates come with it too. A variant that stands in for a picture
+        // has to stand where that picture stood: written today, it would
+        // otherwise jump to the front of a newest-first grid and drag itself out
+        // of the run of images it belongs to, so upscaling a handful quietly
+        // reshuffles the library. `added_at` for the same reason under
+        // "Recently added".
+        //
+        // And every judgement made about the picture, because they are about
+        // the picture rather than the file.
+        //
+        // Stars are the one that bites hardest. A variant inserted without them
+        // is unrated while its original was a favourite — so with the
+        // favourites filter on, the original is hidden *because the variant
+        // exists* and the variant is filtered out *because it has no stars*,
+        // and a picture someone deliberately marked disappears from the library
+        // entirely.
+        //
+        // The verdict comes too, and is provably the same answer: the
+        // classifier reads the thumbnail, and the variant shares the original's
+        // thumbnail. Re-running it would spend a NudeNet pass and an anime
+        // tagger pass to arrive at the identical result.
+        //
+        // Dimensions are deliberately *not* inherited: the variant's own size is
+        // the whole point of it, and it earns a 4K badge the original cannot.
+        tx.execute(
+            "UPDATE media AS m
+                SET thumb_path = (SELECT o.thumb_path FROM media o WHERE o.path = m.upscaled_from),
+                    thumb_width = (SELECT o.thumb_width FROM media o WHERE o.path = m.upscaled_from),
+                    thumb_height = (SELECT o.thumb_height FROM media o WHERE o.path = m.upscaled_from),
+                    content_key = (SELECT o.content_key FROM media o WHERE o.path = m.upscaled_from),
+                    modified_at = (SELECT o.modified_at FROM media o WHERE o.path = m.upscaled_from),
+                    added_at = (SELECT o.added_at FROM media o WHERE o.path = m.upscaled_from),
+                    stars = (SELECT o.stars FROM media o WHERE o.path = m.upscaled_from),
+                    verdict_json = (SELECT o.verdict_json FROM media o WHERE o.path = m.upscaled_from),
+                    classified_at = (SELECT o.classified_at FROM media o WHERE o.path = m.upscaled_from)
+              WHERE m.upscaled_from IS NOT NULL
+                AND m.thumb_path IS NULL
+                AND EXISTS (
+                    SELECT 1 FROM media o
+                     WHERE o.path = m.upscaled_from AND o.thumb_path IS NOT NULL
+                )",
+            [],
+        )?;
+
         tx.commit()?;
         Ok(inserted)
     }
@@ -249,6 +648,221 @@ impl Db {
         let conn = self.conn.lock().expect("index mutex poisoned");
         conn.execute("DELETE FROM media WHERE path = ?1", params![path])?;
         Ok(())
+    }
+
+    /// Images with a thumbnail but no perceptual hash yet.
+    ///
+    /// Images only: a video's duplicates are found by its content key, which
+    /// the scan already computed, so hashing poster frames would be work with
+    /// no question behind it.
+    pub fn pending_hashes(&self, limit: i64) -> Result<Vec<PendingFile>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, path, kind, thumb_path, content_key FROM media
+             WHERE (phash IS NULL OR colour_sig IS NULL)
+               AND thumb_path IS NOT NULL AND error IS NULL
+               AND kind = 'image'
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(PendingFile {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                kind: MediaKind::Image,
+                thumb_path: row.get(3)?,
+                content_key: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Stored as a signed integer because SQLite has no unsigned type. The bit
+    /// pattern round-trips exactly, which is all the Hamming distance needs.
+    pub fn set_fingerprint(&self, id: i64, hash: u64, colour: &[u8]) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "UPDATE media SET phash = ?2, colour_sig = ?3 WHERE id = ?1",
+            params![id, hash as i64, colour],
+        )?;
+        Ok(())
+    }
+
+    pub fn all_fingerprints(&self) -> Result<Vec<(i64, u64, Vec<u8>)>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, phash, colour_sig FROM media
+             WHERE phash IS NOT NULL AND colour_sig IS NOT NULL AND error IS NULL",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)? as u64,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Videos that share a content key, as `(group id, row id)` pairs.
+    ///
+    /// The key is size plus a hash of the first and last 64KB, so this is an
+    /// exact match rather than a perceptual one — two videos with the same key
+    /// are the same file. Stronger than comparing sizes, which two unrelated
+    /// videos can share, and it costs nothing because the scan already
+    /// computed it.
+    pub fn video_duplicates(&self) -> Result<Vec<(i64, i64)>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT MIN(id) OVER (PARTITION BY content_key), id FROM media
+             WHERE kind = 'video' AND content_key IS NOT NULL AND error IS NULL
+               AND content_key IN (
+                   SELECT content_key FROM media
+                   WHERE kind = 'video' AND content_key IS NOT NULL AND error IS NULL
+                   GROUP BY content_key HAVING COUNT(*) > 1
+               )",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Replace every duplicate grouping in one transaction.
+    ///
+    /// Cleared first, so a row that stopped having a twin — because the other
+    /// copy was deleted, or excluded — stops being shown as one.
+    pub fn set_duplicate_groups(&self, pairs: &[(i64, i64)]) -> Result<()> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let tx = conn.transaction()?;
+        tx.execute("UPDATE media SET dupe_group = NULL WHERE dupe_group IS NOT NULL", [])?;
+        {
+            let mut stmt = tx.prepare("UPDATE media SET dupe_group = ?2 WHERE id = ?1")?;
+            for (group, id) in pairs {
+                stmt.execute(params![id, group])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Folders the scanner must walk straight past, newest first.
+    pub fn excluded_folders(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt =
+            conn.prepare("SELECT path FROM excluded_folders ORDER BY added_at DESC")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn add_excluded_folder(&self, path: &str, now: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "INSERT INTO excluded_folders (path, added_at) VALUES (?1, ?2)
+             ON CONFLICT(path) DO NOTHING",
+            params![path, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_excluded_folder(&self, path: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute("DELETE FROM excluded_folders WHERE path = ?1", params![path])?;
+        Ok(())
+    }
+
+    /// Drop every indexed row under `prefix`, returning their content keys.
+    ///
+    /// Excluding a folder has to remove what is already indexed as well as stop
+    /// future walks, or the texture pack you just excluded stays in the grid
+    /// until something else happens to prune it.
+    ///
+    /// The keys come back so the caller can delete the thumbnails those rows
+    /// were the last owner of — a key shared with a file elsewhere must keep
+    /// its derived data, which is why this cannot just delete by row.
+    pub fn delete_media_under(&self, prefix: &str) -> Result<Vec<String>> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let tx = conn.transaction()?;
+        let keys: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT DISTINCT content_key FROM media
+                 WHERE content_key IS NOT NULL AND (path = ?1 OR path LIKE ?2 ESCAPE '\\')",
+            )?;
+            let pattern = format!("{}%", escape_like(prefix));
+            let rows = stmt.query_map(params![prefix, pattern], |row| row.get(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        tx.execute(
+            "DELETE FROM media WHERE path = ?1 OR path LIKE ?2 ESCAPE '\\'",
+            params![prefix, format!("{}%", escape_like(prefix))],
+        )?;
+        tx.commit()?;
+        Ok(keys)
+    }
+
+    /// Drop every row whose path `should_drop` rejects.
+    ///
+    /// For rules that are *about the path*, applied to an index that already
+    /// exists. Adding a directory name to the walk's ignore list only stops
+    /// future walks; everything indexed under that name before it was added
+    /// stays until something prunes it, and a rescan will not — the scan's own
+    /// pruning is a set difference against what the walk returned, and a walk
+    /// that now skips a directory reports nothing about it either way.
+    ///
+    /// The predicate is passed in rather than expressed in SQL so the rule
+    /// lives in exactly one place: whatever the walk skips is what this drops,
+    /// and the two cannot drift into disagreeing.
+    ///
+    /// One table scan of `path`, which is the price of asking a question no
+    /// index can answer. Rows are filtered as they stream, so only the matches
+    /// are ever held in memory — on a clean library that is none of them.
+    pub fn prune_media_where<F>(&self, should_drop: F) -> Result<Pruned>
+    where
+        F: Fn(&str) -> bool,
+    {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let tx = conn.transaction()?;
+
+        let doomed: Vec<(String, Option<String>)> = {
+            let mut stmt = tx.prepare("SELECT path, content_key FROM media")?;
+            let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            let mut doomed = Vec::new();
+            for row in rows {
+                let (path, key): (String, Option<String>) = row?;
+                if should_drop(&path) {
+                    doomed.push((path, key));
+                }
+            }
+            doomed
+        };
+
+        {
+            let mut stmt = tx.prepare("DELETE FROM media WHERE path = ?1")?;
+            for (path, _) in &doomed {
+                stmt.execute(params![path])?;
+            }
+        }
+        tx.commit()?;
+
+        // Keys, not rows: derived files are addressed by content, so the same
+        // thumbnail can belong to a copy of the file that is still indexed
+        // elsewhere. The caller decides which are orphaned now that the rows
+        // are gone.
+        let mut keys: Vec<String> = doomed.iter().filter_map(|(_, key)| key.clone()).collect();
+        keys.sort();
+        keys.dedup();
+
+        Ok(Pruned {
+            rows: doomed.len(),
+            keys,
+        })
+    }
+
+    /// Whether any row still uses this content key. See [`Db::delete_media_under`].
+    pub fn content_key_is_orphaned(&self, key: &str) -> Result<bool> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM media WHERE content_key = ?1",
+            params![key],
+            |row| row.get::<_, i64>(0),
+        )? == 0)
     }
 
     pub fn media_paths_in_folder(&self, folder_id: i64) -> Result<Vec<String>> {
@@ -279,7 +893,7 @@ impl Db {
         // and leaves the videos to grind afterwards. Same total work, but the
         // app becomes useful hours earlier.
         let mut stmt = conn.prepare(
-            "SELECT id, path, kind FROM media
+            "SELECT id, path, kind, content_key FROM media
              WHERE thumb_path IS NULL AND error IS NULL
              ORDER BY kind = 'video', modified_at DESC
              LIMIT ?1",
@@ -295,6 +909,7 @@ impl Db {
                     MediaKind::Image
                 },
                 thumb_path: None,
+                content_key: row.get(3)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -309,7 +924,7 @@ impl Db {
         let conn = self.conn.lock().expect("index mutex poisoned");
         // Images first here too: an image is one classifier call, a video is 25.
         let mut stmt = conn.prepare(
-            "SELECT id, path, kind, thumb_path FROM media
+            "SELECT id, path, kind, thumb_path, content_key FROM media
              WHERE classified_at IS NULL AND thumb_path IS NOT NULL AND error IS NULL
              ORDER BY kind = 'video', modified_at DESC
              LIMIT ?1",
@@ -325,9 +940,487 @@ impl Db {
                     MediaKind::Image
                 },
                 thumb_path: row.get(3)?,
+                content_key: row.get(4)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The rating rules this index's verdicts were produced by.
+    ///
+    /// Stored in SQLite's own `user_version` rather than a settings table: it
+    /// is one integer, it needs no schema, and it travels with the file.
+    pub fn rating_version(&self) -> Result<i64> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+    }
+
+    pub fn set_rating_version(&self, version: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        // PRAGMA will not take a bound parameter.
+        conn.execute_batch(&format!("PRAGMA user_version = {version}"))?;
+        Ok(())
+    }
+
+    /// Every classified row that still has the detections it was rated from.
+    ///
+    /// The queue for re-rating after a rule change. Rows with no frames cannot
+    /// be re-rated without running the model again, so they are left alone and
+    /// keep whatever verdict they have.
+    pub fn rows_with_frames(&self) -> Result<Vec<PendingFile>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT m.id, m.path, m.kind, m.thumb_path, m.content_key FROM media m
+             WHERE m.error IS NULL
+               AND EXISTS (SELECT 1 FROM media_frames f WHERE f.media_id = m.id)",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let kind: String = row.get(2)?;
+            Ok(PendingFile {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                kind: if kind == "video" {
+                    MediaKind::Video
+                } else {
+                    MediaKind::Image
+                },
+                thumb_path: row.get(3)?,
+                content_key: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// How many rows a phase has already finished, so progress can be reported
+    /// against the library rather than against one run of the app.
+    ///
+    /// Without this, `done` restarts at zero every launch while `total` shrinks
+    /// to whatever is still outstanding — so resuming a 90%-complete scan
+    /// renders as `0 / 6,000` and reads as though the work was thrown away. It
+    /// was not; the queues are `IS NULL` predicates and finished rows never
+    /// come back. This makes the display say what the index already knows.
+    pub fn completed_in_phase(&self, phase: PhaseQueue) -> Result<i64> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let sql = match phase {
+            PhaseQueue::Dimensions => {
+                "SELECT COUNT(*) FROM media WHERE width > 0 AND content_key IS NOT NULL"
+            }
+            PhaseQueue::Thumbnails => "SELECT COUNT(*) FROM media WHERE thumb_path IS NOT NULL",
+            PhaseQueue::Classification => {
+                "SELECT COUNT(*) FROM media WHERE classified_at IS NOT NULL"
+            }
+            // Documents are outside this phase's universe entirely — neither
+            // queued nor counted as finished — so the two halves of `total`
+            // are drawn from the same population and the bar cannot exceed 100%.
+            PhaseQueue::AnimeReview => {
+                "SELECT COUNT(*) FROM media WHERE anime_at IS NOT NULL AND rating = 'sfw'
+                 AND NOT EXISTS (
+                     SELECT 1 FROM media_tags t
+                     WHERE t.media_id = media.id AND t.tag = 'document'
+                 )"
+            }
+            PhaseQueue::Labels => "SELECT COUNT(*) FROM media WHERE labelled_at IS NOT NULL",
+        };
+        Ok(conn.query_row(sql, [], |row| row.get(0))?)
+    }
+
+    /// Rows NudeNet called SFW that the anime tagger has not yet seen.
+    ///
+    /// SFW only, and that is the whole point of the phase: the tagger exists to
+    /// catch drawn content NudeNet under-fires on, so it can only ever *raise*
+    /// a rating. Running it on something already flagged spends the most
+    /// expensive model in the app to confirm a decision that has been made.
+    ///
+    /// Documents are excluded for the same reason. A Danbooru-trained tagger
+    /// has no useful opinion about a scanned payslip, and the label phase runs
+    /// first in every path that reaches here, so the tag is already known.
+    ///
+    /// Newest first, matching every other queue — the part of the library on
+    /// screen settles first.
+    pub fn pending_anime(&self, limit: i64) -> Result<Vec<PendingFile>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, path, kind, thumb_path, content_key FROM media
+             WHERE anime_at IS NULL
+               AND classified_at IS NOT NULL
+               AND rating = 'sfw'
+               AND thumb_path IS NOT NULL
+               AND error IS NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM media_tags t
+                   WHERE t.media_id = media.id AND t.tag = 'document'
+               )
+             ORDER BY kind = 'video', modified_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            let kind: String = row.get(2)?;
+            Ok(PendingFile {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                kind: if kind == "video" {
+                    MediaKind::Video
+                } else {
+                    MediaKind::Image
+                },
+                thumb_path: row.get(3)?,
+                content_key: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        Ok(conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Record what a file says about how it was generated.
+    ///
+    /// The prompt is duplicated into its own column rather than only living in
+    /// the JSON, so searching for a prompt cannot also match a model hash or a
+    /// seed that happens to contain the same digits.
+    pub fn set_generation(&self, id: i64, generation: Option<&Generation>) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let json = match generation {
+            Some(generation) => Some(serde_json::to_string(generation)?),
+            None => None,
+        };
+        conn.execute(
+            "UPDATE media SET generation_json = ?2, prompt = ?3 WHERE id = ?1",
+            params![id, json, generation.and_then(|g| g.prompt.clone())],
+        )?;
+        Ok(())
+    }
+
+    /// Attach an imported star rating to a row, if one was recorded for it.
+    ///
+    /// Never overwrites a rating already on the row: an import is a one-time
+    /// recovery of somebody's past judgement, and re-running it must not undo
+    /// a newer one made here.
+    pub fn apply_imported_stars(&self, id: i64, path: &str) -> Result<bool> {
+        let Some(key) = outputs_match_key(path) else {
+            return Ok(false);
+        };
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let changed = conn.execute(
+            "UPDATE media SET stars = (SELECT stars FROM imported_stars WHERE match_key = ?2)
+             WHERE id = ?1
+               AND stars IS NULL
+               AND EXISTS (SELECT 1 FROM imported_stars WHERE match_key = ?2)",
+            params![id, key],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Has this database already been read, exactly as it is now?
+    ///
+    /// A changed size or mtime means the webui has been used since, so it is
+    /// read again — the ratings are staged with `ON CONFLICT DO UPDATE`, so a
+    /// re-read refreshes rather than duplicates.
+    pub fn database_already_imported(
+        &self,
+        path: &str,
+        size_bytes: i64,
+        modified_at: i64,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM imported_databases
+                 WHERE path = ?1 AND size_bytes = ?2 AND modified_at = ?3",
+                params![path, size_bytes, modified_at],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    pub fn record_database_import(
+        &self,
+        path: &str,
+        size_bytes: i64,
+        modified_at: i64,
+        staged: i64,
+        now: i64,
+    ) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "INSERT INTO imported_databases (path, size_bytes, modified_at, imported_at, staged)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(path) DO UPDATE SET
+                 size_bytes = excluded.size_bytes,
+                 modified_at = excluded.modified_at,
+                 imported_at = excluded.imported_at,
+                 staged = excluded.staged",
+            params![path, size_bytes, modified_at, now, staged],
+        )?;
+        Ok(())
+    }
+
+    /// Stage ratings read out of an Image Browser database.
+    ///
+    /// Returns how many were stored. Replaces on conflict, so re-importing a
+    /// database that has since been updated refreshes rather than duplicates.
+    pub fn stage_imported_stars(
+        &self,
+        entries: &[(String, i64)],
+        source: &str,
+        now: i64,
+    ) -> Result<usize> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let tx = conn.transaction()?;
+        let mut stored = 0;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO imported_stars (match_key, stars, source, imported_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(match_key) DO UPDATE SET
+                     stars = excluded.stars,
+                     source = excluded.source,
+                     imported_at = excluded.imported_at",
+            )?;
+            for (key, stars) in entries {
+                stmt.execute(params![key, stars, source, now])?;
+                stored += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(stored)
+    }
+
+    /// Apply every staged rating to rows already in the index.
+    ///
+    /// Returns how many rows gained a rating. Runs as one statement rather
+    /// than a row-by-row loop because the join is what SQLite is for.
+    pub fn apply_all_imported_stars(&self) -> Result<usize> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare("SELECT id, path FROM media WHERE stars IS NULL")?;
+        let rows: Vec<(i64, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect();
+        drop(stmt);
+
+        let mut update = conn.prepare(
+            "UPDATE media SET stars = (SELECT stars FROM imported_stars WHERE match_key = ?2)
+             WHERE id = ?1 AND EXISTS (SELECT 1 FROM imported_stars WHERE match_key = ?2)",
+        )?;
+        let mut applied = 0;
+        for (id, path) in rows {
+            if let Some(key) = outputs_match_key(&path) {
+                applied += update.execute(params![id, key])?;
+            }
+        }
+        Ok(applied)
+    }
+
+    /// Set or clear a row's star rating. The one place a person's judgement
+    /// is written; nothing in the pipeline calls this.
+    pub fn set_stars(&self, id: i64, stars: Option<i64>) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "UPDATE media SET stars = ?2 WHERE id = ?1",
+            params![id, stars.filter(|s| (1..=5).contains(s))],
+        )?;
+        Ok(())
+    }
+
+    /// Rate many rows at once. Returns how many actually changed.
+    ///
+    /// One transaction rather than a call per id: a selection can be hundreds,
+    /// and the same reasoning that made `delete_media` a batch applies — that
+    /// many round trips is slow, and a partial failure halfway through is
+    /// impossible to report on sensibly. Here it is also atomic, so a rating
+    /// applied to a selection either lands on all of it or on none.
+    pub fn set_stars_many(&self, ids: &[i64], stars: Option<i64>) -> Result<usize> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let value = stars.filter(|s| (1..=5).contains(s));
+        let tx = conn.transaction()?;
+        let mut changed = 0;
+        {
+            let mut stmt = tx.prepare("UPDATE media SET stars = ?2 WHERE id = ?1")?;
+            for id in ids {
+                changed += stmt.execute(params![id, value])?;
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    /// Rows that have never been examined for structural tags.
+    ///
+    /// Unlike the classification queue this does not require a verdict: a
+    /// document is a document whether or not anything has rated it, and the
+    /// generator metadata sits in the file itself.
+    pub fn pending_labels(&self, limit: i64) -> Result<Vec<PendingFile>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, path, kind, thumb_path, content_key FROM media
+             WHERE labelled_at IS NULL AND error IS NULL
+             ORDER BY modified_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            let kind: String = row.get(2)?;
+            Ok(PendingFile {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                kind: if kind == "video" {
+                    MediaKind::Video
+                } else {
+                    MediaKind::Image
+                },
+                thumb_path: row.get(3)?,
+                content_key: row.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Replace a row's tags and stamp it as examined, in one transaction.
+    ///
+    /// Replace rather than insert, so re-running the pass after a rule change
+    /// corrects a row instead of accumulating both answers.
+    pub fn set_tags(&self, id: i64, tags: &[String], now: i64) -> Result<()> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM media_tags WHERE media_id = ?1", params![id])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO media_tags (media_id, tag) VALUES (?1, ?2)",
+            )?;
+            for tag in tags {
+                stmt.execute(params![id, tag])?;
+            }
+        }
+        tx.execute(
+            "UPDATE media SET labelled_at = ?2 WHERE id = ?1",
+            params![id, now],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Record that the tagger has seen this row, whatever it concluded.
+    ///
+    /// Stamped even when the tagger found nothing, so a file it has no opinion
+    /// about leaves the queue instead of being re-examined on every launch.
+    pub fn mark_anime_done(&self, id: i64, now: i64) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute("UPDATE media SET anime_at = ?2 WHERE id = ?1", params![id, now])?;
+        Ok(())
+    }
+
+    /// Files whose shape is not known yet.
+    ///
+    /// This queue is what keeps the grid still. A tile is laid out from
+    /// `width`/`height`, so a row without them has no size — and every one that
+    /// gains a size later reflows the whole `flex-wrap` wall. Filling these
+    /// takes a header read per file rather than a decode, so the layout settles
+    /// long before the thumbnails do.
+    pub fn pending_dimensions(&self, limit: i64) -> Result<Vec<PendingFile>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        // Newest first, matching the grid's default sort: the tiles the user is
+        // actually looking at stop moving first.
+        let mut stmt = conn.prepare(
+            "SELECT id, path, kind FROM media
+             WHERE (width IS NULL OR width = 0 OR content_key IS NULL) AND error IS NULL
+             ORDER BY kind = 'video', modified_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            let kind: String = row.get(2)?;
+            Ok(PendingFile {
+                id: row.get(0)?,
+                path: row.get(1)?,
+                kind: if kind == "video" {
+                    MediaKind::Video
+                } else {
+                    MediaKind::Image
+                },
+                thumb_path: None,
+                content_key: None,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Record a source's shape without touching anything else about the row.
+    ///
+    /// Deliberately not `mark_failed` on error: a file whose header will not
+    /// read may still thumbnail through the ffmpeg fallback, and failing it
+    /// here would deny it that chance.
+    pub fn update_dimensions(
+        &self,
+        id: i64,
+        width: i64,
+        height: i64,
+        duration_sec: Option<f64>,
+        content_key: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            // `COALESCE(content_key, ?5)`, not the other way round: the key
+            // already on the row wins.
+            //
+            // For an ordinary row this is identical — the key is NULL until
+            // something measures it. It matters for an upscaled variant, which
+            // inherits its original's key at insert *because it shares its
+            // original's thumbnail file*. Letting the measure phase replace
+            // that with a hash of the variant's own bytes leaves it pointing at
+            // derived data it no longer claims, and deleting the original then
+            // takes the variant's picture with it.
+            //
+            // A file whose contents change never reaches this with a stale key:
+            // the watcher drops the row and re-inserts it.
+            "UPDATE media SET width = ?2, height = ?3,
+                 duration_sec = COALESCE(?4, duration_sec),
+                 content_key = COALESCE(content_key, ?5)
+             WHERE id = ?1",
+            params![id, width, height, duration_sec, content_key],
+        )?;
+        Ok(())
+    }
+
+    /// The content key recorded for a path, if the measure phase reached it.
+    pub fn content_key_for_path(&self, path: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare("SELECT content_key FROM media WHERE path = ?1")?;
+        let mut rows = stmt.query(params![path])?;
+        match rows.next()? {
+            Some(row) => Ok(row.get(0)?),
+            None => Ok(None),
+        }
+    }
+
+    /// How many rows still point at a content key.
+    ///
+    /// Content addressing means duplicates share one derived file, so this is
+    /// what makes deleting them safe: zero means the last referent is gone.
+    pub fn rows_with_content_key(&self, key: &str) -> Result<i64> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM media WHERE content_key = ?1",
+            params![key],
+            |row| row.get(0),
+        )?)
     }
 
     /// Swap a video's provisional poster for the frame the rollup chose.
@@ -474,6 +1567,23 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// One row by its exact stored path.
+    ///
+    /// For reaching a picture the grid is deliberately not showing — the
+    /// original behind an upscaled variant, which no list contains and so no
+    /// id is to hand for.
+    pub fn media_by_path(&self, path: &str) -> Result<Option<MediaItem>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let item = conn
+            .query_row(
+                &format!("SELECT {MEDIA_COLUMNS} FROM media WHERE path = ?1"),
+                params![path],
+                map_media_row,
+            )
+            .optional()?;
+        Ok(item)
+    }
+
     pub fn media_by_id(&self, id: i64) -> Result<Option<MediaItem>> {
         let conn = self.conn.lock().expect("index mutex poisoned");
         let item = conn
@@ -490,11 +1600,44 @@ impl Db {
     // Query
     // -----------------------------------------------------------------------
 
-    pub fn query_media(&self, query: &MediaQuery) -> Result<MediaPage> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
-
+    /// The WHERE clause a query implies, shared by the grid and the timeline.
+    ///
+    /// One builder rather than two, because the timeline's whole claim is
+    /// "these bars describe the grid you are looking at" — a predicate added to
+    /// one and forgotten in the other breaks that silently.
+    ///
+    /// `include_range` is the one deliberate divergence: the histogram must
+    /// ignore `modified_after`/`modified_before` or selecting a range would
+    /// collapse the timeline to only the bars inside it, and there would be no
+    /// way to see — or grab — anything outside the current selection.
+    fn media_filter(
+        query: &MediaQuery,
+        include_range: bool,
+    ) -> (Vec<String>, Vec<Box<dyn rusqlite::ToSql>>) {
         let mut where_parts: Vec<String> = Vec::new();
         let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        // A picture that has been upscaled is represented by its variant, not by
+        // both. Unconditional rather than a filter: two rows of the same picture
+        // at different resolutions is not a view anyone wants, and the original
+        // stays reachable from the variant's own footer.
+        //
+        // **Only once the variant has a thumbnail.** A variant is indexed the
+        // moment it is written — the watcher sees the file immediately — but it
+        // cannot be *drawn* until the pipeline has thumbnailed it, and a tile
+        // with no thumbnail renders as empty space. Hiding on the row alone
+        // therefore takes the original away before its replacement can stand in,
+        // and the picture simply vanishes from the grid for as long as the
+        // thumbnail queue takes to reach it. Standing in is the whole claim, so
+        // it has to be true before it is acted on.
+        //
+        // Correlated, but against a partial index over the handful of rows that
+        // are variants at all, so it costs a lookup per candidate row.
+        where_parts.push(
+            "NOT EXISTS (SELECT 1 FROM media v \
+             WHERE v.upscaled_from = media.path AND v.thumb_path IS NOT NULL)"
+                .to_string(),
+        );
 
         if let Some(folder_id) = query.folder_id {
             where_parts.push(format!("folder_id = ?{}", binds.len() + 1));
@@ -512,18 +1655,105 @@ impl Db {
             where_parts.push("is_sexy = 1".to_string());
         }
         if !query.search.trim().is_empty() {
-            where_parts.push(format!("name LIKE ?{} ESCAPE '\\'", binds.len() + 1));
-            binds.push(Box::new(format!("%{}%", escape_like(query.search.trim()))));
+            // Filename *or* prompt. Searching a generated library by what was
+            // asked for is the point of keeping the prompt, and nobody wants
+            // two search boxes to choose between. The prompt is its own column
+            // rather than part of the generation blob so that searching for
+            // "euler" finds a prompt about Euler and not every image made with
+            // that sampler.
+            // Through the FTS index rather than `LIKE`, so it composes with the
+            // folder, kind and rating filters *and* answers in single-digit
+            // milliseconds. Measured on 160,901 rows: `LIKE '%moona%'` needs
+            // 230ms for the count this query also runs — far too slow for a
+            // field that filters the grid as you type.
+            //
+            // A term the index cannot answer yields nothing rather than
+            // everything: typing "ab" should show an empty grid, not the whole
+            // library, because the next keystroke is about to make it useful.
+            match fts_expression(query.search.trim()) {
+                Some(expression) => {
+                    let at = binds.len() + 1;
+                    where_parts.push(format!(
+                        "id IN (SELECT rowid FROM media_fts WHERE media_fts MATCH ?{at})"
+                    ));
+                    binds.push(Box::new(expression));
+                }
+                None => where_parts.push("0".to_string()),
+            }
+        }
+        if let Some(min) = query.min_stars {
+            where_parts.push(format!("stars >= ?{}", binds.len() + 1));
+            binds.push(Box::new(min));
+        }
+        if query.unstarred {
+            // `stars` is NULL until somebody rates a row, and `0` is not used —
+            // clearing a rating writes NULL back. So this is the triage queue:
+            // everything nobody has judged yet.
+            where_parts.push("stars IS NULL".to_string());
+        }
+        if let Some(min) = query.min_longest_edge {
+            // A row the measure phase has not reached yet has no dimensions, so
+            // `MAX` is NULL and the comparison excludes it — which is right.
+            // "At least 4K" is a claim, and an unmeasured row cannot support it.
+            where_parts.push(format!("MAX(width, height) >= ?{}", binds.len() + 1));
+            binds.push(Box::new(min));
+        }
+        if query.duplicates_only {
+            where_parts.push("dupe_group IS NOT NULL".to_string());
+        }
+        if let Some(tag) = query.tag.as_deref().filter(|tag| !tag.is_empty()) {
+            where_parts.push(format!(
+                "EXISTS (SELECT 1 FROM media_tags t WHERE t.media_id = media.id AND t.tag = ?{})",
+                binds.len() + 1
+            ));
+            binds.push(Box::new(tag.to_string()));
+        }
+        for hidden in query.hide_tags.iter().filter(|tag| !tag.is_empty()) {
+            // One NOT EXISTS per tag rather than a single `NOT IN (...)`: the
+            // list is bound, so it cannot be interpolated as one placeholder,
+            // and hiding two tags is an AND of two absences either way.
+            where_parts.push(format!(
+                "NOT EXISTS (SELECT 1 FROM media_tags t WHERE t.media_id = media.id AND t.tag = ?{})",
+                binds.len() + 1
+            ));
+            binds.push(Box::new(hidden.clone()));
         }
 
+        if include_range {
+            // Half-open, so two adjacent weeks share a boundary without
+            // double-counting the file sitting exactly on it.
+            if let Some(after) = query.modified_after {
+                where_parts.push(format!("modified_at >= ?{}", binds.len() + 1));
+                binds.push(Box::new(after));
+            }
+            if let Some(before) = query.modified_before {
+                where_parts.push(format!("modified_at < ?{}", binds.len() + 1));
+                binds.push(Box::new(before));
+            }
+        }
+
+        (where_parts, binds)
+    }
+
+    pub fn query_media(&self, query: &MediaQuery) -> Result<MediaPage> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+
+        let (where_parts, binds) = Self::media_filter(query, true);
         let where_sql = if where_parts.is_empty() {
             String::new()
         } else {
             format!("WHERE {}", where_parts.join(" AND "))
         };
 
-        let order_sql = match query.sort {
+        // Duplicates override the sort: the whole point of the view is seeing
+        // copies of one picture next to each other, and any other order
+        // scatters them through the grid.
+        let order_sql = if query.duplicates_only {
+            "ORDER BY dupe_group, id"
+        } else {
+            match query.sort {
             SortOrder::Recent => "ORDER BY modified_at DESC, id DESC",
+            SortOrder::Added => "ORDER BY added_at DESC, id DESC",
             SortOrder::Oldest => "ORDER BY modified_at ASC, id ASC",
             SortOrder::Name => "ORDER BY name COLLATE NOCASE ASC, id ASC",
             SortOrder::Largest => "ORDER BY size_bytes DESC, id DESC",
@@ -531,6 +1761,7 @@ impl Db {
             // on every query, so page 2 would re-show items from page 1 and
             // silently skip others. This is stable for a given row set.
             SortOrder::Random => "ORDER BY (id * 2654435761) % 2147483647, id",
+            }
         };
 
         let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
@@ -560,6 +1791,52 @@ impl Db {
             total,
             offset: query.offset,
         })
+    }
+
+    /// How many rows the current filters match, per week.
+    ///
+    /// Applies every predicate the grid does **except** the date range — the
+    /// bars have to keep showing the whole span while a selection narrows the
+    /// grid, or there would be nothing outside the selection left to grab.
+    ///
+    /// Weeks start Monday 00:00 UTC. `modified_at` is unix ms, so the epoch
+    /// shift aligns the integer division to Monday: day 0 of the epoch —
+    /// Thursday, 1 January 1970 — belongs to the week that began Monday,
+    /// 29 December 1969, three days earlier, so shifting by 3 days makes the
+    /// division land its boundaries on Mondays. (Pinned by a test against
+    /// 2024-07-01, a known Monday: 4 puts every boundary on Sunday.) UTC rather
+    /// than local time, deliberately — a fixed arithmetic is stable across DST
+    /// changes and machines, and being an hour "off" at a bar boundary is
+    /// invisible at a week's width.
+    ///
+    /// Empty weeks are not returned; the frontend rebuilds gaps from the range.
+    pub fn media_timeline(&self, query: &MediaQuery) -> Result<Vec<crate::types::TimelineBucket>> {
+        const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+        const EPOCH_TO_MONDAY_MS: i64 = 3 * 24 * 60 * 60 * 1000;
+
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let (mut where_parts, binds) = Self::media_filter(query, false);
+        // A file with no sensible mtime — 0 is what a broken copy tool writes —
+        // would otherwise put a 1970 bar on the axis and flatten five decades
+        // of real bars into hairlines.
+        where_parts.push("modified_at > 0".to_string());
+
+        let sql = format!(
+            "SELECT ((modified_at + {EPOCH_TO_MONDAY_MS}) / {WEEK_MS}) AS week, COUNT(*)
+             FROM media WHERE {} GROUP BY week ORDER BY week",
+            where_parts.join(" AND ")
+        );
+        let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(bind_refs.as_slice(), |row| {
+            let week: i64 = row.get(0)?;
+            Ok(crate::types::TimelineBucket {
+                start: week * WEEK_MS - EPOCH_TO_MONDAY_MS,
+                count: row.get(1)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Newest files across every folder — the strip pinned above the grid once
@@ -604,9 +1881,43 @@ impl Db {
     }
 }
 
+/// An FTS5 MATCH expression for text a person typed.
+///
+/// Everything is quoted, so `(` `"` `*` and `-` are searched for rather than
+/// parsed as query syntax — typing `(wide hips:1.3)` should find that text, not
+/// raise "fts5: syntax error near". Terms are ANDed, so word order does not
+/// matter but every word must appear.
+///
+/// Returns `None` for input the trigram tokenizer cannot answer: it indexes
+/// three-character sequences, so nothing shorter than three characters can be
+/// looked up.
+fn fts_expression(input: &str) -> Option<String> {
+    let terms: Vec<String> = input
+        .split_whitespace()
+        .filter(|term| term.chars().count() >= 3)
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect();
+    if terms.is_empty() {
+        return None;
+    }
+    Some(terms.join(" AND "))
+}
+
+/// Bumping this rebuilds the search index once, on the next launch. Change it
+/// whenever the tokenizer or the indexed columns change, or an existing library
+/// keeps an index that no longer matches the queries run against it.
+const FTS_VERSION: &str = "1-trigram-name-prompt";
+
+/// Bump when what an upscaled variant inherits from its original changes.
+///
+/// Rows indexed under an older rule are repaired once on the next launch.
+/// Without it, only variants created *after* the change behave correctly and the
+/// grid is inconsistent in a way nothing on screen explains.
+const VARIANT_INHERITANCE_VERSION: &str = "2-judgements";
+
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
-                             duration_sec, verdict_json, classified_at";
+                             duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to";
 
 fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
     let kind: String = row.get(4)?;
@@ -635,6 +1946,13 @@ fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
         // next scan pass will rewrite it.
         verdict: verdict_json.and_then(|json| serde_json::from_str(&json).ok()),
         classified_at: row.get(15)?,
+        stars: row.get(16)?,
+        generation: row
+            .get::<_, Option<String>>(17)?
+            .and_then(|json| serde_json::from_str(&json).ok()),
+        dupe_group: row.get(18)?,
+        upscaled_from: row.get(19)?,
+        upscaled_to: row.get(20)?,
     })
 }
 
@@ -650,6 +1968,39 @@ fn truncate(input: &str, max: usize) -> String {
         .last()
         .unwrap_or(0);
     format!("{}…", &input[..end])
+}
+
+/// The portion of a path that survives the tree being moved.
+///
+/// A Stable Diffusion Image Browser database records absolute paths from
+/// whenever the image was made:
+///
+/// ```text
+/// D:\Development\__big_stable-diffusion-webui\outputs\txt2img-images\2023-05-08\00043-2571709213.png
+/// ```
+///
+/// By the time anything imports it, that tree has usually been archived to
+/// another drive and often renamed on the way. What does *not* change is
+/// everything from `outputs` onwards — that is the webui's own layout, so it
+/// travels with the files. Measured against two real databases, keying on this
+/// matched 2,204 of 2,204 surviving ratings in one and every survivor in the
+/// other, where matching on the recorded install directory matched none.
+///
+/// `None` for a path with no `outputs` segment, which is every file that did
+/// not come out of a webui.
+pub fn outputs_match_key(path: &str) -> Option<String> {
+    let normalised = path.replace('/', "\\");
+    let lower = normalised.to_lowercase();
+    let at = lower
+        .split('\\')
+        .position(|segment| segment == "outputs")?;
+    Some(
+        lower
+            .split('\\')
+            .skip(at)
+            .collect::<Vec<_>>()
+            .join("\\"),
+    )
 }
 
 /// `%` and `_` are wildcards in LIKE; a filename containing either would match
@@ -670,6 +2021,15 @@ pub struct ScannedFile {
     pub modified_at: i64,
 }
 
+/// What one sweep of [`Db::prune_media_where`] removed.
+#[derive(Debug, Clone, Default)]
+pub struct Pruned {
+    pub rows: usize,
+    /// Content keys the dropped rows used, deduped. Some may still be claimed
+    /// by rows elsewhere, so these are candidates rather than garbage.
+    pub keys: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PendingFile {
     pub id: i64,
@@ -678,6 +2038,21 @@ pub struct PendingFile {
     /// Set only by `pending_classification` — the classifier reads the
     /// thumbnail, never the multi-megapixel original.
     pub thumb_path: Option<String>,
+    /// What derived files for this row are addressed by. `None` until the
+    /// measure phase reaches it, or when its two windows could not be read.
+    pub content_key: Option<String>,
+}
+
+/// Which phase's queue a count refers to. See [`Db::completed_in_phase`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhaseQueue {
+    Dimensions,
+    Thumbnails,
+    Classification,
+    /// Only SFW rows are ever queued for it, so "completed" counts the rows
+    /// that were eligible and are done — not the whole library.
+    AnimeReview,
+    Labels,
 }
 
 /// Everything the thumbnail phase learns about a file in one pass.
@@ -726,6 +2101,14 @@ mod tests {
             rating: None,
             sexy_only: false,
             search: String::new(),
+            tag: None,
+            min_stars: None,
+            unstarred: false,
+            min_longest_edge: None,
+            modified_after: None,
+            modified_before: None,
+            duplicates_only: false,
+            hide_tags: Vec::new(),
             sort: SortOrder::Recent,
             limit: 100,
             offset: 0,
@@ -746,6 +2129,532 @@ mod tests {
         )
         .expect("insert");
         (db, folder)
+    }
+
+    /// Monday 2024-07-01 00:00 UTC — a known week boundary to build cases on.
+    #[cfg(test)]
+    const A_MONDAY_MS: i64 = 1_719_792_000_000;
+
+    #[test]
+    fn the_timeline_buckets_by_week_and_honours_the_filters() {
+        const WEEK: i64 = 7 * 24 * 60 * 60 * 1000;
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                // Two in the first week, one the week after.
+                file("/media/a.jpg", MediaKind::Image, A_MONDAY_MS + 1000),
+                file("/media/b.jpg", MediaKind::Image, A_MONDAY_MS + WEEK - 1),
+                file("/media/c.mp4", MediaKind::Video, A_MONDAY_MS + WEEK + 1000),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let buckets = db.media_timeline(&query()).expect("timeline");
+        assert_eq!(
+            buckets,
+            vec![
+                crate::types::TimelineBucket { start: A_MONDAY_MS, count: 2 },
+                crate::types::TimelineBucket { start: A_MONDAY_MS + WEEK, count: 1 },
+            ]
+        );
+
+        // The kind filter reaches the bars: the histogram describes the grid.
+        let images_only = MediaQuery { kind: Some(MediaKind::Image), ..query() };
+        let buckets = db.media_timeline(&images_only).expect("timeline");
+        assert_eq!(buckets.iter().map(|b| b.count).sum::<i64>(), 2);
+    }
+
+    #[test]
+    fn the_timeline_ignores_its_own_range_but_the_grid_applies_it() {
+        // The one deliberate divergence between the two: bars keep showing the
+        // whole span while a selection narrows the grid — otherwise selecting
+        // a range would leave nothing outside it to grab.
+        const WEEK: i64 = 7 * 24 * 60 * 60 * 1000;
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/media/a.jpg", MediaKind::Image, A_MONDAY_MS + 1000),
+                file("/media/b.jpg", MediaKind::Image, A_MONDAY_MS + WEEK + 1000),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let narrowed = MediaQuery {
+            modified_after: Some(A_MONDAY_MS),
+            modified_before: Some(A_MONDAY_MS + WEEK),
+            ..query()
+        };
+
+        let page = db.query_media(&narrowed).expect("query");
+        assert_eq!(page.total, 1, "the grid must narrow to the selected week");
+
+        let buckets = db.media_timeline(&narrowed).expect("timeline");
+        assert_eq!(buckets.len(), 2, "the bars must keep showing the whole span");
+    }
+
+    #[test]
+    fn a_file_with_a_zero_mtime_stays_off_the_timeline() {
+        // 0 is what a broken copy tool writes. A 1970 bar would flatten five
+        // decades of real bars into hairlines.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/media/broken.jpg", MediaKind::Image, 0),
+                file("/media/fine.jpg", MediaKind::Image, A_MONDAY_MS + 1000),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let buckets = db.media_timeline(&query()).expect("timeline");
+        assert_eq!(buckets.len(), 1);
+        assert_eq!(buckets[0].start, A_MONDAY_MS);
+    }
+
+    #[test]
+    fn unstarred_finds_exactly_what_nobody_has_judged() {
+        // The triage queue behind the "AI Unrated" filter. `min_stars` cannot
+        // express it: that comparison is *at least*, so `Some(0)` would match
+        // every row including the rated ones and quietly do nothing.
+        let (db, _) = seeded();
+        let all = db.query_media(&query()).expect("query");
+        let first = all.items[0].id;
+        db.set_stars(first, Some(4)).expect("rate one");
+
+        let unstarred = MediaQuery {
+            unstarred: true,
+            ..query()
+        };
+        let found = db.query_media(&unstarred).expect("query");
+
+        assert_eq!(found.total, all.total - 1, "the rated row should be gone");
+        assert!(
+            found.items.iter().all(|item| item.stars.is_none()),
+            "every row returned must be unrated"
+        );
+        assert!(!found.items.iter().any(|item| item.id == first));
+    }
+
+    #[test]
+    fn clearing_a_rating_returns_a_row_to_the_triage_queue() {
+        // `set_stars(None)` writes NULL rather than 0, which is what makes
+        // `stars IS NULL` the right predicate. A zero would leave the row
+        // invisible to both this filter and the "4+" one.
+        let (db, _) = seeded();
+        let id = db.query_media(&query()).expect("query").items[0].id;
+        db.set_stars(id, Some(5)).expect("rate");
+        db.set_stars(id, None).expect("clear");
+
+        let found = db
+            .query_media(&MediaQuery {
+                unstarred: true,
+                ..query()
+            })
+            .expect("query");
+        assert!(found.items.iter().any(|item| item.id == id));
+    }
+
+    #[test]
+    fn variants_indexed_under_the_old_rule_are_repaired_on_open() {
+        // A variant created before dates were inherited keeps the date it was
+        // written with, and sits at the front of a newest-first grid instead of
+        // beside the picture it replaces. The inheritance at insert cannot fix
+        // it — that skips a row which already has a thumbnail — so opening the
+        // index repairs it once.
+        let file = tempfile::NamedTempFile::new().expect("temp");
+        let path = file.path().to_path_buf();
+        drop(file);
+
+        {
+            let db = Db::open(&path).expect("open");
+            let folder = db.add_folder("/out", 1).expect("add folder");
+            db.insert_media_batch(
+                folder,
+                &[super::tests::file("/out/00091.png", MediaKind::Image, 111)],
+                222,
+            )
+            .expect("insert");
+            let original = db.media_by_path("/out/00091.png").expect("lookup").expect("row");
+            db.update_poster(original.id, "/thumbs/o.jpg").expect("thumb");
+            db.set_stars(original.id, Some(5)).expect("stars");
+
+            // Written as the old code would have: its own dates, its own
+            // thumbnail, so nothing at insert will touch it again.
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO media
+                     (folder_id, path, name, kind, size_bytes, modified_at, added_at,
+                      upscaled_from, thumb_path)
+                 VALUES (?1, '/out/00091_upscaled_4k.png', '00091_upscaled_4k.png', 'image',
+                         1, 999999, 999999, '/out/00091.png', '/thumbs/v.jpg')",
+                params![folder],
+            )
+            .expect("insert variant");
+
+            // An index that predates the rule has no such setting at all. The
+            // first open above recorded one before this row existed, so it is
+            // cleared to put the file in the state a real library is in.
+            conn.execute("DELETE FROM settings WHERE key = 'variant_inheritance'", [])
+                .expect("clear the marker");
+        }
+
+        // Reopened: the repair runs.
+        let db = Db::open(&path).expect("reopen");
+        let variant = db
+            .media_by_path("/out/00091_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        assert_eq!(variant.modified_at, 111);
+        assert_eq!(variant.added_at, 222);
+        assert_eq!(
+            variant.stars,
+            Some(5),
+            "an unrated variant of a favourite vanishes under the favourites              filter — hidden by its own existence, filtered out for having no              rating of its own",
+        );
+
+        // And once only — a second open must not undo a later legitimate edit.
+        drop(db);
+        let db = Db::open(&path).expect("third open");
+        assert_eq!(
+            db.media_by_path("/out/00091_upscaled_4k.png")
+                .unwrap()
+                .unwrap()
+                .modified_at,
+            111
+        );
+    }
+
+    #[test]
+    fn a_variant_takes_its_originals_thumbnail_and_place() {
+        // What the user should see: select, upscale, come back, and the picture
+        // is exactly where it was with a 4K badge on it. That needs three things
+        // inherited — the thumbnail (so it is drawable at once and nothing is
+        // decoded twice), and both dates (so it does not jump to the front of a
+        // newest-first grid and drag itself out of the run it belongs to).
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(folder, &[file("/out/00091.png", MediaKind::Image, 111)], 222)
+            .expect("insert original");
+
+        let original = db.media_by_path("/out/00091.png").expect("lookup").expect("row");
+        db.update_thumbnail(
+            original.id,
+            &ThumbnailUpdate {
+                thumb_path: "/thumbs/ab/cd/original.jpg".to_string(),
+                thumb_width: 360,
+                thumb_height: 512,
+                width: 1040,
+                height: 1520,
+                duration_sec: None,
+            },
+        )
+        .expect("thumbnail");
+        db.set_stars(original.id, Some(5)).expect("stars");
+
+        // The variant arrives later, with today's dates.
+        db.insert_media_batch(
+            folder,
+            &[file("/out/00091_upscaled_4k.png", MediaKind::Image, 999_999)],
+            999_999,
+        )
+        .expect("insert variant");
+
+        let variant = db
+            .media_by_path("/out/00091_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        assert_eq!(
+            variant.thumb_path.as_deref(),
+            Some("/thumbs/ab/cd/original.jpg"),
+            "the same picture, so the same thumbnail rather than a second decode",
+        );
+        assert_eq!(variant.thumb_width, Some(360));
+        assert_eq!(variant.modified_at, 111, "sorts where the original sorted");
+        assert_eq!(variant.added_at, 222);
+        assert_eq!(
+            variant.stars,
+            Some(5),
+            "a rating is about the picture, and the favourites filter would              otherwise drop a variant whose original was a favourite — while              that original is hidden precisely because the variant exists",
+        );
+
+        // And it is the one shown, immediately — no window where neither is.
+        let page = db.query_media(&query()).expect("query");
+        let names: Vec<&str> = page.items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["00091_upscaled_4k.png"]);
+    }
+
+    #[test]
+    fn each_half_of_a_pair_names_the_other() {
+        // What `with_counterparts` walks to delete both. The variant names its
+        // original directly; the original only learns about the variant through
+        // the derived `upscaled_to`, so both directions have to work or a
+        // delete started from the wrong end strands a file.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/00021.png", MediaKind::Image, 1),
+                file("/out/00021_upscaled_4k.png", MediaKind::Image, 2),
+                file("/out/00099.png", MediaKind::Image, 3),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let variant = db
+            .media_by_path("/out/00021_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        assert_eq!(variant.upscaled_from.as_deref(), Some("/out/00021.png"));
+        assert_eq!(variant.upscaled_to, None);
+
+        let original = db.media_by_path("/out/00021.png").expect("lookup").expect("row");
+        assert_eq!(original.upscaled_from, None);
+        assert_eq!(
+            original.upscaled_to.as_deref(),
+            Some("/out/00021_upscaled_4k.png"),
+            "the original has to be able to reach its variant, not only the reverse",
+        );
+
+        // A picture with no variant names nothing, so a delete of it takes one file.
+        let lone = db.media_by_path("/out/00099.png").expect("lookup").expect("row");
+        assert_eq!(lone.upscaled_from, None);
+        assert_eq!(lone.upscaled_to, None);
+    }
+
+    #[test]
+    fn a_variants_own_size_can_be_recorded_without_losing_the_shared_key() {
+        // The upscaler already knows what it produced, so the size is written
+        // straight from the run rather than measured again. It must not take
+        // the inherited content key with it — that is what the shared thumbnail
+        // is addressed by, and losing it orphans the variant's picture the
+        // moment the original is deleted.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(folder, &[file("/out/00021.png", MediaKind::Image, 1)], 1)
+            .expect("insert original");
+        let original = db.media_by_path("/out/00021.png").expect("lookup").expect("row");
+        db.update_thumbnail(
+            original.id,
+            &ThumbnailUpdate {
+                thumb_path: "/thumbs/ab/cd/o.jpg".to_string(),
+                thumb_width: 360,
+                thumb_height: 512,
+                width: 1040,
+                height: 1520,
+                duration_sec: None,
+            },
+        )
+        .expect("thumbnail");
+        db.update_dimensions(original.id, 1040, 1520, None, Some("sharedkey"))
+            .expect("key");
+
+        db.insert_media_batch(
+            folder,
+            &[file("/out/00021_upscaled_4k.png", MediaKind::Image, 2)],
+            2,
+        )
+        .expect("insert variant");
+        let variant = db
+            .media_by_path("/out/00021_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        assert_eq!(variant.width, 0, "nothing has measured it yet");
+        assert_eq!(
+            db.content_key_for_path("/out/00021_upscaled_4k.png").unwrap().as_deref(),
+            Some("sharedkey"),
+            "inherited with the thumbnail it addresses",
+        );
+
+        // The measure phase passes a key computed from the variant's own
+        // bytes. It must lose to the inherited one, or the shared thumbnail is
+        // left claimed by nobody.
+        db.update_dimensions(variant.id, 2627, 3840, None, Some("itsownhash"))
+            .expect("size");
+
+        let variant = db
+            .media_by_path("/out/00021_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        assert_eq!((variant.width, variant.height), (2627, 3840));
+        assert_eq!(variant.thumb_path.as_deref(), Some("/thumbs/ab/cd/o.jpg"));
+        assert_eq!(
+            db.content_key_for_path("/out/00021_upscaled_4k.png").unwrap().as_deref(),
+            Some("sharedkey"),
+            "the inherited key has to survive, or the shared thumbnail is orphaned",
+        );
+    }
+
+    #[test]
+    fn a_variant_without_a_thumbnail_does_not_hide_anything_yet() {
+        // The bug this exists for: the watcher indexes a variant the instant it
+        // is written, seconds before the pipeline can thumbnail it. Hiding on
+        // the row alone took the original away while its replacement was still
+        // an undrawable empty tile, so three pictures vanished out of the grid.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/00091.png", MediaKind::Image, 300),
+                file("/out/00091_upscaled_4k.png", MediaKind::Image, 200),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        // Nothing thumbnailed: both are visible, because hiding one would leave
+        // a hole rather than a substitution.
+        let names = |page: MediaPage| {
+            let mut names: Vec<String> = page.items.iter().map(|i| i.name.clone()).collect();
+            names.sort();
+            names
+        };
+        assert_eq!(
+            names(db.query_media(&query()).expect("query")),
+            vec!["00091.png", "00091_upscaled_4k.png"],
+        );
+
+        // The variant becomes drawable, and only now stands in.
+        let variant = db
+            .media_by_path("/out/00091_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        db.update_poster(variant.id, "/thumbs/ab/cd/variant.jpg").expect("thumb");
+
+        assert_eq!(
+            names(db.query_media(&query()).expect("query")),
+            vec!["00091_upscaled_4k.png"],
+        );
+    }
+
+    #[test]
+    fn an_upscaled_variant_stands_in_for_what_it_came_from() {
+        // The grid shows one row per picture. Both would be the same picture at
+        // two resolutions, which is not a view anyone asked for.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/00118.png", MediaKind::Image, 300),
+                file("/out/00118_upscaled_4k.png", MediaKind::Image, 200),
+                file("/out/00119.png", MediaKind::Image, 100),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        // Thumbnailed, because a variant only stands in once it can be drawn —
+        // see `a_variant_without_a_thumbnail_does_not_hide_anything_yet`.
+        let variant = db
+            .media_by_path("/out/00118_upscaled_4k.png")
+            .expect("lookup")
+            .expect("row");
+        db.update_poster(variant.id, "/thumbs/ab/cd/v.jpg").expect("thumb");
+
+        let page = db.query_media(&query()).expect("query");
+        let mut names: Vec<&str> = page.items.iter().map(|i| i.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["00118_upscaled_4k.png", "00119.png"]);
+        assert_eq!(page.total, 2, "the count has to agree with the rows");
+
+        // And the variant names its original, which is the only route back.
+        let variant = page
+            .items
+            .iter()
+            .find(|i| i.name == "00118_upscaled_4k.png")
+            .expect("variant");
+        assert_eq!(variant.upscaled_from.as_deref(), Some("/out/00118.png"));
+    }
+
+    #[test]
+    fn the_hidden_original_is_still_reachable_by_path() {
+        // It is in no list, so `media_by_path` is the only way the lightbox can
+        // offer it. If this stops working the footer label goes nowhere.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/00118.png", MediaKind::Image, 300),
+                file("/out/00118_upscaled_4k.png", MediaKind::Image, 200),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let original = db.media_by_path("/out/00118.png").expect("lookup").expect("row");
+        assert_eq!(original.name, "00118.png");
+        assert_eq!(original.upscaled_from, None);
+        assert!(db.media_by_path("/out/nope.png").expect("lookup").is_none());
+    }
+
+    #[test]
+    fn a_variant_whose_original_was_never_indexed_still_shows() {
+        // Upscale a folder, then stop watching the one the sources were in.
+        // Hiding on a name that matches nothing would hide nothing, and the
+        // variant must not disappear along with it.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[file("/out/00118_upscaled_4k.png", MediaKind::Image, 200)],
+            1,
+        )
+        .expect("insert");
+
+        let page = db.query_media(&query()).expect("query");
+        assert_eq!(page.total, 1);
+    }
+
+    #[test]
+    fn filtering_by_longest_edge_reads_either_orientation() {
+        // The filter the grid's 4K badge is paired with. Both have to agree, so
+        // this pins the half that lives in SQL: the comparison is against the
+        // *longer* side, because a library is not all landscape.
+        let (db, _folder) = seeded();
+        let pending = db.pending_dimensions(10).expect("queue");
+        let by_path = |path: &str| pending.iter().find(|p| p.path == path).expect(path).id;
+
+        // Landscape 4K, portrait 4K, and one below it.
+        db.update_dimensions(by_path("/media/a.jpg"), 4000, 2500, None, None).unwrap();
+        db.update_dimensions(by_path("/media/b.mp4"), 2160, 3840, None, None).unwrap();
+        db.update_dimensions(by_path("/media/c_100%.png"), 1920, 1080, None, None).unwrap();
+
+        let four_k = MediaQuery {
+            min_longest_edge: Some(3840),
+            ..query()
+        };
+        let page = db.query_media(&four_k).expect("query");
+        let mut names: Vec<&str> = page.items.iter().map(|item| item.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["a.jpg", "b.mp4"], "portrait counts too");
+
+        // And the filter absent means the filter is absent.
+        assert_eq!(db.query_media(&query()).unwrap().total, 3);
+    }
+
+    #[test]
+    fn an_unmeasured_row_cannot_claim_to_be_4k() {
+        // Mid-scan a row has no dimensions. "At least 4K" is a claim, and a row
+        // that has not been measured cannot support it — so it is excluded
+        // rather than let through on a NULL comparison.
+        let (db, _folder) = seeded();
+        let four_k = MediaQuery {
+            min_longest_edge: Some(3840),
+            ..query()
+        };
+        assert_eq!(db.query_media(&four_k).unwrap().total, 0);
     }
 
     #[test]
@@ -788,6 +2697,207 @@ mod tests {
             .unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.items[0].name, "b.mp4");
+    }
+
+    #[test]
+    fn fts_expressions_are_quoted_so_prompt_punctuation_is_searchable() {
+        // `(wide hips:1.3)` is text someone will paste in from a prompt. Left
+        // unquoted, FTS5 parses the parentheses and the colon as query syntax
+        // and raises "fts5: syntax error near", which reaches the UI as a red
+        // toast for a perfectly reasonable search.
+        assert_eq!(
+            fts_expression("(wide hips:1.3)").as_deref(),
+            Some(r#""(wide" AND "hips:1.3)""#)
+        );
+        // A quote in the input must not end the quoted term.
+        assert_eq!(fts_expression(r#"say "hi""#).as_deref(), Some(r#""say" AND """hi""""#));
+    }
+
+    #[test]
+    fn fts_expressions_drop_terms_the_trigram_index_cannot_answer() {
+        // Trigram indexes three-character sequences, so a shorter term matches
+        // nothing at all — silently returning zero results for `a girl` would
+        // be worse than searching for `girl`.
+        assert_eq!(fts_expression("a girl").as_deref(), Some(r#""girl""#));
+        assert_eq!(fts_expression("of"), None);
+        assert_eq!(fts_expression("   "), None);
+    }
+
+    /// How many rows the grid's search finds for `text`.
+    fn found(db: &Db, text: &str) -> i64 {
+        let mut q = query();
+        q.search = text.to_string();
+        db.query_media(&q).unwrap().total
+    }
+
+    /// One row whose name and prompt are both searchable.
+    fn with_prompt(prompt: &str) -> (Db, i64) {
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[file("/media/00166-3997412987.png", MediaKind::Image, 1)],
+            1,
+        )
+        .expect("insert");
+        let id = db.query_media(&query()).unwrap().items[0].id;
+        db.set_generation(
+            id,
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".into(),
+                prompt: Some(prompt.to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("set generation");
+        (db, id)
+    }
+
+    #[test]
+    fn searching_finds_a_filename_and_a_prompt_alike() {
+        let (db, _) = with_prompt("official art, moona hoshinova, 1girl");
+
+        assert_eq!(found(&db, "00166"), 1, "by filename");
+        assert_eq!(found(&db, "hoshinova"), 1, "by prompt");
+        // A substring *inside* a token, which a word tokenizer would miss:
+        // `1girl` is one word, and this is why the index is trigram.
+        assert_eq!(found(&db, "girl"), 1, "inside a token");
+        // Terms are ANDed, so word order does not matter but all must appear.
+        assert_eq!(found(&db, "hoshinova moona"), 1);
+        assert_eq!(found(&db, "hoshinova beach"), 0);
+        // Punctuation from a real prompt must not be parsed as query syntax.
+        assert_eq!(found(&db, "(wide hips:1.3)"), 0);
+    }
+
+    #[test]
+    fn a_rule_added_after_the_scan_still_reaches_what_it_indexed() {
+        // The case this exists for: files were indexed, *then* the directory
+        // holding them joined the walk's ignore list. A rescan cannot fix that
+        // — its pruning is a set difference against what the walk returned, and
+        // the walk no longer reports the directory at all — so the rows would
+        // sit in the grid forever.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/txt2img-images/2026-08-04/00166.png", MediaKind::Image, 1),
+                file("/out/txt2img-grids/2026-08-04/grid-0008.png", MediaKind::Image, 2),
+                file("/out/txt2img-grids/2026-08-05/grid-0009.png", MediaKind::Image, 3),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let pruned = db
+            .prune_media_where(crate::scan::is_in_ignored_dir)
+            .expect("prune");
+        assert_eq!(pruned.rows, 2);
+
+        let left: Vec<String> = db
+            .media_paths_in_folder(folder)
+            .expect("paths")
+            .into_iter()
+            .collect();
+        assert_eq!(left, vec!["/out/txt2img-images/2026-08-04/00166.png"]);
+
+        // Idempotent: the second launch after a rule change has nothing to do,
+        // which is what lets this run unconditionally at every startup.
+        let again = db
+            .prune_media_where(crate::scan::is_in_ignored_dir)
+            .expect("prune");
+        assert_eq!(again.rows, 0);
+        assert!(again.keys.is_empty());
+    }
+
+    #[test]
+    fn pruning_reports_the_content_keys_it_orphaned() {
+        // Derived files are addressed by content, so the caller has to be told
+        // which keys the dropped rows were using — it cannot work them out
+        // afterwards, because the rows are gone.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[file("/out/txt2img-grids/grid-0008.png", MediaKind::Image, 1)],
+            1,
+        )
+        .expect("insert");
+        let id = db.pending_dimensions(10).expect("queue")[0].id;
+        db.update_dimensions(id, 2080, 3040, None, Some("deadbeef"))
+            .expect("key");
+
+        let pruned = db
+            .prune_media_where(crate::scan::is_in_ignored_dir)
+            .expect("prune");
+        assert_eq!(pruned.rows, 1);
+        assert_eq!(pruned.keys, vec!["deadbeef".to_string()]);
+    }
+
+    #[test]
+    fn a_library_that_predates_the_search_index_gets_one_built() {
+        // The case every existing install is in, and the one the in-memory
+        // tests cannot reach: rows already present when the FTS table is
+        // created. They never pass through the triggers, so without a backfill
+        // the index is empty and every search returns nothing.
+        //
+        // This failed once because the "is it built" check counted rows —
+        // and on an external-content table `count(*)` is answered from the
+        // *content* table, so an empty index reports the full library.
+        let path = std::env::temp_dir().join(format!("luma-fts-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        {
+            let db = Db::open(&path).unwrap();
+            let folder = db.add_folder("/media", 1).unwrap();
+            db.insert_media_batch(folder, &[file("/media/moona.png", MediaKind::Image, 1)], 1)
+                .unwrap();
+        }
+
+        // Put it in the state an upgrading install starts from: rows present,
+        // index absent.
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "DROP TABLE media_fts; DELETE FROM settings WHERE key = 'fts_version';",
+            )
+            .unwrap();
+        }
+
+        let db = Db::open(&path).unwrap();
+        let mut query = query();
+        query.search = "moona".to_string();
+        assert_eq!(
+            db.query_media(&query).unwrap().total,
+            1,
+            "an index built after the rows exist must still find them"
+        );
+
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_search_index_follows_a_row_that_changes() {
+        // An external-content FTS table is only as correct as its triggers.
+        let (db, id) = with_prompt("a castle at dusk");
+        assert_eq!(found(&db, "castle"), 1);
+
+        // Re-parsed with a different prompt: the old text must stop matching.
+        db.set_generation(
+            id,
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".into(),
+                prompt: Some("a harbour at dawn".into()),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(found(&db, "castle"), 0);
+        assert_eq!(found(&db, "harbour"), 1);
+
+        db.delete_media_by_path("/media/00166-3997412987.png").unwrap();
+        assert_eq!(found(&db, "harbour"), 0);
     }
 
     #[test]
@@ -995,6 +3105,171 @@ mod tests {
     }
 
     #[test]
+    fn a_rule_change_can_be_replayed_from_stored_detections() {
+        // What makes a threshold change cost seconds instead of an hour: the
+        // rows that kept their detections can be re-rated without the model.
+        use crate::types::{Detection, FrameVerdict};
+
+        let (db, _) = seeded();
+        assert_eq!(db.rating_version().unwrap(), 0, "a fresh index predates any rules");
+        assert!(db.rows_with_frames().unwrap().is_empty());
+
+        let target = db.query_media(&query()).unwrap().items[0].id;
+        db.replace_frames(
+            target,
+            &[NewFrame {
+                frame_index: 0,
+                timestamp_sec: 0.0,
+                path: "/thumbs/a.jpg".into(),
+                verdict_json: serde_json::to_string(&FrameVerdict {
+                    person: true,
+                    sexy: false,
+                    nude: false,
+                    rating: Rating::Sfw,
+                    top_label: None,
+                    top_label_title: None,
+                    top_score: 0.0,
+                    // The exact case from the reported file: a covered label
+                    // that the old 0.5 bar discarded by five thousandths.
+                    detections: vec![Detection {
+                        label: "FEMALE_GENITALIA_COVERED".into(),
+                        score: 0.495,
+                        box_: [0.3, 0.5, 0.1, 0.2],
+                    }],
+                })
+                .unwrap(),
+            }],
+        )
+        .unwrap();
+
+        let replayable = db.rows_with_frames().unwrap();
+        assert_eq!(replayable.len(), 1, "only rows that kept their detections");
+        assert_eq!(replayable[0].id, target);
+
+        // Replaying through the real rules, not a copy of them.
+        let frames = db.frames_for_media(target).unwrap();
+        let rated = crate::rating::rate_frame(
+            &frames[0].verdict.detections,
+            crate::rating::ClassifyOptions::default(),
+        );
+        assert_eq!(
+            rated.rating,
+            Rating::Suggestive,
+            "0.495 clears the 0.4 suggestive bar it used to miss"
+        );
+
+        db.set_rating_version(crate::rating::RATING_VERSION).unwrap();
+        assert_eq!(db.rating_version().unwrap(), crate::rating::RATING_VERSION);
+    }
+
+    #[test]
+    fn an_image_keeps_the_boxes_its_rollup_throws_away() {
+        // Why images get a frame row at all. The rolled-up `MediaVerdict` says
+        // *what* was found but not *where* — it has no `detections` field — so
+        // storing only the rollup left the lightbox with nothing to draw and
+        // "Show boxes" inert across every image in a library.
+        use crate::types::{Detection, FrameVerdict};
+
+        let (db, _) = seeded();
+        let target = db.query_media(&query()).unwrap().items[0].id;
+
+        let frame = FrameVerdict {
+            person: true,
+            sexy: true,
+            nude: false,
+            rating: Rating::Suggestive,
+            top_label: Some("FEMALE_BREAST_COVERED".into()),
+            top_label_title: Some("Covered chest".into()),
+            top_score: 0.87,
+            detections: vec![Detection {
+                label: "FEMALE_BREAST_COVERED".into(),
+                score: 0.87,
+                box_: [0.41, 0.08, 0.11, 0.14],
+            }],
+        };
+
+        db.replace_frames(
+            target,
+            &[NewFrame {
+                frame_index: 0,
+                timestamp_sec: 0.0,
+                path: "/thumbs/ab/cd/x.jpg".into(),
+                verdict_json: serde_json::to_string(&frame).unwrap(),
+            }],
+        )
+        .unwrap();
+
+        let frames = db.frames_for_media(target).unwrap();
+        assert_eq!(frames.len(), 1, "an image gets exactly one frame row");
+        let boxes = &frames[0].verdict.detections;
+        assert_eq!(boxes.len(), 1, "the detection must survive the round trip");
+        assert_eq!(boxes[0].box_, [0.41, 0.08, 0.11, 0.14]);
+        assert_eq!(boxes[0].label, "FEMALE_BREAST_COVERED");
+
+        // And the rollup still has no idea where anything is — which is the
+        // whole reason the frame row has to exist.
+        let rolled = crate::rating::from_single_frame(&frame);
+        let json = serde_json::to_value(&rolled).unwrap();
+        assert!(
+            json.get("detections").is_none(),
+            "a MediaVerdict carries no boxes; only the frame does"
+        );
+    }
+
+    #[test]
+    fn a_resumed_scan_counts_what_the_library_already_has() {
+        // The bug this pins: `done` restarted at zero every launch while
+        // `total` shrank to whatever was outstanding, so reopening a nearly
+        // finished library showed "0 / 2" and read as though every thumbnail
+        // had been thrown away. Nothing was lost — the display just refused to
+        // say so.
+        let (db, _) = seeded();
+        assert_eq!(db.completed_in_phase(PhaseQueue::Thumbnails).unwrap(), 0);
+
+        let target = db.query_media(&query()).unwrap().items[0].id;
+        db.update_thumbnail(
+            target,
+            &ThumbnailUpdate {
+                thumb_path: "/thumbs/a.jpg".into(),
+                thumb_width: 512,
+                thumb_height: 384,
+                width: 4000,
+                height: 3000,
+                duration_sec: None,
+            },
+        )
+        .unwrap();
+
+        let already = db.completed_in_phase(PhaseQueue::Thumbnails).unwrap();
+        let outstanding = db.pending_thumbnails(i64::MAX).unwrap().len() as i64;
+        assert_eq!(already, 1);
+        assert_eq!(
+            already + outstanding,
+            3,
+            "the denominator must stay the whole library, not the remainder"
+        );
+    }
+
+    #[test]
+    fn dimensions_are_queued_separately_and_cleared_without_a_thumbnail() {
+        // The measure phase exists so tiles have a size before they have a
+        // picture; a row it has filled must leave its queue while still
+        // awaiting a thumbnail.
+        let (db, _) = seeded();
+        assert_eq!(db.pending_dimensions(i64::MAX).unwrap().len(), 3);
+
+        let target = db.query_media(&query()).unwrap().items[0].id;
+        db.update_dimensions(target, 4000, 3000, None, Some("deadbeef")).unwrap();
+
+        assert_eq!(db.pending_dimensions(i64::MAX).unwrap().len(), 2);
+        assert_eq!(
+            db.pending_thumbnails(i64::MAX).unwrap().len(),
+            3,
+            "measuring a row must not remove it from the thumbnail queue"
+        );
+    }
+
+    #[test]
     fn pending_queues_move_a_file_along_the_pipeline() {
         let (db, _) = seeded();
         assert_eq!(db.pending_thumbnails(100).unwrap().len(), 3);
@@ -1018,5 +3293,131 @@ mod tests {
         let ready = db.pending_classification(100).unwrap();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].thumb_path.as_deref(), Some("/thumbs/a.jpg"));
+    }
+
+    #[test]
+    fn tags_can_both_narrow_and_exclude() {
+        let (db, _) = seeded();
+        let ids: Vec<i64> = db
+            .query_media(&query())
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| item.id)
+            .collect();
+
+        assert_eq!(db.pending_labels(100).unwrap().len(), 3);
+        db.set_tags(ids[0], &["document".to_string()], 5).unwrap();
+        db.set_tags(ids[1], &["generated".to_string()], 5).unwrap();
+        db.set_tags(ids[2], &[], 5).unwrap();
+        assert!(db.pending_labels(100).unwrap().is_empty(), "all three examined");
+
+        let only_docs = MediaQuery { tag: Some("document".into()), ..query() };
+        let page = db.query_media(&only_docs).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].id, ids[0]);
+
+        // The case this feature exists for: everything except the scans.
+        let no_docs = MediaQuery { hide_tags: vec!["document".into()], ..query() };
+        let page = db.query_media(&no_docs).unwrap();
+        assert_eq!(page.total, 2);
+        assert!(page.items.iter().all(|item| item.id != ids[0]));
+
+        // Untagged rows survive every exclusion — absence of a tag is not a tag.
+        let neither = MediaQuery {
+            hide_tags: vec!["document".into(), "generated".into()],
+            ..query()
+        };
+        let page = db.query_media(&neither).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].id, ids[2]);
+
+        // Re-labelling replaces rather than accumulates, so a corrected rule
+        // fixes a row instead of leaving it in both buckets.
+        db.set_tags(ids[0], &["generated".to_string()], 6).unwrap();
+        assert_eq!(db.query_media(&only_docs).unwrap().total, 0);
+        assert_eq!(
+            db.query_media(&MediaQuery { tag: Some("generated".into()), ..query() })
+                .unwrap()
+                .total,
+            2
+        );
+    }
+
+    #[test]
+    fn only_sfw_rows_queue_for_the_anime_tagger() {
+        // The economics of the second pass. It is the most expensive model in
+        // the app and can only ever *raise* a rating, so every row it looks at
+        // that is already flagged is pure waste. This is the query that decides
+        // whether the phase costs 70% of the library or all of it.
+        let (db, _) = seeded();
+        let ids: Vec<i64> = db
+            .query_media(&query())
+            .unwrap()
+            .items
+            .iter()
+            .map(|item| item.id)
+            .collect();
+
+        for (index, id) in ids.iter().enumerate() {
+            db.update_thumbnail(
+                *id,
+                &ThumbnailUpdate {
+                    thumb_path: format!("/thumbs/{index}.jpg"),
+                    thumb_width: 320,
+                    thumb_height: 240,
+                    width: 1600,
+                    height: 1200,
+                    duration_sec: None,
+                },
+            )
+            .unwrap();
+        }
+
+        // Nothing is classified yet, so nothing is eligible: the tagger refines
+        // a verdict, it does not produce the first one.
+        assert!(db.pending_anime(100).unwrap().is_empty());
+
+        let verdict = |rating: Rating| MediaVerdict {
+            person: true,
+            sexy: rating != Rating::Sfw,
+            nude: rating == Rating::Explicit,
+            rating,
+            top_label: None,
+            top_label_title: None,
+            top_score: 0.0,
+            frame_count: 1,
+            sexy_frame_count: 0,
+            poster_frame_index: Some(0),
+        };
+        db.update_verdict(ids[0], &verdict(Rating::Sfw), 10).unwrap();
+        db.update_verdict(ids[1], &verdict(Rating::Suggestive), 10).unwrap();
+        db.update_verdict(ids[2], &verdict(Rating::Explicit), 10).unwrap();
+
+        let queued = db.pending_anime(100).unwrap();
+        assert_eq!(queued.len(), 1, "only the SFW row is worth a second opinion");
+        assert_eq!(queued[0].id, ids[0]);
+
+        // A scan is SFW and stays SFW. Running a Danbooru tagger over a payslip
+        // is the most expensive model in the app answering a question nobody
+        // asked, so a document leaves the queue without being looked at.
+        db.set_tags(ids[0], &["document".to_string()], 15).unwrap();
+        assert!(
+            db.pending_anime(100).unwrap().is_empty(),
+            "a document is not worth a second opinion either"
+        );
+        assert_eq!(
+            db.completed_in_phase(PhaseQueue::AnimeReview).unwrap(),
+            0,
+            "and it is not counted as finished — it was never in this phase"
+        );
+        db.set_tags(ids[0], &[], 16).unwrap();
+        assert_eq!(db.pending_anime(100).unwrap().len(), 1, "untagged, it returns");
+
+        // Stamped even when the tagger concludes nothing, or the row would come
+        // back on every launch forever.
+        db.mark_anime_done(ids[0], 20).unwrap();
+        assert!(db.pending_anime(100).unwrap().is_empty());
+        assert_eq!(db.completed_in_phase(PhaseQueue::AnimeReview).unwrap(), 1);
     }
 }

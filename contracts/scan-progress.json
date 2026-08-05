@@ -8,6 +8,14 @@
     "errors": []
   },
   {
+    "phase": "measuring",
+    "folderId": 1,
+    "done": 412,
+    "total": 670,
+    "current": "/Volumes/vault/Images/pics/superb/21006089.gif",
+    "errors": []
+  },
+  {
     "phase": "classifying",
     "folderId": 1,
     "done": 118,
@@ -17,6 +25,30 @@
       "/Volumes/vault/Images/pics/superb/broken.jpg: unsupported image format",
       "/Volumes/vault/Video/clips/truncated.mp4: ffprobe reported no duration"
     ]
+  },
+  {
+    "phase": "hashing",
+    "folderId": null,
+    "done": 512,
+    "total": 670,
+    "current": "/Volumes/vault/Images/pics/superb/21006089.gif",
+    "errors": []
+  },
+  {
+    "phase": "labelling",
+    "folderId": null,
+    "done": 640,
+    "total": 670,
+    "current": "/Volumes/vault/Images/pics/superb/scan-0004.png",
+    "errors": []
+  },
+  {
+    "phase": "tagging",
+    "folderId": null,
+    "done": 431,
+    "total": 502,
+    "current": "/Volumes/vault/Images/pics/superb/21006089.gif",
+    "errors": []
   },
   {
     "phase": "done",

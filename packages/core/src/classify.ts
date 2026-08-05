@@ -1,4 +1,4 @@
-import { titleOf, weightOf } from './labels.ts'
+import { ratesOnPresence, titleOf, weightOf } from './labels.ts'
 import type { Detection, FrameVerdict, MediaVerdict, Rating } from './schemas.ts'
 
 /**
@@ -17,7 +17,9 @@ export interface ClassifyOptions {
 }
 
 export const DEFAULT_CLASSIFY_OPTIONS: ClassifyOptions = {
-  suggestiveMinScore: 0.5,
+  // 0.4 for the suggestive band only — see the note on the Rust side, which
+  // carries the measurement. Explicit stays at 0.5.
+  suggestiveMinScore: 0.4,
   explicitMinScore: 0.5,
   personMinScore: 0.35,
 }
@@ -62,8 +64,10 @@ export function rateFrame(
     if (detection.score >= options.personMinScore) person = true
 
     const rated =
-      (weight === 'explicit' && detection.score >= options.explicitMinScore) ||
-      (weight === 'suggestive' && detection.score >= options.suggestiveMinScore)
+      (weight === 'explicit' &&
+        (ratesOnPresence(detection.label) || detection.score >= options.explicitMinScore)) ||
+      (weight === 'suggestive' &&
+        (ratesOnPresence(detection.label) || detection.score >= options.suggestiveMinScore))
 
     if (!rated) continue
 

@@ -1,26 +1,38 @@
-import { basenameOf, type Folder, type LibraryStats } from '@luma/core'
+import { basenameOf, displayPath, type Folder, type LibraryStats } from '@luma/core'
 import { Button, cn } from '@luma/ui'
+import { MAX_TILE_SIZE, MIN_TILE_SIZE } from './MediaTile.tsx'
 
 interface FolderSidebarProps {
   folders: Folder[]
   stats: LibraryStats | null
+  /** Longest edge of a grid tile, in CSS pixels. */
+  tileSize: number
+  onTileSize: (size: number) => void
   selectedFolderId: number | null
   onSelect: (folderId: number | null) => void
   onAdd: () => void
   onRemove: (id: number) => void
   onRescan: (id: number) => void
   onRetryFailed: () => void
+  onImportRatings: () => void
+  exclusions: string[]
+  onInclude: (path: string) => void
 }
 
 export function FolderSidebar({
   folders,
   stats,
+  tileSize,
+  onTileSize,
   selectedFolderId,
   onSelect,
   onAdd,
   onRemove,
   onRescan,
   onRetryFailed,
+  onImportRatings,
+  exclusions,
+  onInclude,
 }: FolderSidebarProps) {
   return (
     <aside className="flex w-60 shrink-0 flex-col gap-3 border-r border-white/5 bg-zinc-950/60 p-3">
@@ -97,8 +109,14 @@ export function FolderSidebar({
         ))}
       </nav>
 
+      {/* Stats and the size slider share one block, and it is the block that
+          takes up the slack — so both sit against the bottom of the sidebar
+          however many folders are in the list above. The slider is grouped with
+          them rather than with the buttons because it is the same kind of
+          thing: a property of the view, not an action on the library. */}
+      <div className="mt-auto flex flex-col gap-2 border-t border-white/5 pt-3">
       {stats ? (
-        <dl className="mt-auto grid grid-cols-2 gap-x-2 gap-y-1 border-t border-white/5 pt-3 text-[11px] text-zinc-500">
+        <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-zinc-500">
           <dt>Images</dt>
           <dd className="text-right tabular-nums text-zinc-300">{stats.images.toLocaleString()}</dd>
           <dt>Videos</dt>
@@ -135,6 +153,68 @@ export function FolderSidebar({
           ) : null}
         </dl>
       ) : null}
+
+        {/* Tiny on purpose. It is set once in a while and then left alone, so
+            it should read as a setting sitting under the numbers rather than
+            compete with the folder list for attention. */}
+        <label className="flex items-center gap-2 text-[11px] text-zinc-500">
+          <span className="shrink-0">Size</span>
+          <input
+            type="range"
+            min={MIN_TILE_SIZE}
+            max={MAX_TILE_SIZE}
+            step={20}
+            value={tileSize}
+            onChange={(event) => onTileSize(Number(event.target.value))}
+            aria-label="Grid image size"
+            title="How large each tile is drawn. Thumbnails are 512px whatever this says, so this costs nothing to change."
+            className="h-1 min-w-0 flex-1 cursor-pointer accent-indigo-400"
+          />
+          <span className="w-6 shrink-0 text-right tabular-nums text-zinc-400">{tileSize}</span>
+        </label>
+      </div>
+
+      {/* Excluded folders are otherwise invisible: the library is simply
+          smaller than the folder, with nothing saying why. Listing them is what
+          makes the exclusion undoable rather than a thing you did once. */}
+      {exclusions.length > 0 ? (
+        <details className="border-t border-white/5 pt-2 text-[11px]">
+          <summary className="cursor-pointer text-zinc-500 hover:text-zinc-300">
+            Excluded ({exclusions.length})
+          </summary>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {exclusions.map((path) => (
+              <li key={path} className="group flex items-center gap-1">
+                <span
+                  className="min-w-0 flex-1 truncate text-zinc-600"
+                  title={displayPath(path)}
+                >
+                  {basenameOf(path) || displayPath(path)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onInclude(path)}
+                  title={`Scan ${displayPath(path)} again`}
+                  className="shrink-0 rounded px-1 text-zinc-600 opacity-0 hover:bg-white/10 hover:text-zinc-200 group-hover:opacity-100"
+                >
+                  undo
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {/* Ratings from a previous life. Deliberately at the bottom and quiet:
+          it is a one-off migration, not something anyone does twice. */}
+      <button
+        type="button"
+        onClick={onImportRatings}
+        title="Import 1-5 star ratings from a Stable Diffusion Image Browser database (wib.sqlite3). Ratings for folders you have not scanned yet are kept and attach when you do."
+        className="text-left text-[11px] text-zinc-600 underline decoration-dotted underline-offset-2 hover:text-zinc-400"
+      >
+        Import ratings…
+      </button>
     </aside>
   )
 }

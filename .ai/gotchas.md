@@ -174,7 +174,90 @@ dead slot would deadlock the next caller waiting on `idle.recv()`.
 stderr during imports and model load, because nudenet and onnxruntime print
 provider warnings on some platforms and a stray line would corrupt the stream.
 
+## DeviantArt
+
+**A DeviantArt error can arrive with HTTP 200.** `stash/submit` switches to
+chunked encoding partway through a large upload, by which point the status line
+is already on the wire — so it answers 200 and describes the failure in the
+body. `interpret_api_body` therefore reads the body *first* and only falls back
+to the status. Checking the status first reports failures as successes and then
+fails one line later looking for an item id that was never issued.
+
+**The redirect URI must match the registered whitelist character for
+character**, which is why the port is a constant and not an ephemeral one. It is
+also why the setup panel shows the URI with a copy button rather than hiding it:
+a mismatch fails *silently* — the browser lands on DeviantArt's error page and
+the app just goes on waiting for a callback that will never arrive.
+
+**The listener is bound before the browser opens.** A port already in use has to
+fail before someone logs in, not after they have been redirected into nothing.
+
+**Form booleans are `1`/`0`, not `true`/`false`.** The API is PHP-backed, where
+the string `"false"` is truthy — so `noai=false` spelled that way means the
+opposite of what it says. Pinned by a unit test because nothing else would
+notice.
+
+**`is_mature` and `mature_level` travel together or not at all.** The API
+rejects either one without the other, so the panel's checkbox sets and clears
+both, and the derivation returns `matureLevel: null` exactly when `isMature` is
+false.
+
+**Nothing derives a submission twice.** `packages/core/src/publish.ts` is the
+only place that maps a verdict onto tags and mature flags; Rust uploads what the
+panel hands it. This is deliberately *unlike* the rating rules, which genuinely
+exist in both languages — there, both sides must compute; here, only one does.
+Adding a "sensible default" on the Rust side would silently overwrite the edits
+someone just made in the review panel.
+
+**The API cannot make a multi-image deviation.** DeviantArt supports them — 10
+images per submission, 100 for Core — but only through the website, or by
+selecting files in Studio and choosing *More actions ▸ Merge to multi-image*.
+`stash/submit` takes one `file`, and passing an existing `itemid` **replaces**
+that file rather than adding to it. `stack`/`stackid` are a Sta.sh folder, not a
+slideshow. Hence the stack name on the panel: it is not organisation for its own
+sake, it is what turns the merge into two clicks instead of hunting twenty files
+out of a flat list.
+
+**An upscaled variant has no frame rows.** It inherits its original's *verdict*
+at insert, but `replace_frames` only ever runs during classification and a
+variant never goes through it — so `media_frames` is empty for it and
+`mediaFrames()` returns nothing. This is not an edge case: the grid **hides an
+original once a variant exists**, so a variant is what most selections are made
+of. Anything that wants per-detection data for a selected row will find none.
+The pose rule reads `verdict.topLabel` for exactly this reason, which is also
+the more correct source — `rateFrame` defines it as the highest-scoring *rated*
+detection, so a 0.99 face already never beats a 0.6 exposure there.
+
+**Two label families are excluded from the pose rule, and both exclusions are
+load-bearing.** `ANIME_*` is a whole-image judgement on a frame-filling
+placeholder box — it has no location, so it cannot indicate orientation, and it
+routinely outscores every located detection. `FACE_*` appears in both
+orientations, and NudeNet scores faces higher than almost anything else; a face
+turned back over the shoulder is one of the commonest from-behind poses there
+is. Letting either compete would decide nearly every picture "front", which is
+the single outcome that makes the feature pointless.
+
+**The refresh token expires after three months**, at which point uploads start
+failing for someone who connected once and forgot. The failure path says so
+rather than reporting a bare rejection.
+
 ## Tooling
+
+**The dev server is pinned to 4340, and the pin matters.** `dth-character-studio`
+— which is often running on the same machine — uses 4330, so the two Tauri apps
+can be up at once. Two things keep it that way:
+
+- `devUrl` in `tauri.conf.json` hard-codes `http://localhost:4340`, so the port
+  is not something vite is free to choose. Changing one without the other gives
+  a window pointing at nothing.
+- `--strictPort` makes vite **fail** rather than fall back to 4341. A silent
+  fallback is the worse outcome: the shell would come up and render a blank
+  page, which reads as an app bug rather than a busy port.
+
+The two apps are also on different identifiers — `net.glitchvector.luma-vault`
+against `com.polynaut.dthcharacterstudio` — so their indexes, thumbnails and
+extracted frames live in separate app-data directories and cannot collide
+either.
 
 **Rust 1.88+ is required** by several transitive dependencies (`image`, `time`,
 `serde_with`). 1.87 fails with a `rustc is not supported` error listing them.

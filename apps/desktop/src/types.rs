@@ -130,6 +130,33 @@ pub struct MediaItem {
     pub duration_sec: Option<f64>,
     pub verdict: Option<MediaVerdict>,
     pub classified_at: Option<i64>,
+    /// A person's 1-5 judgement, never a model's. `None` means unrated.
+    #[serde(default)]
+    pub stars: Option<i64>,
+    /// What the file says about how it was made, when it says anything.
+    #[serde(default)]
+    pub generation: Option<crate::generated::Generation>,
+    /// Which set of duplicates this row belongs to, or `None` for none. Shared
+    /// by every member, and numbered from the lowest — see `dupes::group`.
+    #[serde(default)]
+    pub dupe_group: Option<i64>,
+    /// The picture this row is an upscaled variant of, by path, or `None` when
+    /// it is not one — see `upscales::original_of`.
+    ///
+    /// A path rather than a row id because the pair is derived from the
+    /// filename the moment the variant is indexed, and the original may not
+    /// have been walked yet. The grid hides whatever a variant names here; the
+    /// lightbox offers it as the way back.
+    #[serde(default)]
+    pub upscaled_from: Option<String>,
+    /// The upscaled variant made *from* this row, by path, when one exists.
+    ///
+    /// The other direction of the same pair. Derived per query rather than
+    /// stored, because it is a fact about a different row: storing it would
+    /// mean writing to the original every time a variant appeared or was
+    /// deleted, and getting that wrong leaves a link pointing at nothing.
+    #[serde(default)]
+    pub upscaled_to: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -148,8 +175,26 @@ pub struct MediaFrame {
 pub enum JobPhase {
     Idle,
     Globbing,
+    /// Recording each file's dimensions, before any thumbnail exists.
+    ///
+    /// Its own phase because it is what makes the grid stable: a tile sized
+    /// from the index never moves, and until a row has dimensions it has no
+    /// size to be laid out with. Header-only reads, so it finishes in a
+    /// fraction of the time thumbnailing takes.
+    Measuring,
     Thumbnailing,
     Classifying,
+    /// Fingerprinting each image so duplicates can be found.
+    Hashing,
+    /// Working out what kind of picture each row is — a scan, a generated
+    /// image — independent of how it was rated.
+    Labelling,
+    /// The anime tagger's second opinion on what NudeNet called SFW.
+    ///
+    /// Last, and its own phase, because it is the only optional one: the
+    /// library is fully rated before it starts, so interrupting it costs
+    /// accuracy on drawn content and nothing else.
+    Tagging,
     Done,
 }
 
@@ -197,6 +242,13 @@ pub struct LibraryStats {
 #[serde(rename_all = "lowercase")]
 pub enum SortOrder {
     Recent,
+    /// When the *vault* first saw the file, not when the file was written.
+    ///
+    /// The two differ by years: a folder of decade-old photos added today is
+    /// new to the library and ancient by `modified_at`. This is the question
+    /// "what just came in", which is what the recently-added strip answered
+    /// before the search field took its place.
+    Added,
     Oldest,
     Name,
     Largest,
@@ -212,9 +264,55 @@ pub struct MediaQuery {
     pub rating: Option<Rating>,
     pub sexy_only: bool,
     pub search: String,
+    /// Show only rows carrying this structural tag. `None` means "no filter".
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Show only rows rated at least this many stars. `Some(1)` is therefore
+    /// "anything I have rated at all".
+    #[serde(default)]
+    pub min_stars: Option<i64>,
+    /// Show only rows nobody has starred yet — the triage queue.
+    ///
+    /// A separate field rather than `min_stars: Some(0)`, which under an
+    /// *at least* comparison means "everything" and would quietly do nothing.
+    #[serde(default)]
+    pub unstarred: bool,
+    /// Show only rows whose longest edge is at least this many pixels.
+    ///
+    /// A number rather than a `four_k_only` flag, because the rule is a number
+    /// and it is defined once — in `FOUR_K_EDGE` in the TypeScript core, which
+    /// the grid's badge also reads. Sending the threshold rather than a name
+    /// keeps the badge and the filter from ever disagreeing about what 4K is.
+    #[serde(default)]
+    pub min_longest_edge: Option<i64>,
+    /// Show only files that have at least one duplicate, grouped together.
+    #[serde(default)]
+    pub duplicates_only: bool,
+    /// Hide rows carrying any of these. Separate from `tag` rather than a
+    /// signed list because the two are genuinely different questions — "show
+    /// me the documents" and "never show me documents" are both wanted, and
+    /// the second is the reason this exists.
+    #[serde(default)]
+    pub hide_tags: Vec<String>,
+    /// Show only rows modified inside `[modified_after, modified_before)`,
+    /// unix ms. Half-open, so adjacent week selections share a boundary
+    /// without double-counting the file sitting exactly on it.
+    #[serde(default)]
+    pub modified_after: Option<i64>,
+    #[serde(default)]
+    pub modified_before: Option<i64>,
     pub sort: SortOrder,
     pub limit: i64,
     pub offset: i64,
+}
+
+/// One week of the library, for the timeline's bars. `start` is the Monday
+/// 00:00 UTC of the week, unix ms. Empty weeks are not sent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineBucket {
+    pub start: i64,
+    pub count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -223,4 +321,82 @@ pub struct MediaPage {
     pub items: Vec<MediaItem>,
     pub total: i64,
     pub offset: i64,
+}
+
+// ---------------------------------------------------------------------------
+// DeviantArt
+// ---------------------------------------------------------------------------
+
+/// One submission, as a person approved it.
+///
+/// Deserialized rather than derived. `packages/core/src/publish.ts` works out
+/// what a row *should* say and the panel lets someone change it; this side
+/// uploads what it is handed and decides nothing, which is why the mapping has
+/// no second copy here to drift out of sync with the first.
+///
+/// `media_id` rather than a path: the webview never names a file for the
+/// backend to read, the same rule the upscaler follows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviantArtDraft {
+    pub media_id: i64,
+    pub title: String,
+    /// `artist_comments` on the wire.
+    pub description: String,
+    pub tags: Vec<String>,
+    pub is_mature: bool,
+    /// `moderate` or `strict`. `None` exactly when `is_mature` is false — the
+    /// API rejects a level without the flag and the flag without a level.
+    pub mature_level: Option<String>,
+    pub mature_classification: Vec<String>,
+    pub is_ai_generated: bool,
+    pub noai: bool,
+}
+
+/// Which account is connected, and what it is actually allowed to do.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviantArtAccount {
+    /// A client id has been entered. Without one there is nothing to connect.
+    pub configured: bool,
+    /// A refresh token is held. Says nothing about whether it still works —
+    /// DeviantArt expires them after three months.
+    pub connected: bool,
+    pub username: Option<String>,
+    pub client_id: Option<String>,
+    /// Shown in the settings panel, because it has to be pasted into the app's
+    /// whitelist on DeviantArt *exactly* or the callback never arrives.
+    pub redirect_uri: String,
+    /// What the last authorization actually granted, which is not necessarily
+    /// what was asked for.
+    pub scopes: Vec<String>,
+    /// Whether `publish` came back among them. A freshly registered app may not
+    /// get it, and finding that out at connect time is far better than finding
+    /// out on the first upload.
+    pub can_publish: bool,
+}
+
+/// What became of one picture.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviantArtResult {
+    pub media_id: i64,
+    pub title: String,
+    /// The Sta.sh item, once staged. Publishing needs it.
+    pub item_id: Option<i64>,
+    /// The public deviation, once published.
+    pub url: Option<String>,
+    pub deviation_id: Option<String>,
+    pub published: bool,
+    pub error: Option<String>,
+}
+
+/// What a batch did. Per-item failures are rows here, never an early return.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviantArtSummary {
+    pub staged: i64,
+    pub published: i64,
+    pub failed: i64,
+    pub results: Vec<DeviantArtResult>,
 }

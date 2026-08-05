@@ -68,6 +68,24 @@ if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; 
   echo ""
 fi
 
+# The anime tagger is optional and large (~378MB), so it is downloaded rather
+# than vendored. Skipped silently when it is already present.
+ANIME_DIR="$REPO_ROOT/models/anime-tagger"
+ANIME_REPO="https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main"
+if [ -f "$ANIME_DIR/model.onnx" ] && [ -f "$ANIME_DIR/selected_tags.csv" ]; then
+  echo "==> Anime tagger already present"
+else
+  echo "==> Downloading the anime tagger (~378MB, Apache-2.0)"
+  mkdir -p "$ANIME_DIR"
+  if curl -fL --progress-bar -o "$ANIME_DIR/model.onnx.part" "$ANIME_REPO/model.onnx"      && curl -fL -o "$ANIME_DIR/selected_tags.csv" "$ANIME_REPO/selected_tags.csv"; then
+    mv "$ANIME_DIR/model.onnx.part" "$ANIME_DIR/model.onnx"
+  else
+    rm -f "$ANIME_DIR/model.onnx.part"
+    echo "warning: could not download the anime tagger — drawn content will be" >&2
+    echo "         rated by NudeNet alone. Re-run this script to retry." >&2
+  fi
+fi
+
 echo "==> Verifying the classifier can load its model"
 if "$VENV_PATH/bin/python" "$WORKER" --check; then
   echo ""

@@ -34,6 +34,22 @@ export const NUDENET_LABELS = [
 export type NudeNetLabel = (typeof NUDENET_LABELS)[number]
 
 /**
+ * Danbooru ratings from the anime tagger, which judges a whole picture rather
+ * than locating anatomy in it.
+ *
+ * A separate list because they are not detector classes: NUDENET_LABELS mirrors
+ * what the bundled model can emit and is checked against the worker's announced
+ * set, so putting a judgement in it would make that check lie. `general` and
+ * `sensitive` are not carried — see the note in classify_worker.py.
+ */
+export const ANIME_LABELS = ['ANIME_QUESTIONABLE', 'ANIME_EXPLICIT'] as const
+
+export type AnimeLabel = (typeof ANIME_LABELS)[number]
+
+/** Any label that can carry a weight, wherever it came from. */
+export type RatedLabel = NudeNetLabel | AnimeLabel
+
+/**
  * How much each label contributes to a verdict.
  *
  * - `explicit`  — primary genitalia/anus/breast exposure. Sets `nude` (and `sexy`).
@@ -46,11 +62,14 @@ export type NudeNetLabel = (typeof NUDENET_LABELS)[number]
  */
 export type LabelWeight = 'explicit' | 'suggestive' | 'neutral'
 
-export const LABEL_WEIGHTS: Record<NudeNetLabel, LabelWeight> = {
+export const LABEL_WEIGHTS: Record<RatedLabel, LabelWeight> = {
   FEMALE_GENITALIA_EXPOSED: 'explicit',
   MALE_GENITALIA_EXPOSED: 'explicit',
   ANUS_EXPOSED: 'explicit',
   FEMALE_BREAST_EXPOSED: 'explicit',
+  // Danbooru's rating, from the anime tagger — whole-image, so threshold-gated
+  // rather than presence-rated. Mirrors `weight_of` in rating.rs.
+  ANIME_EXPLICIT: 'explicit',
 
   BUTTOCKS_EXPOSED: 'suggestive',
   BELLY_EXPOSED: 'suggestive',
@@ -60,6 +79,7 @@ export const LABEL_WEIGHTS: Record<NudeNetLabel, LabelWeight> = {
   FEMALE_BREAST_COVERED: 'suggestive',
   BUTTOCKS_COVERED: 'suggestive',
   ANUS_COVERED: 'suggestive',
+  ANIME_QUESTIONABLE: 'suggestive',
 
   FACE_FEMALE: 'neutral',
   FACE_MALE: 'neutral',
@@ -70,7 +90,7 @@ export const LABEL_WEIGHTS: Record<NudeNetLabel, LabelWeight> = {
 }
 
 /** Human-readable label, for tooltips and bounding-box captions. */
-export const LABEL_TITLES: Record<NudeNetLabel, string> = {
+export const LABEL_TITLES: Record<RatedLabel, string> = {
   FEMALE_GENITALIA_COVERED: 'covered vagina',
   FEMALE_GENITALIA_EXPOSED: 'exposed vagina',
   MALE_GENITALIA_EXPOSED: 'exposed penis',
@@ -89,12 +109,14 @@ export const LABEL_TITLES: Record<NudeNetLabel, string> = {
   FEET_EXPOSED: 'exposed feet',
   FACE_FEMALE: 'female face',
   FACE_MALE: 'male face',
+  ANIME_QUESTIONABLE: 'drawn, suggestive',
+  ANIME_EXPLICIT: 'drawn, explicit',
 }
 
-const KNOWN = new Set<string>(NUDENET_LABELS)
+const KNOWN = new Set<string>([...NUDENET_LABELS, ...ANIME_LABELS])
 
-/** Narrows an arbitrary detector string to a known label. */
-export function isNudeNetLabel(value: string): value is NudeNetLabel {
+/** Narrows an arbitrary detector string to one this codebase has a weight for. */
+export function isRatedLabel(value: string): value is RatedLabel {
   return KNOWN.has(value)
 }
 
@@ -105,10 +127,25 @@ export function isNudeNetLabel(value: string): value is NudeNetLabel {
  * failing the whole scan.
  */
 export function weightOf(label: string): LabelWeight {
-  return isNudeNetLabel(label) ? LABEL_WEIGHTS[label] : 'neutral'
+  return isRatedLabel(label) ? LABEL_WEIGHTS[label] : 'neutral'
 }
 
 /** Display title of an arbitrary detector string, falling back to the raw label. */
 export function titleOf(label: string): string {
-  return isNudeNetLabel(label) ? LABEL_TITLES[label] : label.toLowerCase().replace(/_/g, ' ')
+  return isRatedLabel(label) ? LABEL_TITLES[label] : label.toLowerCase().replace(/_/g, ' ')
+}
+
+/**
+ * Labels whose *presence* rates, whatever the score.
+ *
+ * Mirrors `rates_on_presence` in apps/desktop/src/rating.rs — see the note
+ * there for why `FEMALE_BREAST_COVERED` and `MALE_BREAST_EXPOSED` are excluded.
+ */
+export function ratesOnPresence(label: string): boolean {
+  return (
+    label.includes('GENITALIA') ||
+    label.includes('ANUS') ||
+    label.includes('BUTTOCKS') ||
+    label === 'FEMALE_BREAST_EXPOSED'
+  )
 }

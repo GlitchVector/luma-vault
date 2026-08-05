@@ -9,13 +9,14 @@
 
 export {
   NUDENET_LABELS,
+  ANIME_LABELS,
   LABEL_WEIGHTS,
   LABEL_TITLES,
-  isNudeNetLabel,
+  isRatedLabel,
   weightOf,
   titleOf,
 } from './labels.ts'
-export type { NudeNetLabel, LabelWeight } from './labels.ts'
+export type { NudeNetLabel, AnimeLabel, RatedLabel, LabelWeight } from './labels.ts'
 
 export {
   DEFAULT_CLASSIFY_OPTIONS,
@@ -27,20 +28,82 @@ export {
 } from './classify.ts'
 export type { ClassifyOptions } from './classify.ts'
 
+export { rangeBetween, toggleSelected, retainVisible } from './selection.ts'
+
 export { DEFAULT_SAMPLING, planFrameTimestamps } from './sampling.ts'
 export type { SamplingOptions } from './sampling.ts'
+
+export {
+  MAX_SCALE,
+  fitScale,
+  fitView,
+  clampView,
+  zoomAbout,
+  isOverPicture,
+  isZoomed,
+} from './zoom.ts'
+export type { View, Point, Size } from './zoom.ts'
 
 export {
   IMAGE_EXTENSIONS,
   VIDEO_EXTENSIONS,
   extensionOf,
   basenameOf,
+  dirnameOf,
+  displayPath,
+  hasRecycleBin,
+  toParameterBlock,
   kindOf,
   isAnimatedImage,
+  FOUR_K_EDGE,
+  isFourK,
   fitWithin,
+  fitInside,
   formatBytes,
   formatDuration,
 } from './media.ts'
+
+export {
+  migrateGeneration,
+  type Architecture,
+  type Migration,
+  type MigrationTarget,
+} from './migrate.ts'
+
+export { highlight, excerpt, searchTerms, type HighlightPart } from './highlight.ts'
+
+export {
+  WEEK_MS,
+  fillWeeks,
+  trimIslands,
+  mergeWeeks,
+  weekRange,
+  selectionRange,
+  barAt,
+  dragEdge,
+  moveSelection,
+  barHeights,
+  type BarSelection,
+  type TimelineBar,
+} from './timeline.ts'
+
+export {
+  MAX_TAGS,
+  MAX_TITLE,
+  POSE_TAGS,
+  describeForDeviantArt,
+  poseFromLabel,
+  poseOf,
+  promptSubjects,
+  toTag,
+} from './publish.ts'
+export type {
+  DeviantArtDraft,
+  DraftOptions,
+  MatureClassification,
+  MatureLevel,
+  Pose,
+} from './publish.ts'
 
 export {
   detectionSchema,
@@ -49,14 +112,25 @@ export {
   mediaVerdictSchema,
   mediaKindSchema,
   folderSchema,
+  generationSchema,
   mediaItemSchema,
   mediaFrameSchema,
   jobPhaseSchema,
   scanProgressSchema,
   libraryStatsSchema,
+  importSummarySchema,
+  duplicateReportSchema,
+  throttleLevelSchema,
   sortOrderSchema,
   mediaQuerySchema,
   mediaPageSchema,
+  timelineBucketSchema,
+  matureLevelSchema,
+  matureClassificationSchema,
+  deviantArtDraftSchema,
+  deviantArtAccountSchema,
+  deviantArtResultSchema,
+  deviantArtSummarySchema,
 } from './schemas.ts'
 export type {
   Detection,
@@ -65,6 +139,10 @@ export type {
   MediaVerdict,
   MediaKind,
   Folder,
+  Generation,
+  ImportSummary,
+  DuplicateReport,
+  ThrottleLevel,
   MediaItem,
   MediaFrame,
   JobPhase,
@@ -73,4 +151,8 @@ export type {
   SortOrder,
   MediaQuery,
   MediaPage,
+  TimelineBucket,
+  DeviantArtAccount,
+  DeviantArtResult,
+  DeviantArtSummary,
 } from './schemas.ts'

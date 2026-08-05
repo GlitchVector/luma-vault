@@ -1,4 +1,4 @@
-import type { MediaKind } from './schemas.ts'
+import type { Generation, MediaKind } from './schemas.ts'
 
 /**
  * Which files the scanner picks up.
@@ -47,6 +47,89 @@ export function basenameOf(path: string): string {
   return path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1)
 }
 
+/**
+ * Rebuild the Automatic1111 / Forge parameter block from stored generation data.
+ *
+ * The exact text those UIs write into a PNG, and the exact text their **↙ "read
+ * generation parameters"** button parses back out: paste this into the prompt
+ * box, click the arrow, and prompt, negative prompt, sampler, steps, CFG, seed
+ * and model all populate at once.
+ *
+ * That round trip is the only way to get values into a running Forge. It is a
+ * Gradio app, so component state cannot be set from a URL and there is no route
+ * that accepts these as query parameters — which is why this produces text for
+ * the clipboard rather than a link.
+ *
+ * Fields the file never recorded are omitted rather than guessed. An invented
+ * `Steps: 20` would silently generate something other than what you are
+ * looking at, which is worse than leaving it at whatever Forge already has.
+ */
+export function toParameterBlock(generation: Generation): string {
+  const lines: string[] = [generation.prompt ?? '']
+  if (generation.negativePrompt) {
+    lines.push(`Negative prompt: ${generation.negativePrompt}`)
+  }
+
+  // Order matches what A1111 writes. The parser does not care, but a person
+  // comparing this against the original file does.
+  const settings: Array<[string, string | undefined]> = [
+    ['Steps', generation.steps],
+    ['Sampler', generation.sampler],
+    ['CFG scale', generation.cfgScale],
+    ['Seed', generation.seed],
+    ['Model', generation.model],
+  ]
+  const tail = settings
+    .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(', ')
+  if (tail) lines.push(tail)
+
+  return lines.join('\n')
+}
+
+/** Everything before the last separator, without it. `''` for a bare name. */
+export function dirnameOf(path: string): string {
+  const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return cut <= 0 ? '' : path.slice(0, cut)
+}
+
+/**
+ * A path as a person should read it.
+ *
+ * The index stores canonicalized paths, which on Windows means the
+ * extended-length form — `\\?\UNC\server\share\...` for a network location and
+ * `\\?\C:\...` for a local one. That prefix exists to lift the 260-character
+ * limit and means nothing to anyone reading it; worse, it is not the path you
+ * could paste into Explorer.
+ *
+ * Display only. The stored form is what the `luma://` allowlist checks and what
+ * "Reveal" hands to the shell, so nothing may be *stored* in this shape — see
+ * `paths::external_path`, the Rust twin of this function.
+ */
+export function displayPath(path: string): string {
+  if (path.startsWith('\\\\?\\UNC\\')) return `\\\\${path.slice('\\\\?\\UNC\\'.length)}`
+  if (path.startsWith('\\\\?\\')) return path.slice('\\\\?\\'.length)
+  return path
+}
+
+/**
+ * Whether deleting this file could put it in a Recycle Bin.
+ *
+ * False on a network share, where Windows has none — Explorer deletes outright
+ * there and says so. Every path in this library is a share, so this is the
+ * normal case, and it decides what the delete confirmation is allowed to
+ * promise. `paths::has_recycle_bin` is the Rust twin, and it is the one that
+ * enforces it; this exists so the question can be worded correctly before it is
+ * asked, rather than the answer being a surprise afterwards.
+ */
+export function hasRecycleBin(path: string): boolean {
+  // `\\?\D:\...` also opens with two backslashes and is local, so the verbatim
+  // prefix has to be ruled out before treating `\\` as a share.
+  if (path.startsWith('\\\\?\\')) return !path.toUpperCase().startsWith('\\\\?\\UNC\\')
+  return !path.startsWith('\\\\')
+}
+
 /** `null` for anything the vault does not index. */
 export function kindOf(path: string): MediaKind | null {
   const ext = extensionOf(path)
@@ -82,6 +165,62 @@ export function fitWithin(
     width: Math.max(1, Math.round(width * scale)),
     height: Math.max(1, Math.round(height * scale)),
   }
+}
+
+/**
+ * Fit `(width, height)` inside a `boxWidth`×`boxHeight` rectangle, preserving
+ * aspect ratio and never scaling up.
+ *
+ * The sibling of {@link fitWithin}, which bounds both axes by a single number
+ * because a grid tile is square-bounded. A window is not, and the lightbox has
+ * to know the exact rectangle a picture will occupy *before* it loads — the
+ * poster is painted into that rectangle, and if it is not the one the original
+ * lands in, swapping one for the other moves the picture.
+ *
+ * Never up, which is the lightbox's long-standing behaviour: a 200px image in a
+ * 1400px window stays 200px. Blowing it up would show its pixels and say
+ * nothing the original did not.
+ */
+export function fitInside(
+  width: number,
+  height: number,
+  boxWidth: number,
+  boxHeight: number,
+): { width: number; height: number } {
+  if (width <= 0 || height <= 0 || boxWidth <= 0 || boxHeight <= 0) {
+    return { width: 0, height: 0 }
+  }
+
+  const scale = Math.min(1, boxWidth / width, boxHeight / height)
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  }
+}
+
+/**
+ * The longest edge a picture needs before it counts as 4K.
+ *
+ * 3840, from UHD. Applied to the *longest* edge rather than to width, because a
+ * library is not all landscape and a 2160x3840 phone photo is the same picture
+ * turned ninety degrees — keying on width would call one of them 4K and not the
+ * other.
+ *
+ * Deliberately one number rather than an area: "at least 4K" is a statement
+ * about how big it can be shown, and a 3000x3000 square is 9MP without ever
+ * filling a 4K display.
+ */
+export const FOUR_K_EDGE = 3840
+
+/**
+ * Is this at least 4K?
+ *
+ * The single definition, shared by the grid's badge and the filter — the filter
+ * sends {@link FOUR_K_EDGE} to the index, which applies the same comparison in
+ * SQL, so a tile can never be badged as something the filter would exclude.
+ */
+export function isFourK(width: number, height: number): boolean {
+  return Math.max(width, height) >= FOUR_K_EDGE
 }
 
 /** Human-readable byte size, for the detail panel. */

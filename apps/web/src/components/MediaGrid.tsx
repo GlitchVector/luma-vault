@@ -4,9 +4,45 @@ import { MediaTile } from './MediaTile.tsx'
 
 interface MediaGridProps {
   items: MediaItem[]
-  onOpen: (id: number) => void
+  onOpen: (id: number, range: boolean) => void
   onReachEnd: () => void
   showBoxes: boolean
+  /** Draw each set of duplicates inside its own frame. */
+  groupDuplicates: boolean
+  /** Longest edge of a tile, in CSS pixels. */
+  tileSize: number
+  /** Ids drawn as picked. Empty when the grid is not selecting. */
+  selected: ReadonlySet<number>
+}
+
+/**
+ * Split a list into its duplicate sets, keyed by group rather than adjacency.
+ *
+ * The first version collected *consecutive runs*, on the reasoning that the
+ * query orders by `dupeGroup` so members arrive adjacent. The database does
+ * order them — verified directly against the exact page the grid asks for, 300
+ * rows, 117 runs, not one of length 1 — and the grid still rendered sets of
+ * one. Rather than keep hunting for what reorders them in between, this stops
+ * depending on the order at all.
+ *
+ * That is the better design regardless of the answer: adjacency is an
+ * invariant maintained three layers away, in SQL, and a UI that silently
+ * mis-renders when it breaks is a UI with a hidden contract. A map has no such
+ * contract. Insertion order preserves whatever order the rows did arrive in,
+ * so a correctly sorted page still lays out exactly as the index gave it.
+ */
+function intoGroups(items: MediaItem[]): MediaItem[][] {
+  const groups = new Map<number | string, MediaItem[]>()
+  for (const item of items) {
+    // Ungrouped rows should not reach here — the query filters them out — but
+    // one key per row is the safe reading if they do, rather than sweeping
+    // every unrelated picture into a single set called `null`.
+    const key = item.dupeGroup ?? `ungrouped:${item.id}`
+    const existing = groups.get(key)
+    if (existing) existing.push(item)
+    else groups.set(key, [item])
+  }
+  return [...groups.values()]
 }
 
 /**
@@ -23,7 +59,15 @@ interface MediaGridProps {
  * on a trailing element fires once when it comes into view, instead of a scroll
  * listener running on every frame and computing offsets.
  */
-export function MediaGrid({ items, onOpen, onReachEnd, showBoxes }: MediaGridProps) {
+export function MediaGrid({
+  items,
+  onOpen,
+  onReachEnd,
+  showBoxes,
+  groupDuplicates,
+  tileSize,
+  selected,
+}: MediaGridProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const reachEndRef = useRef(onReachEnd)
 
@@ -49,15 +93,56 @@ export function MediaGrid({ items, onOpen, onReachEnd, showBoxes }: MediaGridPro
     return () => observer.disconnect()
   }, [])
 
-  const handleOpen = useCallback((id: number) => onOpen(id), [onOpen])
+  const handleOpen = useCallback((id: number, range: boolean) => onOpen(id, range), [onOpen])
 
   return (
     <>
-      <div className="flex flex-wrap content-start gap-2">
-        {items.map((item) => (
-          <MediaTile key={item.id} item={item} onOpen={handleOpen} showBoxes={showBoxes} />
-        ))}
-      </div>
+      {groupDuplicates ? (
+        // One frame per set, stacked. Adjacency alone does not say where a set
+        // ends — with tiles the same size and no divider, three copies of one
+        // picture beside two of another read as one run of five.
+        //
+        // A frame per group rather than an outline per tile, because the
+        // question is "which of these are the same", and a border around the
+        // set answers it without having to compare five outline colours.
+        <div className="flex flex-col gap-3">
+          {intoGroups(items).map((group) => (
+            <section
+              key={group[0]?.dupeGroup ?? `ungrouped:${group[0]?.id}`}
+              className="rounded-lg border border-amber-400/25 bg-amber-400/[0.03] p-2"
+            >
+              <header className="mb-1.5 px-0.5 text-[10px] uppercase tracking-wide text-amber-400/60">
+                {group.length === 1 ? '1 copy shown' : `${group.length} copies`}
+              </header>
+              <div className="flex flex-wrap content-start gap-2">
+                {group.map((item) => (
+                  <MediaTile
+                    key={item.id}
+                    item={item}
+                    onOpen={handleOpen}
+                    showBoxes={showBoxes}
+                    size={tileSize}
+                    selected={selected.has(item.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-wrap content-start gap-2">
+          {items.map((item) => (
+            <MediaTile
+              key={item.id}
+              item={item}
+              onOpen={handleOpen}
+              showBoxes={showBoxes}
+              size={tileSize}
+              selected={selected.has(item.id)}
+            />
+          ))}
+        </div>
+      )}
       <div ref={sentinelRef} className="h-px w-full" aria-hidden />
     </>
   )

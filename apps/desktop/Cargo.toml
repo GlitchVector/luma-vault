@@ -23,6 +23,37 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+# Forge on 127.0.0.1, and DeviantArt over TLS.
+#
+# `rustls-tls` rather than the platform stack: schannel/openssl would make the
+# build depend on what the host has installed, and this is the only remote
+# origin the binary ever reaches. `multipart` is the stash/submit upload — the
+# endpoint takes a file part, not a base64 field.
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  # The OAuth token exchange and stash/publish are both urlencoded forms.
+  "form",
+  "multipart",
+  "rustls",
+  "webpki-roots",
+] }
+# URL parsing, so `open_external` can refuse a scheme before the OS sees it.
+url = "2"
+
+# PKCE. `getrandom` talks to the OS CSPRNG directly — a code verifier from a
+# seeded PRNG is a code verifier an attacker can predict, which is the one
+# thing PKCE exists to prevent. base64 is the URL-safe encoding the challenge
+# is transmitted in. Both are already in the tree via rustls.
+base64 = "0.22"
+getrandom = "0.3"
+# The refresh token, in the OS credential store rather than beside the index.
+# It is a bearer credential for someone's DeviantArt account: SQLite would put
+# it in plaintext in a file that gets copied around with backups.
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+# Deleting to the OS trash rather than unlinking. A media library is not a
+# place to be certain about a decision, and the Recycle Bin is the difference
+# between a mistake and a loss.
+trash = "5"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -62,6 +93,23 @@ tempfile = "3"
 # Tauri's default: the custom-protocol feature is switched on by `tauri build`.
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+# Dependencies are optimized even in a dev build; this crate is not.
+#
+# `tauri dev` builds with the dev profile, and an unoptimized pure-Rust image
+# decoder is not slow by a little. Measured on this library's own files, over
+# the share it actually lives on:
+#
+#   decode a 0.6 MB JPEG   dev 0.400s   release 0.007s   — 57x
+#
+# At 66,000 files that is the difference between a scan you wait days for and
+# one you wait minutes for, and it made the thumbnail phase look network-bound
+# when reading the file was only 3% of the cost.
+#
+# `package."*"` covers dependencies only, so `luma-vault` itself stays at
+# opt-level 0 and incremental rebuilds of the app's own code stay fast.
+[profile.dev.package."*"]
+opt-level = 3
 
 [profile.release]
 codegen-units = 1
