@@ -192,6 +192,19 @@ describe('where a native call goes', () => {
     expect(commandsCalled()).not.toContain('remote_call')
   })
 
+  it('reads the Forge address here, because the tab opens here', async () => {
+    answering(LIVE_SESSION, { forge_url: 'http://192.168.1.160:7860' })
+    const native = await loadNative()
+
+    // `open_external` is already local-only, so the tab opens on this machine.
+    // Asking the *peer* where Forge is answers for the peer — which is its own
+    // loopback, an address that means a different computer once it is opened
+    // here. The two have to agree about whose machine they are talking about.
+    expect(await native.forgeUrl()).toBe('http://192.168.1.160:7860')
+    expect(invoke).toHaveBeenCalledWith('forge_url', {})
+    expect(commandsCalled()).not.toContain('remote_call')
+  })
+
   it('switches route on connecting, without going back to ask', async () => {
     answering(LOCAL_SESSION, { remote_connect: LIVE_SESSION, remote_call: STATS })
     const native = await loadNative()
