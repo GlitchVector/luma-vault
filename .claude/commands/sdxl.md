@@ -176,6 +176,39 @@ ADetailer settings keeps them untouched.
 
 Staying on the same architecture changes only the model and the seed.
 
+## NoobAI, and v-prediction checkpoints generally
+
+Pass `noob` as the model — `pnpm migrate-prompt 00489 noob` — and the usual
+substring rule finds it. Two things then happen on their own, both decided from
+the checkpoint rather than from what you typed:
+
+- **The quality tags change.** NoobAI learned a different booru vocabulary:
+  `masterpiece, best quality, newest, absurdres, highres` on the positive side,
+  and `old, early, normal quality` added to the negative. `newest` and the
+  recency terms are tags the other XL checkpoints never saw, and `very
+  aesthetic` is one NoobAI does not have. (`very awa` is its aesthetic push —
+  deliberately not automatic, since it is a style choice rather than a floor.)
+- **The sampler changes.** A v-prediction checkpoint predicts *v* rather than
+  noise, and the SDE and DPM++ samplers can diverge on it — the failure is a
+  burnt or washed-out image, not an error. So the block lands on `Euler a`
+  unless it already names a Euler variant. The notes say which happened.
+
+**The mode itself is the webui's job, and not every build does it.** The file
+carries `v_pred` as a non-weight tensor in its header — `inspectCheckpoint`
+reads it from the same parse that identifies the architecture, so it costs no
+extra I/O — and the script warns when it finds one.
+
+Take that warning seriously. On the Forge measured here
+(`previous-224-g90019688`), `huggingface_guess` reads `v_pred` and returns
+`ModelType.V_PREDICTION`, and **nothing calls that function**;
+`backend/diffusion_engine/sdxl.py` takes its predictor from the diffusers
+scheduler config of `stable-diffusion-xl-base-1.0`, which is `epsilon`. SDXL is
+therefore always sampled as epsilon, and a v-pred checkpoint comes out as
+saturated red-and-blue noise — no error, every setting correct-looking. The way
+out is an Epsilon-pred release of the same model, or a newer Forge.
+
+CFG stays at 5, which is inside NoobAI's recommended 4-6.
+
 ## Close with these, but only when the migration crossed into SDXL
 
 The notes will say whether it did. On a same-architecture move they are noise.

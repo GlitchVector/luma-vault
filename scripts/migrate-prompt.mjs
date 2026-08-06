@@ -34,7 +34,9 @@ import { migrateGeneration } from '../packages/core/src/migrate.ts'
 import { walkToOrigin } from '../packages/core/src/origin.ts'
 import {
   DEFAULT_MODEL,
-  architectureOf,
+  familyOf,
+  warnAboutVPrediction,
+  inspectCheckpoint,
   fail,
   forge,
   openWithBlock,
@@ -284,13 +286,18 @@ if (show) {
 }
 
 const target = await resolveModel(targetName)
-const architecture = architectureOf(target.filename)
+const { architecture, vPred } = inspectCheckpoint(target.filename)
+if (vPred) warnAboutVPrediction(target.name)
 // Read the emphasis Forge is on so the block can state it. Left unstated, the
 // paste fills in the default and adds an override that reverts whatever the
 // person actually chose — an override they never asked for and did not add.
 const options = await forge('/sdapi/v1/options')
 const { block: migrated, notes } = migrateGeneration(block, {
   architecture,
+  // Both read from the checkpoint rather than asked for: the mode from the
+  // file's own header, the vocabulary from its name.
+  vPred,
+  family: familyOf(target.name),
   checkpoint: target.name,
   emphasis: options.emphasis,
   shot,

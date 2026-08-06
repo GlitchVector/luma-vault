@@ -28,6 +28,29 @@ export interface MigrationTarget {
   /** Checkpoint name as Forge knows it, which is what `Model:` must contain. */
   checkpoint: string
   /**
+   * The checkpoint predicts **v** rather than epsilon.
+   *
+   * Read from the file, not from its name: a v-prediction checkpoint carries
+   * `v_pred` as a non-weight tensor in its safetensors header. NoobAI's v-pred
+   * release carries `ztsnr` beside it.
+   *
+   * The only thing this changes here is the **sampler**, and that is the limit
+   * of what a parameter block can do about it. Applying the prediction mode is
+   * the webui's job, and a build that does not — Forge around 2024 samples
+   * every SDXL as epsilon, having read `v_pred` and then called nothing with
+   * the answer — renders a v-pred checkpoint as saturated noise whatever this
+   * writes. The scripts warn about it; see `warnAboutVPrediction`.
+   */
+  vPred?: boolean
+  /**
+   * Which booru vocabulary the target was trained on.
+   *
+   * `noob` swaps the quality tags and the baseline negative for NoobAI-XL's,
+   * which are genuinely different words rather than a preference — see
+   * {@link NOOB_QUALITY}. Anything else uses the common XL set.
+   */
+  family?: 'noob'
+  /**
    * The emphasis mode the webui is *currently* set to.
    *
    * Passed in so the block can state it. A block that says nothing about a
@@ -219,6 +242,52 @@ const XL_NEGATIVE = [
   'username',
   'artist name',
 ]
+
+/**
+ * What the NoobAI-XL family expects instead.
+ *
+ * A different booru vocabulary, not a stylistic preference: NoobAI was trained
+ * with recency tags (`newest`, and `old`/`early` on the negative side) that the
+ * other XL checkpoints never saw, and without `very aesthetic`, whose
+ * equivalent there is `very awa`. Left out of the positive on purpose — it is
+ * a strong aesthetic push rather than a quality floor, and belongs to whoever
+ * wants it rather than to every migration.
+ */
+const NOOB_QUALITY = 'masterpiece, best quality, newest, absurdres, highres'
+
+/** The matching baseline negative, with the recency terms that make it work. */
+const NOOB_NEGATIVE = [
+  'worst quality',
+  'low quality',
+  'normal quality',
+  'old',
+  'early',
+  'lowres',
+  'bad anatomy',
+  'bad hands',
+  'mutated hands',
+  'missing fingers',
+  'extra digits',
+  'jpeg artifacts',
+  'signature',
+  'watermark',
+  'username',
+  'artist name',
+]
+
+/**
+ * What a v-prediction checkpoint is sampled with.
+ *
+ * v-prediction changes what the model outputs at every step, and the ancestral
+ * and SDE samplers that suit epsilon models can diverge on it — the failure is
+ * a burnt or washed-out image rather than an error. Euler a is the one the
+ * NoobAI v-pred release documents, so it is what a migration onto one lands on
+ * unless the block already names a sampler from the same family.
+ */
+const V_PRED_SAMPLER = 'Euler a'
+
+/** Samplers that are safe to leave alone on a v-prediction model. */
+const V_PRED_SAFE = /^euler/i
 
 /**
  * The framing ladder, tightest to widest. A prompt should carry at most one
@@ -488,8 +557,12 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
 
     // 5. Quality tags, which booru-trained SDXL models were trained to expect.
     if (!/masterpiece|best quality/i.test(nextPrompt)) {
-      nextPrompt = `${XL_QUALITY},\n${nextPrompt}`
-      notes.push('Added the danbooru quality tags these models are trained to expect.')
+      nextPrompt = `${target.family === 'noob' ? NOOB_QUALITY : XL_QUALITY},\n${nextPrompt}`
+      notes.push(
+        target.family === 'noob'
+          ? "Added NoobAI's quality tags, which include the recency tag it was trained with."
+          : 'Added the danbooru quality tags these models are trained to expect.',
+      )
     }
 
     // Keep whatever of the original negative was not an embedding, then top it
@@ -503,7 +576,7 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
     // comparison misses both and appends them again. Duplicates dilute — the
     // encoder sees the concept twice at half the attention each.
     const already = fromNegative.text.toLowerCase()
-    for (const term of XL_NEGATIVE) {
+    for (const term of target.family === 'noob' ? NOOB_NEGATIVE : XL_NEGATIVE) {
       if (!new RegExp(`(^|[^a-z])${term}([^a-z]|$)`).test(already)) keptNegative.push(term)
     }
     nextNegative = keptNegative.join(', ')
@@ -700,6 +773,31 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       'CFG 5, 28 steps, clip skip 2 — what booru-trained SDXL models are tuned for. Higher CFG ' +
         'burns contrast and steps past ~30 stop changing the image.',
     )
+  }
+
+  // The sampler, on a v-prediction target. Outside the `crossing` branch: an
+  // XL→XL move onto a v-pred checkpoint is exactly the case where the block
+  // already carries a sampler chosen for an epsilon model, and nothing else in
+  // a migration would touch it.
+  //
+  // Only the sampler. Forge reads `v_pred` from the checkpoint itself, so the
+  // mode needs no help — but it will happily sample a v-pred model with an SDE
+  // sampler and hand back a burnt image, with nothing in the UI to say why.
+  if (target.vPred) {
+    const current = next.get('Sampler') ?? ''
+    if (!V_PRED_SAFE.test(current)) {
+      next.set('Sampler', V_PRED_SAMPLER)
+      // Ancestral samplers do their own noise scheduling, so a schedule chosen
+      // for the old sampler is not meaningful next to this one.
+      next.delete('Schedule type')
+      notes.push(
+        `Sampler ${current || '(unset)'} → ${V_PRED_SAMPLER}: this checkpoint predicts v rather ` +
+          'than noise, and the SDE and DPM++ samplers can diverge on it — a burnt or washed-out ' +
+          'image rather than an error.',
+      )
+    } else {
+      notes.push(`Kept ${current}, which is safe on a v-prediction checkpoint.`)
+    }
   }
 
   // An explicit canvas — see `MigrationTarget.size`. Outside the `crossing`

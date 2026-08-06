@@ -505,3 +505,82 @@ describe('a negative that fights the imposed body', () => {
     expect(notes.some((note) => note.includes('Removed'))).toBe(true)
   })
 })
+
+describe('a v-prediction target', () => {
+  // The mode itself needs no help: Forge reads `v_pred` out of the checkpoint's
+  // own header. The sampler is the part a parameter block can get wrong, and it
+  // fails by handing back a burnt image rather than an error.
+  const TO_VPRED = {
+    architecture: 'xl',
+    checkpoint: 'noobaiXLNAIXL_vPred10Version',
+    vPred: true,
+    family: 'noob',
+  } as const
+
+  it('replaces a sampler that can diverge on it', () => {
+    const { block, notes } = migrateGeneration(SD15, TO_VPRED)
+    const settings = block.split('\n').at(-1)!
+    expect(settings).toContain('Sampler: Euler a')
+    expect(settings).not.toContain('DPM++')
+    // The schedule went with it — an ancestral sampler does its own.
+    expect(settings).not.toContain('Schedule type')
+    expect(notes.join(' ')).toMatch(/predicts v rather than noise/)
+  })
+
+  it('leaves a sampler that is already safe, and says so', () => {
+    const already = SD15.replace('Sampler: DPM++ 2M Karras', 'Sampler: Euler a')
+    const { block, notes } = migrateGeneration(already, TO_VPRED)
+    expect(block.split('\n').at(-1)!).toContain('Sampler: Euler a')
+    expect(notes.join(' ')).toMatch(/safe on a v-prediction checkpoint/)
+  })
+
+  it('touches nothing about the sampler on an ordinary checkpoint', () => {
+    // The guard that keeps this from becoming a migration that rewrites
+    // samplers generally — they are architecture-agnostic otherwise.
+    const { block } = migrateGeneration(SD15, TO_XL)
+    expect(block.split('\n').at(-1)!).toContain('DPM++')
+  })
+
+  it('applies on a same-architecture move, where nothing else would', () => {
+    // XL→XL onto a v-pred checkpoint is exactly the case where the block
+    // already carries a sampler chosen for an epsilon model.
+    const xlBlock = [
+      '1girl, solo',
+      'Negative prompt: worst quality',
+      'Steps: 28, Sampler: DPM++ 2M SDE, CFG scale: 5, Size: 832x1216, Model: someXL_v1',
+    ].join('\n')
+    const { block } = migrateGeneration(xlBlock, TO_VPRED)
+    expect(block.split('\n').at(-1)!).toContain('Sampler: Euler a')
+  })
+})
+
+describe('the NoobAI vocabulary', () => {
+  const TO_NOOB = {
+    architecture: 'xl',
+    checkpoint: 'noobaiXLNAIXL_vPred10Version',
+    family: 'noob',
+  } as const
+
+  it('uses the quality tags it was actually trained with', () => {
+    // `newest` is a recency tag NoobAI learned and the other XL checkpoints
+    // never saw; `very aesthetic` is the one it does not have.
+    const { block } = migrateGeneration(SD15, TO_NOOB)
+    expect(block).toContain('newest')
+    expect(block).toContain('highres')
+    expect(block).not.toContain('very aesthetic')
+  })
+
+  it('puts the recency terms in the negative too', () => {
+    const { block } = migrateGeneration(SD15, TO_NOOB)
+    const negative = block.split('\n').find((line) => line.startsWith('Negative prompt:'))!
+    expect(negative).toContain('old')
+    expect(negative).toContain('early')
+    expect(negative).toContain('normal quality')
+  })
+
+  it('leaves the common XL set alone for everything else', () => {
+    const { block } = migrateGeneration(SD15, TO_XL)
+    expect(block).toContain('very aesthetic')
+    expect(block).not.toContain('newest')
+  })
+})
