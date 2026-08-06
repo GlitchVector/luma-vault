@@ -70,6 +70,17 @@ const queries: Array<{ minStars?: number | null; minLongestEdge?: number | null 
 const upscaleCalls: number[][] = []
 /** What Forge claims to be doing, for the upscale gate. */
 let forgeState = { reachable: true, busy: false, job: null as string | null, progress: 0 }
+/** Which library the window is showing. Local unless a case says otherwise. */
+let remoteState = {
+  connected: false,
+  address: '',
+  host: '',
+  folders: 0,
+  items: 0,
+  lastAddress: '',
+  hasPassphrase: false,
+}
+let shareState = { sharing: false, port: 7870, addresses: [] as string[], hasPassphrase: false }
 /** Each batch delete, so one call for the whole set can be asserted. */
 const deleteBatches: Array<{ ids: number[]; permanent: boolean }> = []
 /** What the DeviantArt panel actually asked the backend to upload. */
@@ -225,6 +236,11 @@ vi.mock('#/lib/native.ts', () => ({
   },
   onUpscaleProgress: () => Promise.resolve(() => {}),
   forgeStatus: () => Promise.resolve(forgeState),
+  remoteStatus: () => Promise.resolve(remoteState),
+  remoteConnect: () => Promise.resolve(remoteState),
+  remoteDisconnect: () => Promise.resolve(remoteState),
+  shareStatus: () => Promise.resolve(shareState),
+  setShare: () => Promise.resolve(shareState),
   DEVIANTART_STUDIO_URL: 'https://www.deviantart.com/studio',
   DEVIANTART_APPS_URL: 'https://www.deviantart.com/developers/apps',
   deviantArtAccount: () => Promise.resolve(deviantArtAccountState),
@@ -272,6 +288,16 @@ beforeEach(() => {
     canPublish: true,
   }
   forgeState = { reachable: true, busy: false, job: null, progress: 0 }
+  remoteState = {
+    connected: false,
+    address: '',
+    host: '',
+    folders: 0,
+    items: 0,
+    lastAddress: '',
+    hasPassphrase: false,
+  }
+  shareState = { sharing: false, port: 7870, addresses: [], hasPassphrase: false }
   // The tile size is remembered here, so a case that sets it would otherwise
   // decide the starting size of every case after it.
   localStorage.clear()
@@ -2148,5 +2174,66 @@ describe('the Extras filter', () => {
     expect(screen.getByRole('button', { name: 'No Extras' })).toBeTruthy()
     pill().click()
     await waitFor(() => expect(sent()?.extras).toBeNull())
+  })
+})
+
+describe('remote mode', () => {
+  it('says which machine the window is showing, and opens the panel', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    // Local by default, and the button is there in that state — one that only
+    // appeared once connected would be one you could not connect with.
+    const button = await screen.findByRole('button', { name: 'Local' })
+    button.click()
+
+    expect(await screen.findByRole('dialog', { name: 'Remote mode' })).toBeTruthy()
+    // Both halves are in the one panel: the machine you type an address into,
+    // and the machine you switch sharing on at.
+    expect(screen.getByLabelText('Address')).toBeTruthy()
+    expect(screen.getByLabelText('Sharing passphrase')).toBeTruthy()
+  })
+
+  it('names the peer in the status bar while a session is live', async () => {
+    remoteState = {
+      connected: true,
+      address: '192.168.1.42:7870',
+      host: 'DESKTOP-VAULT',
+      folders: 3,
+      items: 66412,
+      lastAddress: '192.168.1.42:7870',
+      hasPassphrase: true,
+    }
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    // The machine, not the number, because that is what a person recognises.
+    const badge = await screen.findByRole('button', { name: 'Remote · DESKTOP-VAULT' })
+    // Delete means "delete over there" from here, so the reminder has to be
+    // legible at a glance rather than a word among nine others.
+    expect(badge.closest('footer')?.className).toContain('indigo')
+
+    badge.click()
+    // The way back is where the way in was.
+    expect(await screen.findByRole('button', { name: 'Back to this machine' })).toBeTruthy()
+    // And there is no address field to type into while one is already open.
+    expect(screen.queryByLabelText('Address')).toBeNull()
+  })
+
+  it('shows that this library is being shared, and where', async () => {
+    shareState = {
+      sharing: true,
+      port: 7870,
+      addresses: ['192.168.1.7:7870'],
+      hasPassphrase: true,
+    }
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    const button = await screen.findByRole('button', { name: 'Sharing' })
+    button.click()
+    // The address to type on the other machine, verbatim.
+    expect(await screen.findByText('192.168.1.7:7870')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Stop sharing' })).toBeTruthy()
   })
 })

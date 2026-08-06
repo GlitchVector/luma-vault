@@ -1,0 +1,14 @@
+[
+  {
+    "sharing": false,
+    "port": 7870,
+    "addresses": [],
+    "hasPassphrase": false
+  },
+  {
+    "sharing": true,
+    "port": 7870,
+    "addresses": ["192.168.1.42:7870"],
+    "hasPassphrase": true
+  }
+]

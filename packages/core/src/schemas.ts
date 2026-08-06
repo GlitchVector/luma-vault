@@ -496,3 +496,31 @@ export const deviantArtSummarySchema = z.object({
   results: z.array(deviantArtResultSchema),
 })
 export type DeviantArtSummary = z.infer<typeof deviantArtSummarySchema>
+
+// ---------------------------------------------------------------------------
+// Remote
+// ---------------------------------------------------------------------------
+
+export const remoteStatusSchema = z.object({
+  connected: z.boolean(),
+  /** `192.168.1.42:7870`, or empty when this is the machine's own library. */
+  address: z.string(),
+  /** The peer's hostname, empty when it did not report one. */
+  host: z.string(),
+  folders: z.number(),
+  items: z.number(),
+  /** Prefilled next time, so reconnecting is one click and not a memory test. */
+  lastAddress: z.string(),
+  /** A passphrase is remembered. Never the passphrase itself. */
+  hasPassphrase: z.boolean(),
+})
+export type RemoteStatus = z.infer<typeof remoteStatusSchema>
+
+export const shareStatusSchema = z.object({
+  sharing: z.boolean(),
+  port: z.number(),
+  /** What to type on the other machine. Empty when it could not be worked out. */
+  addresses: z.array(z.string()),
+  hasPassphrase: z.boolean(),
+})
+export type ShareStatus = z.infer<typeof shareStatusSchema>

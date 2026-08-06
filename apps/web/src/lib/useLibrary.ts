@@ -46,6 +46,18 @@ const IDLE_PROGRESS: ScanProgress = {
   errors: [],
 }
 
+/** Cheap enough to run on a timer, and the fields the status bar actually draws. */
+function sameProgress(a: ScanProgress, b: ScanProgress): boolean {
+  return (
+    a.phase === b.phase &&
+    a.done === b.done &&
+    a.total === b.total &&
+    a.current === b.current &&
+    a.folderId === b.folderId &&
+    a.errors.length === b.errors.length
+  )
+}
+
 /**
  * Everything the main view needs, in one hook.
  *
@@ -182,12 +194,26 @@ export function useLibrary() {
     void native.scanProgress().then(setProgress)
   }, [refreshFolders, runQuery])
 
-  // Live progress.
+  // Live progress: subscribed to, and also polled.
+  //
+  // The subscription is the local case — events arrive four times a second and
+  // cost nothing. The poll is the remote one: those events are emitted into the
+  // webview of the machine doing the work and never cross the wire, so a status
+  // bar in a remote session would otherwise sit at "Idle" through a scan of
+  // 60,000 files. One snapshot read every two seconds is cheap enough that it is
+  // not worth branching on which mode this is.
   useEffect(() => {
     let lastPhase = IDLE_PROGRESS.phase
-    const unsubscribe = native.onScanProgress((next) => {
-      setProgress(next)
-      dirty.current = true
+
+    const apply = (next: ScanProgress) => {
+      // Identity is kept when nothing moved, or an idle poll would re-render the
+      // whole app every two seconds for no news.
+      setProgress((previous) => (sameProgress(previous, next) ? previous : next))
+      // Only while something is actually running. The subscription only fires
+      // during a scan, but the poll answers forever, and marking the library
+      // dirty on an idle snapshot would have the reconcile timer below
+      // re-querying the grid every four seconds for the life of the app.
+      if (next.phase !== 'idle' && next.phase !== 'done') dirty.current = true
       // A phase boundary is the one moment worth reconciling immediately: it is
       // when a batch of new rows becomes visible all at once.
       if (next.phase !== lastPhase) {
@@ -195,8 +221,19 @@ export function useLibrary() {
         dirty.current = false
         reload()
       }
-    })
-    return unsubscribe
+    }
+
+    const unsubscribe = native.onScanProgress(apply)
+    const timer = window.setInterval(() => {
+      // A failed poll is not worth reporting: the next one is two seconds away,
+      // and a lost connection is already announced by everything else failing.
+      void native.scanProgress().then(apply, () => {})
+    }, 2000)
+
+    return () => {
+      unsubscribe()
+      window.clearInterval(timer)
+    }
   }, [reload])
 
   // Reconcile at a human pace while a scan runs.

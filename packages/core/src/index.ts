@@ -134,6 +134,8 @@ export {
   deviantArtAccountSchema,
   deviantArtResultSchema,
   deviantArtSummarySchema,
+  remoteStatusSchema,
+  shareStatusSchema,
 } from './schemas.ts'
 export type {
   Detection,
@@ -159,4 +161,6 @@ export type {
   DeviantArtAccount,
   DeviantArtResult,
   DeviantArtSummary,
+  RemoteStatus,
+  ShareStatus,
 } from './schemas.ts'

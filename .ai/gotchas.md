@@ -241,6 +241,47 @@ the single outcome that makes the feature pointless.
 failing for someone who connected once and forgot. The failure path says so
 rather than reporting a bare rejection.
 
+## Remote mode
+
+**`tiny_http::Server::unblock()` wakes exactly one waiter.** It pushes a single
+marker onto the request queue, so with eight worker threads a stop unblocks one
+and the other seven sit in `recv` forever — holding the listener, and hanging any
+join that waits for them. `Sharing::stop` calls it once per worker.
+
+**A wildcard-bound server does not shut down on Windows without a knock.**
+tiny_http's `Drop` wakes its accept thread by connecting to the listener's own
+local address, which for a `0.0.0.0` bind *is* `0.0.0.0` — an address Windows
+refuses to connect to. The thread stays parked in `accept()`, never sees the
+close flag, and keeps the port for the life of the process: sharing could be
+switched off but never on again. `stop` therefore connects to `127.0.0.1` on the
+same port after dropping the server. Pinned by
+`sharing_can_be_stopped_and_started_again_on_the_same_port`, which is the
+sequence somebody changing the passphrase performs.
+
+**`start` retries the bind for a second.** Even a clean shutdown hands the port
+back on the accept thread's schedule, so stop-then-start can arrive while it is
+still held. Failing there would report "something else may already have that
+port", which would be a lie and unactionable.
+
+**File URLs carry `&from=<peer>`.** Responses are cached as `immutable` and a
+thumbnail is addressed by a hash of its **absolute source path** — so two
+machines with the same folder layout produce the identical `luma://` URL for
+different pictures, and the grid would serve one machine's thumbnail for the
+other's file. The backend reads up to the first `&` and ignores the rest; only
+the cache key cares.
+
+**The progress poll must not mark the library dirty when nothing is running.**
+The subscription only fires during a scan, but the poll answers forever — and
+`dirty` is what the four-second reconcile timer watches, so marking it on an idle
+snapshot re-queries the grid every four seconds for the life of the app. It also
+keeps the previous `ScanProgress` object when nothing moved, or every idle poll
+re-renders the whole window.
+
+**Connecting and disconnecting reload the page.** Folders, the grid and its
+paging, the timeline buckets, the character leaderboard and the progress
+subscription all describe one library, and a session swaps every one of them at
+once. The reload cannot be half-done; reconciling each piece can.
+
 ## Tooling
 
 **The dev server is pinned to 4340, and the pin matters.** `dth-character-studio`

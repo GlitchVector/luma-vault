@@ -15,6 +15,7 @@ import { DEFAULT_TILE_SIZE, MAX_TILE_SIZE, MIN_TILE_SIZE } from '#/components/Me
 import { SearchBar } from '#/components/SearchBar.tsx'
 import { DeviantArtPanel } from '#/components/DeviantArtPanel.tsx'
 import { DialogHost } from '#/components/DialogHost.tsx'
+import { RemoteDialog } from '#/components/RemoteDialog.tsx'
 import { StatusBar } from '#/components/StatusBar.tsx'
 import { TimelinePanel } from '#/components/TimelinePanel.tsx'
 import { ToastHost } from '#/components/ToastHost.tsx'
@@ -32,6 +33,7 @@ import {
   type UpscaleSummary,
 } from '#/lib/native.ts'
 import { useLibrary } from '#/lib/useLibrary.ts'
+import { useRemote } from '#/lib/useRemote.ts'
 
 const TILE_SIZE_KEY = 'luma.tileSize'
 
@@ -55,6 +57,8 @@ function storedTileSize(): number {
 
 export function App() {
   const library = useLibrary()
+  const remote = useRemote()
+  const [showRemote, setShowRemote] = useState(false)
   const [openId, setOpenId] = useState<number | null>(null)
   // Read once, on mount — not on every render, and never written back on a
   // render that did not change it.
@@ -764,7 +768,14 @@ export function App() {
         progress={progress}
         environment={library.environment}
         onSetThrottle={(level) => void actions.setThrottle(level)}
+        remote={remote.status}
+        share={remote.share}
+        onOpenRemote={() => setShowRemote(true)}
       />
+
+      {showRemote ? (
+        <RemoteDialog remote={remote} onClose={() => setShowRemote(false)} />
+      ) : null}
 
       {openId !== null ? (
         <Lightbox

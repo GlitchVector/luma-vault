@@ -96,6 +96,20 @@ fn deviantart_summary_matches_the_shared_fixture() {
     ));
 }
 
+#[test]
+fn remote_status_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::RemoteStatus>>(include_str!(
+        "../../../contracts/remote-status.json"
+    ));
+}
+
+#[test]
+fn share_status_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::ShareStatus>>(include_str!(
+        "../../../contracts/share-status.json"
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // Shared logic vectors
 // ---------------------------------------------------------------------------

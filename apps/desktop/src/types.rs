@@ -421,3 +421,43 @@ pub struct DeviantArtSummary {
     pub failed: i64,
     pub results: Vec<DeviantArtResult>,
 }
+
+// ---------------------------------------------------------------------------
+// Remote
+// ---------------------------------------------------------------------------
+
+/// Which library this window is showing, and how to get back to the last one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteStatus {
+    pub connected: bool,
+    /// `192.168.1.42:7870`, or empty when this is the machine's own library.
+    pub address: String,
+    /// The peer's hostname, so the badge can name a machine rather than a
+    /// number. Empty when it did not report one.
+    pub host: String,
+    /// What the peer holds, for the line under the address.
+    pub folders: i64,
+    pub items: i64,
+    /// Prefilled next time, so reconnecting is one click rather than a memory
+    /// test. Remembered after disconnecting, which is when it is needed.
+    pub last_address: String,
+    /// Whether a passphrase is remembered for that address. Never the
+    /// passphrase itself — it lives in the OS credential store.
+    pub has_passphrase: bool,
+}
+
+/// Whether this machine answers for others, and on what address.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareStatus {
+    pub sharing: bool,
+    pub port: u16,
+    /// What to type on the other machine. Usually one entry; empty when the
+    /// routing table could not be asked, in which case the panel says so
+    /// instead of showing a wrong number.
+    pub addresses: Vec<String>,
+    /// A passphrase is set, so sharing can be switched on without typing one
+    /// again. Never the passphrase itself.
+    pub has_passphrase: bool,
+}

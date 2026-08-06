@@ -40,6 +40,14 @@ reqwest = { version = "0.13", default-features = false, features = [
 # URL parsing, so `open_external` can refuse a scheme before the OS sees it.
 url = "2"
 
+# The server half of remote mode. Blocking and thread-per-request, which is the
+# right shape here: every route it serves does blocking work (a SQLite query, a
+# file read), so an async server would spend its life in `spawn_blocking`. No
+# TLS features — the passphrase and the private-address rule are what guard the
+# port, and a self-signed certificate between two machines on one LAN would add
+# a trust dialog rather than any security.
+tiny_http = { version = "0.12", default-features = false }
+
 # PKCE. `getrandom` talks to the OS CSPRNG directly — a code verifier from a
 # seeded PRNG is a code verifier an attacker can predict, which is the one
 # thing PKCE exists to prevent. base64 is the URL-safe encoding the challenge

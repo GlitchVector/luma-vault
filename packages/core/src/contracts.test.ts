@@ -13,7 +13,9 @@ import {
   mediaFrameSchema,
   mediaItemSchema,
   mediaQuerySchema,
+  remoteStatusSchema,
   scanProgressSchema,
+  shareStatusSchema,
   timelineBucketSchema,
 } from './schemas.ts'
 
@@ -39,6 +41,8 @@ const CASES: Array<[file: string, schema: z.ZodType]> = [
   ['deviantart-draft.json', z.array(deviantArtDraftSchema)],
   ['deviantart-account.json', z.array(deviantArtAccountSchema)],
   ['deviantart-summary.json', deviantArtSummarySchema],
+  ['remote-status.json', z.array(remoteStatusSchema)],
+  ['share-status.json', z.array(shareStatusSchema)],
 ]
 
 describe('contract fixtures', () => {

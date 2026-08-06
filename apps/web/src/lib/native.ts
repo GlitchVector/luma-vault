@@ -22,6 +22,8 @@ import {
   throttleLevelSchema,
   mediaPageSchema,
   mediaQuerySchema,
+  remoteStatusSchema,
+  shareStatusSchema,
   scanProgressSchema,
   deviantArtAccountSchema,
   deviantArtSummarySchema,
@@ -40,7 +42,9 @@ import {
   type MediaItem,
   type MediaPage,
   type MediaQuery,
+  type RemoteStatus,
   type ScanProgress,
+  type ShareStatus,
   type ThrottleLevel,
 } from '@luma/core'
 import { z } from 'zod'
@@ -62,9 +66,72 @@ export function isTauri(): boolean {
   return tauriInternals() !== undefined
 }
 
-async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+async function tauri<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke: tauriInvoke } = await import('@tauri-apps/api/core')
   return tauriInvoke<T>(command, args)
+}
+
+/**
+ * Commands that always mean *this* machine, even during a remote session.
+ *
+ * The remote-mode ones for the obvious reason — asking the peer whether we are
+ * connected to it is circular. The two OS-integration ones because they act on
+ * a screen: a browser tab belongs on the machine somebody is sitting at, and a
+ * file-manager window opened on the machine they are not is worse than being
+ * told where the file actually is, which is what `reveal_item` does instead.
+ */
+const LOCAL_ONLY = new Set([
+  'remote_status',
+  'remote_connect',
+  'remote_disconnect',
+  'remote_call',
+  'share_status',
+  'set_share',
+  'open_external',
+  'reveal_item',
+])
+
+/** `null` until the backend has been asked, which happens on the first call. */
+let route: 'local' | 'remote' | null = null
+let probing: Promise<void> | null = null
+/** Which library the files come from, for the cache key. Empty when it is ours. */
+let source = ''
+
+/**
+ * Where calls go.
+ *
+ * Read from the backend once and then cached, rather than passed in: this seam
+ * is what makes remote mode invisible to the other forty call sites in this
+ * file and to every component above them. Asking lazily also removes a
+ * load-order trap — nothing has to make sure the session is known before the
+ * first query goes out.
+ */
+async function currentRoute(): Promise<'local' | 'remote'> {
+  if (route) return route
+  probing ??= tauri<unknown>('remote_status')
+    .then((status) => {
+      remember(remoteStatusSchema.parse(status))
+    })
+    // A backend that cannot answer is this machine. Guessing "remote" would
+    // make every call fail instead of just this one.
+    .catch(() => {
+      route = 'local'
+    })
+    .finally(() => {
+      probing = null
+    })
+  await probing
+  return route ?? 'local'
+}
+
+async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (LOCAL_ONLY.has(command)) return tauri<T>(command, args)
+  if ((await currentRoute()) === 'remote') {
+    // The peer runs the same operation under the same name, so nothing here
+    // needs a remote variant — see `api::dispatch` on the Rust side.
+    return tauri<T>('remote_call', { name: command, args: args ?? {} })
+  }
+  return tauri<T>(command, args)
 }
 
 const SCHEME = 'luma'
@@ -87,15 +154,27 @@ function protocolOrigin(): string {
 }
 
 /**
- * How a local file reaches an `<img>` or `<video>`.
+ * How a file reaches an `<img>` or `<video>`.
  *
  * The alternative — fetching bytes and building a `data:` or blob URL — inflates
  * every payload, costs a React state update per tile, and bypasses the browser's
  * image cache entirely. Handing the webview a URL it can fetch itself means
  * decoding, caching and eviction stay where they belong.
+ *
+ * `&from=` is what keeps that cache honest across machines. Responses are
+ * `immutable` — safe, because the watcher drops the row when a file changes — and
+ * a thumbnail is addressed by a hash of its **absolute source path**. Two
+ * machines that lay their folders out the same way therefore produce the *same*
+ * URL for different pictures, and without this the grid would serve one
+ * machine's thumbnail for the other's file. The backend ignores the parameter;
+ * only the cache key cares.
+ *
+ * It is always set by the time it matters: a tile cannot exist before the query
+ * that produced it resolved, and no call resolves before the route is known.
  */
 export function fileUrl(path: string): string {
-  return `${protocolOrigin()}?path=${encodeURIComponent(path)}`
+  const from = source ? `&from=${encodeURIComponent(source)}` : ''
+  return `${protocolOrigin()}?path=${encodeURIComponent(path)}${from}`
 }
 
 // ---------------------------------------------------------------------------
@@ -550,6 +629,81 @@ export async function onDeviantArtProgress(
   return listen<DeviantArtProgress>('luma://deviantart', (event) => {
     handler(event.payload)
   })
+}
+
+// ---------------------------------------------------------------------------
+// Remote mode
+// ---------------------------------------------------------------------------
+
+const NOT_CONNECTED: RemoteStatus = {
+  connected: false,
+  address: '',
+  host: '',
+  folders: 0,
+  items: 0,
+  lastAddress: '',
+  hasPassphrase: false,
+}
+
+const NOT_SHARING: ShareStatus = {
+  sharing: false,
+  port: 0,
+  addresses: [],
+  hasPassphrase: false,
+}
+
+/** Remembers the answer, so the next call knows where to go without asking. */
+function remember(status: RemoteStatus): RemoteStatus {
+  route = status.connected ? 'remote' : 'local'
+  // Part of every file URL from here on — see `fileUrl`.
+  source = status.connected ? status.address : ''
+  return status
+}
+
+export async function remoteStatus(): Promise<RemoteStatus> {
+  if (!isTauri()) return NOT_CONNECTED
+  return remember(remoteStatusSchema.parse(await invoke('remote_status')))
+}
+
+/**
+ * Point the whole app at another machine's library.
+ *
+ * Everything follows: folders, grid, lightbox, ratings, deletions. Pass an
+ * empty passphrase to use the remembered one, which is what makes reconnecting
+ * a single click.
+ *
+ * Rejects with the reason when the address is not on this network, the machine
+ * is not sharing, or the passphrase is wrong — all three are things to show in
+ * the dialog rather than swallow.
+ */
+export async function remoteConnect(address: string, passphrase: string): Promise<RemoteStatus> {
+  if (!isTauri()) return NOT_CONNECTED
+  return remember(
+    remoteStatusSchema.parse(await invoke('remote_connect', { address, passphrase })),
+  )
+}
+
+export async function remoteDisconnect(): Promise<RemoteStatus> {
+  if (!isTauri()) return NOT_CONNECTED
+  return remember(remoteStatusSchema.parse(await invoke('remote_disconnect')))
+}
+
+export async function shareStatus(): Promise<ShareStatus> {
+  if (!isTauri()) return NOT_SHARING
+  return shareStatusSchema.parse(await invoke('share_status'))
+}
+
+/**
+ * Start or stop answering for other machines on this network.
+ *
+ * A passphrase is required to start, and it is the only thing between the LAN
+ * and a library a session can delete from. `null` reuses the stored one, so
+ * switching sharing back on does not ask again; a new value replaces it, and
+ * the other machine then has to be told.
+ */
+export async function setShare(enabled: boolean, passphrase: string | null): Promise<ShareStatus> {
+  if (!isTauri()) return NOT_SHARING
+  return shareStatusSchema.parse(await invoke('set_share', { enabled, passphrase }))
 }
 
 // ---------------------------------------------------------------------------

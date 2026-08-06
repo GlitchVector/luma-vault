@@ -10,7 +10,13 @@
 //!   an unreachable network share — freezes the window.
 //! - Errors are returned as `String`, because that is what crosses the IPC
 //!   boundary; the message is written for a person reading a toast.
+//!
+//! The commands here are one line each: the bodies live in `api.rs`, which also
+//! runs them by name. That is what lets a second machine ask this one to do the
+//! same things over the LAN without a second implementation of any of them —
+//! see `remote.rs`.
 
+mod api;
 mod classifier;
 mod db;
 mod deviantart;
@@ -21,6 +27,7 @@ mod paths;
 mod pipeline;
 mod protocol;
 mod rating;
+mod remote;
 mod sampling;
 mod scan;
 mod throttle;
@@ -34,18 +41,22 @@ mod watcher;
 #[cfg(test)]
 mod contract_tests;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use serde_json::Value;
 use tauri::{Manager, State};
 
+use crate::api::{DeleteSummary, ForgeStatus};
 use crate::db::Db;
 use crate::deviantart::DeviantArt;
 use crate::pipeline::Pipeline;
 use crate::protocol::ProtocolRoots;
+use crate::remote::RemoteState;
 use crate::types::{
-    DeviantArtAccount, DeviantArtDraft, DeviantArtSummary, Folder, LibraryStats, MediaFrame,
-    MediaItem, MediaPage, MediaQuery, ScanProgress,
+    CharacterCount, DeviantArtAccount, DeviantArtDraft, DeviantArtSummary, Folder, LibraryStats,
+    MediaFrame, MediaItem, MediaPage, MediaQuery, RemoteStatus, ScanProgress, ShareStatus,
+    TimelineBucket,
 };
 use crate::watcher::FolderWatcher;
 
@@ -53,6 +64,9 @@ pub struct AppState {
     db: Arc<Db>,
     pipeline: Arc<Pipeline>,
     watcher: Arc<FolderWatcher>,
+    /// The `luma://` allowlist. Held here as well as used by the protocol
+    /// handler, because a shared library serves files through the same check.
+    roots: Arc<ProtocolRoots>,
     /// Interpreter and script, resolved once at startup. `None` when the venv
     /// has not been built, which the command reports as a setup step rather
     /// than a failure.
@@ -60,6 +74,9 @@ pub struct AppState {
     /// Holds the access-token cache, so a batch of twenty uploads refreshes
     /// once rather than per file.
     deviantart: Arc<DeviantArt>,
+    /// Whether this window is showing another machine's library, and whether it
+    /// is answering for others.
+    remote: Arc<RemoteState>,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,81 +85,30 @@ pub struct AppState {
 
 #[tauri::command(async)]
 async fn list_folders(state: State<'_, AppState>) -> Result<Vec<Folder>, String> {
-    state.db.list_folders().map_err(stringify)
+    api::list_folders(&state)
 }
 
-/// Add a folder and immediately start scanning it.
-///
-/// The scan runs on its own thread and reports through the progress event, so
-/// this returns as soon as the row exists — the UI shows the new folder with a
-/// running scan rather than a spinner on a blocked command.
 #[tauri::command(async)]
 async fn add_folder(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     path: String,
 ) -> Result<Folder, String> {
-    let candidate = PathBuf::from(&path);
-    if !candidate.is_dir() {
-        return Err(format!("{path} is not a folder"));
-    }
-
-    // Canonicalize so adding `/Volumes/vault/pics` and `/Volumes/vault/./pics`
-    // cannot produce two rows for one folder.
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|error| format!("cannot open {path}: {error}"))?;
-    let canonical_str = canonical.to_string_lossy().to_string();
-
-    let id = state
-        .db
-        .add_folder(&canonical_str, pipeline::now_ms())
-        .map_err(stringify)?;
-
-    state.watcher.watch(&canonical);
-
-    let pipeline = Arc::clone(&state.pipeline);
-    let handle = app.clone();
-    std::thread::spawn(move || pipeline::run_scan(pipeline, handle, id, canonical));
-
-    state
-        .db
-        .list_folders()
-        .map_err(stringify)?
-        .into_iter()
-        .find(|folder| folder.id == id)
-        .ok_or_else(|| "the folder disappeared immediately after being added".to_string())
+    api::add_folder(&app, &state, path)
 }
 
 #[tauri::command(async)]
 async fn remove_folder(state: State<'_, AppState>, id: i64) -> Result<(), String> {
-    let folders = state.db.list_folders().map_err(stringify)?;
-    if let Some(folder) = folders.iter().find(|folder| folder.id == id) {
-        state.watcher.unwatch(&PathBuf::from(&folder.path));
-    }
-    state.db.remove_folder(id).map_err(stringify)
+    api::remove_folder(&state, id)
 }
 
-/// Re-walk a folder. Cheap when nothing changed: existing rows are left alone,
-/// so a rescan of an unchanged library is a walk plus a few thousand no-op
-/// inserts.
 #[tauri::command(async)]
 async fn rescan_folder(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: i64,
 ) -> Result<(), String> {
-    let folders = state.db.list_folders().map_err(stringify)?;
-    let folder = folders
-        .into_iter()
-        .find(|folder| folder.id == id)
-        .ok_or_else(|| "no such folder".to_string())?;
-
-    let pipeline = Arc::clone(&state.pipeline);
-    let handle = app.clone();
-    let root = PathBuf::from(folder.path);
-    std::thread::spawn(move || pipeline::run_scan(pipeline, handle, id, root));
-    Ok(())
+    api::rescan_folder(&app, &state, id)
 }
 
 // ---------------------------------------------------------------------------
@@ -151,55 +117,57 @@ async fn rescan_folder(
 
 #[tauri::command(async)]
 async fn query_media(state: State<'_, AppState>, query: MediaQuery) -> Result<MediaPage, String> {
-    state.db.query_media(&query).map_err(stringify)
+    api::query_media(&state, query)
 }
 
-/// How many rows the query matches per week, for the timeline's bars.
-///
-/// Ignores the query's own date range — the bars keep showing the whole span
-/// while a selection narrows the grid, or nothing outside it could be grabbed.
 #[tauri::command(async)]
 async fn media_timeline(
     state: State<'_, AppState>,
     query: MediaQuery,
-) -> Result<Vec<types::TimelineBucket>, String> {
-    state.db.media_timeline(&query).map_err(stringify)
+) -> Result<Vec<TimelineBucket>, String> {
+    api::media_timeline(&state, query)
 }
 
 #[tauri::command(async)]
 async fn recent_media(state: State<'_, AppState>, limit: i64) -> Result<Vec<MediaItem>, String> {
-    state.db.recent_media(limit.clamp(1, 200)).map_err(stringify)
+    api::recent_media(&state, limit)
 }
 
 #[tauri::command(async)]
 async fn media_frames(state: State<'_, AppState>, media_id: i64) -> Result<Vec<MediaFrame>, String> {
-    state.db.frames_for_media(media_id).map_err(stringify)
+    api::media_frames(&state, media_id)
 }
 
-/// One item by id — the detail view re-reads rather than trusting the copy it
-/// was handed, so a lightbox opened before classification finished shows the
-/// verdict once it lands.
 #[tauri::command(async)]
 async fn media_by_id(state: State<'_, AppState>, id: i64) -> Result<Option<MediaItem>, String> {
-    state.db.media_by_id(id).map_err(stringify)
+    api::media_by_id(&state, id)
 }
 
-/// One row by path, for a picture no list contains.
-///
-/// The grid hides an original once an upscaled variant of it exists, so there
-/// is no id to hand for it anywhere in the UI — only the path its variant
-/// carries.
 #[tauri::command(async)]
-async fn media_by_path(state: State<'_, AppState>, path: String) -> Result<Option<MediaItem>, String> {
-    state.db.media_by_path(&path).map_err(stringify)
+async fn media_by_path(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Option<MediaItem>, String> {
+    api::media_by_path(&state, path)
 }
 
-/// Upscale a selection, writing each result beside its source.
-///
-/// Blocking for the caller, deliberately: a batch is minutes of GPU work and the
-/// UI needs a result to show, so this awaits the run and reports progress
-/// through `luma://upscale` while it goes. It is `async`, so it does not hold
-/// the main thread.
+#[tauri::command(async)]
+async fn top_characters(
+    state: State<'_, AppState>,
+    query: MediaQuery,
+    limit: i64,
+) -> Result<Vec<CharacterCount>, String> {
+    api::top_characters(&state, query, limit)
+}
+
+#[tauri::command(async)]
+async fn extras_original(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<Option<MediaItem>, String> {
+    api::extras_original(&state, id)
+}
+
 #[tauri::command(async)]
 async fn upscale_media(
     app: tauri::AppHandle,
@@ -207,527 +175,104 @@ async fn upscale_media(
     ids: Vec<i64>,
     long_edge: Option<i64>,
 ) -> Result<upscaler::UpscaleSummary, String> {
-    if ids.is_empty() {
-        return Err("nothing selected".to_string());
-    }
-
-    let long_edge = long_edge.unwrap_or(3840);
-
-    // Resolved here rather than trusting paths from the frontend: the webview
-    // must never be able to name an arbitrary file for a process to write next
-    // to. Videos are dropped — the upscaler reads still images.
-    //
-    // So is anything already at or past the target. "Upscale to 4K" means
-    // nothing for a picture that is 4K, and running it anyway is not merely
-    // wasteful: the model produces 15360px, the mandatory downscale brings it
-    // straight back to the size it started at, and the near-identical copy then
-    // *hides its own source* in the grid. Ten seconds of GPU to replace a
-    // picture with itself. Selecting an already-upscaled variant is the same
-    // case — it is 3840 by construction — which is what stops a second pass
-    // producing `x_upscaled_4k_upscaled_4k.png`.
-    let mut sources = Vec::new();
-    let mut already_large = 0_i64;
-    for id in &ids {
-        if let Ok(Some(item)) = state.db.media_by_id(*id) {
-            if item.kind != types::MediaKind::Image {
-                continue;
-            }
-            if item.width.max(item.height) >= long_edge {
-                already_large += 1;
-                continue;
-            }
-            sources.push(item.path);
-        }
-    }
-    if sources.is_empty() {
-        return Err(if already_large > 0 {
-            format!(
-                "nothing to do: {already_large} of the selected file(s) already reach {long_edge}px"
-            )
-        } else {
-            "none of the selected files is an image".to_string()
-        });
-    }
-
-    // Checked here as well as in the UI. The button polls every couple of
-    // seconds, so a click can land in the gap after a generation started — and
-    // a gate that a race walks through is not one. Unreachable means Forge is
-    // not running, which is not a reason to refuse.
-    if let Ok(status) = forge_status(state.clone()).await {
-        if status.busy {
-            return Err(match status.job {
-                Some(job) => format!("Forge is generating ({job}). Both want the whole GPU."),
-                None => "Forge is generating. Both want the whole GPU.".to_string(),
-            });
-        }
-    }
-
-    let (python, script) = state
-        .upscaler
-        .clone()
-        .ok_or_else(|| "the upscaler is not installed. Run `pnpm setup:upscaler`.".to_string())?;
-
-    let configured = state.db.setting("upscale_model").ok().flatten();
-    let model = upscaler::find_models(configured.as_deref())
-        .into_iter()
-        .next()
-        .ok_or_else(|| {
-            "no upscale model found. Put a .pth in the webui's models/ESRGAN folder, or set one."
-                .to_string()
-        })?;
-
-    let db = Arc::clone(&state.db);
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut summary = upscaler::run(&app, &python, &script, &model, &sources, long_edge)?;
-        summary.already_large = already_large;
-
-        // Indexed here rather than left to the watcher. The watcher does see
-        // these files, but on its own schedule — so closing the results panel
-        // showed the originals still in place and the swap happened some seconds
-        // later, which reads as the grid rearranging itself for no reason. Doing
-        // it before returning means the reload the UI runs next already sees the
-        // finished state.
-        for output in &summary.outputs {
-            let Ok(Some(original)) = db.media_by_path(&output.source) else {
-                continue;
-            };
-            let Ok(metadata) = std::fs::metadata(&output.destination) else {
-                continue;
-            };
-            let name = std::path::Path::new(&output.destination)
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or_else(|| output.name.clone());
-            let entry = db::ScannedFile {
-                path: output.destination.clone(),
-                name,
-                kind: types::MediaKind::Image,
-                size_bytes: metadata.len() as i64,
-                // The original's, so the variant sorts where the picture it
-                // replaces did. `insert_media_batch` re-applies this from the
-                // row anyway; passing it here keeps the two agreeing even if the
-                // original has not been thumbnailed yet.
-                modified_at: original.modified_at,
-            };
-            let _ = db.insert_media_batch(original.folder_id, &[entry], pipeline::now_ms());
-
-            // The size, from the run that just produced it. Without this the
-            // row sits at 0x0 until the measure phase happens to reach it, and
-            // three things read wrong in the meantime: no 4K badge, `—` for the
-            // resolution, and no zoom at all — the lightbox computes its box
-            // from these and silently falls back to a fixed view when it
-            // cannot. Nothing kicks the pipeline after an upscale, so "in the
-            // meantime" is until the next scan.
-            //
-            // Measuring again would be a decode of a 12MB file to learn a
-            // number the upscaler already reported. `None` for the content key
-            // leaves the one inherited from the original in place, which is
-            // what the shared thumbnail is addressed by.
-            if let Ok(Some(row)) = db.media_by_path(&output.destination) {
-                let _ = db.update_dimensions(
-                    row.id,
-                    output.final_width,
-                    output.final_height,
-                    None,
-                    None,
-                );
-            }
-        }
-        Ok::<_, anyhow::Error>(summary)
-    })
-    .await
-    .map_err(|error| format!("the upscale task panicked: {error}"))?
-    .map_err(|error| format!("{error:#}"))
+    api::upscale_media(&app, &state, ids, long_edge).await
 }
 
-/// A person's judgement, 1-5, or `None` to clear it.
-///
-/// Deliberately not reachable from the pipeline: every other rating in this app
-/// is produced by a model, and conflating the two would mean a re-classify
-/// could silently overwrite what someone actually thought of a picture.
 #[tauri::command(async)]
 async fn set_stars(state: State<'_, AppState>, id: i64, stars: Option<i64>) -> Result<(), String> {
-    state.db.set_stars(id, stars).map_err(stringify)
+    api::set_stars(&state, id, stars)
 }
 
-/// Rate a whole selection at once, returning how many rows changed.
-///
-/// One call rather than one per id, for the same reason `delete_media` is one:
-/// a selection can be hundreds, and that many IPC round trips is both slow and
-/// impossible to report on sensibly.
 #[tauri::command(async)]
 async fn set_stars_many(
     state: State<'_, AppState>,
     ids: Vec<i64>,
     stars: Option<i64>,
 ) -> Result<usize, String> {
-    if ids.is_empty() {
-        return Ok(0);
-    }
-    state.db.set_stars_many(&ids, stars).map_err(stringify)
+    api::set_stars_many(&state, ids, stars)
 }
 
-/// Import 1-5 star ratings from a Stable Diffusion Image Browser database.
-///
-/// Staged rather than applied directly, so importing before scanning the
-/// folder it describes is the expected order rather than a mistake.
 #[tauri::command(async)]
 async fn import_image_browser_db(
     state: State<'_, AppState>,
     path: String,
 ) -> Result<imports::ImportSummary, String> {
-    imports::import_image_browser(&state.db, Path::new(&path), pipeline::now_ms())
-        .map_err(|error| format!("{error:#}"))
+    api::import_image_browser_db(&state, path)
 }
 
 #[tauri::command(async)]
 async fn library_stats(state: State<'_, AppState>) -> Result<LibraryStats, String> {
-    state.db.stats().map_err(stringify)
+    api::library_stats(&state)
 }
 
 /// Show a file in the OS file manager.
 ///
-/// Goes through Rust rather than calling the opener plugin from the webview,
-/// because the index stores canonicalized paths and the Windows shell cannot
-/// resolve the extended-length form — `Shell.NameSpace` on a `\\?\UNC\` path
-/// returns nothing, so the button silently did nothing. Normalising here keeps
-/// that knowledge in one place instead of teaching the frontend about Windows
-/// path spellings.
-///
-/// It also gives the failure somewhere to go: the plugin called from JS had its
-/// rejection dropped on the floor.
+/// The one action that cannot be forwarded. Running it on the peer would open a
+/// window on a screen nobody is sitting in front of, so a remote session is
+/// told where the file actually is instead.
 #[tauri::command(async)]
-async fn reveal_item(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
-
-    let target = crate::paths::external_path(&path);
-    app.opener()
-        .reveal_item_in_dir(&target)
-        .map_err(|error| format!("cannot reveal {target}: {error}"))
-}
-
-/// Open a URL in the user's browser.
-///
-/// Scheme-checked rather than passed straight to the shell. `opener` hands the
-/// string to the OS, which on Windows will happily act on `file:` — so an
-/// unvalidated argument here is a way to launch things, not just browse. Only
-/// `http` and `https` reach it.
-#[tauri::command(async)]
-async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
-
-    let parsed = url::Url::parse(&url).map_err(|error| format!("not a URL: {error}"))?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err(format!("refusing to open a {} URL", parsed.scheme()));
-    }
-    app.opener()
-        .open_url(parsed.as_str(), None::<&str>)
-        .map_err(|error| format!("cannot open {url}: {error}"))
-}
-
-/// Delete a file and drop its row.
-///
-/// **The Recycle Bin wherever there is one.** Deleting is the one action in
-/// this app that cannot be undone by rescanning, and a media library is exactly
-/// where someone deletes the wrong thing while moving quickly. The bin turns
-/// that from a loss into an annoyance, and costs nothing.
-///
-/// On a network share there is no bin — which is every file in this library, so
-/// it is the normal case rather than the exception. There the deletion is
-/// permanent, and `permanent` has to say so: the flag is the caller confirming
-/// it asked the question that way round, so a UI promising the bin can never
-/// destroy a file by accident. It is ignored where a bin exists.
-///
-/// Only ever a path that is already a row in the index — the caller passes an
-/// id, never a path — so this cannot be aimed at an arbitrary file by anything
-/// that reaches the command.
-///
-/// The row is removed here rather than left to the watcher. The watcher does
-/// notice, and did so reliably over 4,686 deletions today, but a grid that
-/// still shows a file you just deleted for however long the event takes reads
-/// as the button not working.
-#[tauri::command(async)]
-async fn delete_item(state: State<'_, AppState>, id: i64, permanent: bool) -> Result<(), String> {
-    // Both halves of an upscale pair, if this is one — see `with_counterparts`.
-    // The original behind a variant is reachable only *through* that variant,
-    // so deleting the variant alone would strand it.
-    let rows = with_counterparts(&state.db, &[id]);
-    if rows.is_empty() {
-        return Err("that file is no longer in the library".to_string());
-    }
-    for item in rows {
-        delete_one(&state, &item, permanent)?;
-    }
-    Ok(())
-}
-
-fn delete_one(state: &State<'_, AppState>, item: &MediaItem, permanent: bool) -> Result<(), String> {
-    // The extended-length form the index stores is fine for `std::fs`, but the
-    // shell APIs behind the bin cannot resolve it — the same prefix that broke
-    // ffmpeg, Explorer and SQLite. See `paths::external_path`.
-    let target = crate::paths::external_path(&item.path);
-
-    if crate::paths::has_recycle_bin(&target) {
-        trash::delete(&target).map_err(|error| format!("cannot delete {target}: {error}"))?;
-    } else if permanent {
-        // `std::fs`, not the shell. The shell would take this path and delete
-        // it just as permanently while reporting a *recycle*, and the `trash`
-        // crate cannot take it at all: it re-canonicalizes to `\\?\UNC\…` and
-        // then strips exactly four characters, leaving `UNC\server\share\…`,
-        // which resolves to nothing. That is the 0x80070002 this used to fail
-        // with on every single file.
-        std::fs::remove_file(&target).map_err(|error| format!("cannot delete {target}: {error}"))?;
-    } else {
+async fn reveal_item(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    if let Some(session) = state.remote.session() {
         return Err(format!(
-            "{target} is on a network drive, which has no Recycle Bin — deleting it there is permanent"
+            "that file is on {} — Explorer can only open it at that machine",
+            session.address()
         ));
     }
-
-    state.db.delete_media_by_path(&item.path).map_err(stringify)?;
-    Ok(())
+    api::reveal_item(&app, path)
 }
 
-/// Every row a delete of these ids should actually remove.
-///
-/// An upscale pair is one picture kept as two files, and the grid already
-/// presents it that way — the variant stands in for the original and the
-/// original is not shown at all. Deleting one and silently keeping the other
-/// would leave a file nothing in the app can reach: the original is only
-/// reachable *through* its variant, so removing the variant alone orphans it
-/// forever. So a delete takes both, in whichever direction it was asked.
-///
-/// Deduplicated by path, because selecting a variant and then also reaching its
-/// original through the lightbox would otherwise queue the same file twice.
-fn with_counterparts(db: &Db, ids: &[i64]) -> Vec<MediaItem> {
-    let mut rows: Vec<MediaItem> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for id in ids {
-        let Ok(Some(item)) = db.media_by_id(*id) else {
-            continue;
-        };
-        let partner = item
-            .upscaled_from
-            .clone()
-            .or_else(|| item.upscaled_to.clone())
-            .and_then(|path| db.media_by_path(&path).ok().flatten());
-
-        for row in [Some(item), partner].into_iter().flatten() {
-            if seen.insert(row.path.clone()) {
-                rows.push(row);
-            }
-        }
-    }
-    rows
+#[tauri::command(async)]
+async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    api::open_external(&app, url)
 }
 
-/// Delete many files, reporting how many went and what refused.
-///
-/// One command rather than a call per id: a selection can be hundreds, and that
-/// many IPC round trips is both slow and impossible to report on sensibly. One
-/// failure does not stop the rest — a file that vanished under you must not
-/// cost the other ninety-nine their deletion.
+#[tauri::command(async)]
+async fn delete_item(state: State<'_, AppState>, id: i64, permanent: bool) -> Result<(), String> {
+    api::delete_item(&state, id, permanent)
+}
+
 #[tauri::command(async)]
 async fn delete_media(
     state: State<'_, AppState>,
     ids: Vec<i64>,
     permanent: bool,
 ) -> Result<DeleteSummary, String> {
-    let mut summary = DeleteSummary::default();
-    let rows = with_counterparts(&state.db, &ids);
-    summary.missing = ids.len() as i64 - rows.iter().filter(|r| ids.contains(&r.id)).count() as i64;
-
-    for item in rows {
-        let target = crate::paths::external_path(&item.path);
-
-        let outcome = if crate::paths::has_recycle_bin(&target) {
-            trash::delete(&target).map_err(|error| format!("{}: {error}", item.name))
-        } else if permanent {
-            std::fs::remove_file(&target).map_err(|error| format!("{}: {error}", item.name))
-        } else {
-            Err(format!(
-                "{}: on a network drive, where deleting is permanent",
-                item.name
-            ))
-        };
-
-        match outcome {
-            Ok(()) => {
-                let _ = state.db.delete_media_by_path(&item.path);
-                summary.deleted += 1;
-            }
-            Err(message) => {
-                summary.failed += 1;
-                // Capped: a hundred identical permission errors is not a more
-                // useful message than five, and the dialog has to stay readable.
-                if summary.errors.len() < 5 {
-                    summary.errors.push(message);
-                }
-            }
-        }
-    }
-    Ok(summary)
+    api::delete_media(&state, ids, permanent)
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteSummary {
-    pub deleted: i64,
-    /// Already gone from the index — nothing to do, and not a failure.
-    pub missing: i64,
-    pub failed: i64,
-    pub errors: Vec<String>,
-}
-
-/// The verbatim parameter block a file records, for handing back to Forge.
-///
-/// Read from the file on demand rather than stored: with ControlNet and two
-/// ADetailer passes a real block runs to 2,656 bytes, and keeping that for
-/// 65,000 images would add ~170MB to an index that is meant to be a cache.
-///
-/// The parsed `generation` on a `MediaItem` is for *display*. Rebuilding a
-/// block out of it loses schedule type, clip skip, denoising strength,
-/// ControlNet units and every ADetailer setting — so the regenerated image
-/// comes out different. Forge's own parser understands all of it.
 #[tauri::command(async)]
 async fn generation_parameters(
     state: State<'_, AppState>,
     id: i64,
 ) -> Result<Option<String>, String> {
-    let Some(item) = state.db.media_by_id(id).map_err(stringify)? else {
-        return Ok(None);
-    };
-    Ok(generated::read_parameter_block(Path::new(&item.path)))
+    api::generation_parameters(&state, id)
 }
 
-/// Where the local Stable Diffusion UI answers. Remembered between launches.
 #[tauri::command(async)]
 async fn forge_url(state: State<'_, AppState>) -> Result<String, String> {
-    Ok(state
-        .db
-        .setting(FORGE_URL_KEY)
-        .map_err(stringify)?
-        .unwrap_or_else(|| DEFAULT_FORGE_URL.to_string()))
+    api::forge_url(&state)
 }
 
 #[tauri::command(async)]
 async fn set_forge_url(state: State<'_, AppState>, url: String) -> Result<(), String> {
-    state.db.set_setting(FORGE_URL_KEY, &url).map_err(stringify)
+    api::set_forge_url(&state, url)
 }
 
-/// Select the checkpoint in Forge, before its page is opened.
-///
-/// **The order is the whole point.** Forge builds its checkpoint dropdown from
-/// `value=lambda: shared.opts.sd_model_checkpoint`, evaluated once while the
-/// page is being constructed, and nothing pushes later changes back to the
-/// browser. So a checkpoint selected *after* the tab opens is genuinely
-/// selected — generation uses it — but the dropdown keeps whatever it rendered
-/// with, which reads as the button not having worked. Setting it first means
-/// the page is built with the right value already in place.
-///
-/// Best-effort by design: Forge may not be running, may not have the extension
-/// installed, or may not have that checkpoint. None of those should stop the
-/// tab from opening, because the parameters are on the clipboard regardless.
-/// The outcome is returned so the caller can say what happened.
 #[tauri::command(async)]
 async fn forge_select_checkpoint(
     state: State<'_, AppState>,
     block: String,
 ) -> Result<Option<String>, String> {
-    let Some(model) = crate::generated::checkpoint_of(&block) else {
-        return Ok(None);
-    };
-
-    let base = state
-        .db
-        .setting(FORGE_URL_KEY)
-        .map_err(stringify)?
-        .unwrap_or_else(|| DEFAULT_FORGE_URL.to_string());
-    let endpoint = format!("{}/luma/v1/checkpoint", base.trim_end_matches('/'));
-
-    let client = reqwest::Client::builder()
-        // Short: this runs between a click and a browser opening, and a Forge
-        // that is not answering must not hold that up.
-        .timeout(std::time::Duration::from_secs(4))
-        .build()
-        .map_err(|error| error.to_string())?;
-
-    match client
-        .post(&endpoint)
-        .json(&serde_json::json!({ "name": model }))
-        .send()
-        .await
-    {
-        Ok(response) if response.status().is_success() => Ok(Some(model)),
-        Ok(response) => Err(format!("Forge refused {model}: HTTP {}", response.status())),
-        Err(error) => Err(format!("cannot reach Forge at {endpoint}: {error}")),
-    }
-}
-
-/// Whether Forge is mid-generation, so an upscale can decline to compete.
-///
-/// Both want the whole GPU. Running them together does not fail — it makes each
-/// take roughly twice as long and can push a large batch into swapping, which
-/// is worse than either waiting for the other.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ForgeStatus {
-    /// False when Forge is not running at all, which is not a reason to block.
-    pub reachable: bool,
-    pub busy: bool,
-    /// What it is doing, for the tooltip — "Batch 3 out of 3".
-    pub job: Option<String>,
-    /// 0.0 to 1.0 through the current job.
-    pub progress: f64,
+    api::forge_select_checkpoint(&state, block).await
 }
 
 #[tauri::command(async)]
 async fn forge_status(state: State<'_, AppState>) -> Result<ForgeStatus, String> {
-    let base = state
-        .db
-        .setting(FORGE_URL_KEY)
-        .map_err(stringify)?
-        .unwrap_or_else(|| DEFAULT_FORGE_URL.to_string());
-    let endpoint = format!(
-        "{}/sdapi/v1/progress?skip_current_image=true",
-        base.trim_end_matches('/')
-    );
-
-    let client = reqwest::Client::builder()
-        // Very short. This is polled while a selection is open, and a Forge that
-        // is wedged must not make the button feel wedged too — unreachable
-        // reads as "not busy", which is the safe answer for a gate.
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-        .map_err(|error| error.to_string())?;
-
-    let unreachable = ForgeStatus {
-        reachable: false,
-        busy: false,
-        job: None,
-        progress: 0.0,
-    };
-
-    let Ok(response) = client.get(&endpoint).send().await else {
-        return Ok(unreachable);
-    };
-    let Ok(body) = response.json::<serde_json::Value>().await else {
-        return Ok(unreachable);
-    };
-
-    let job = body["state"]["job"].as_str().unwrap_or_default().to_string();
-    let job_count = body["state"]["job_count"].as_i64().unwrap_or(0);
-    let progress = body["progress"].as_f64().unwrap_or(0.0);
-
-    Ok(ForgeStatus {
-        reachable: true,
-        // Any of the three. Forge reports the transition between queued jobs
-        // with a zero progress and an empty job name for a moment, and a gate
-        // that flickers open there is not a gate.
-        busy: job_count > 0 || !job.is_empty() || progress > 0.0,
-        job: (!job.is_empty()).then_some(job),
-        progress,
-    })
+    api::forge_status(&state).await
 }
 
 // ---------------------------------------------------------------------------
@@ -736,57 +281,36 @@ async fn forge_status(state: State<'_, AppState>) -> Result<ForgeStatus, String>
 
 #[tauri::command(async)]
 async fn deviantart_account(state: State<'_, AppState>) -> Result<DeviantArtAccount, String> {
-    Ok(state.deviantart.account())
+    api::deviantart_account(&state)
 }
 
-/// Record the application registered on DeviantArt.
-///
-/// The secret is optional — an app registered as *public* has none, which is
-/// the honest shape for something running on a desktop where a secret cannot
-/// actually be kept. PKCE protects the exchange either way.
 #[tauri::command(async)]
 async fn deviantart_configure(
     state: State<'_, AppState>,
     client_id: String,
     client_secret: Option<String>,
 ) -> Result<DeviantArtAccount, String> {
-    state
-        .deviantart
-        .configure(&client_id, client_secret.as_deref())
-        .map_err(stringify)?;
-    Ok(state.deviantart.account())
+    api::deviantart_configure(&state, client_id, client_secret)
 }
 
 #[tauri::command(async)]
 async fn deviantart_set_redirect(state: State<'_, AppState>, uri: String) -> Result<(), String> {
-    state.deviantart.set_redirect_uri(&uri).map_err(stringify)
+    api::deviantart_set_redirect(&state, uri)
 }
 
-/// Open the browser, wait for the redirect, and keep the tokens.
-///
-/// Blocking for the caller, deliberately: there is nothing to show until it
-/// finishes, and the alternative is a UI that has to poll for whether an
-/// authorization it started has landed yet.
 #[tauri::command(async)]
 async fn deviantart_connect(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<DeviantArtAccount, String> {
-    state.deviantart.connect(&app).await.map_err(stringify)
+    api::deviantart_connect(&app, &state).await
 }
 
 #[tauri::command(async)]
 async fn deviantart_disconnect(state: State<'_, AppState>) -> Result<(), String> {
-    state.deviantart.disconnect();
-    Ok(())
+    api::deviantart_disconnect(&state)
 }
 
-/// Upload a reviewed selection, optionally publishing each as it lands.
-///
-/// Takes drafts, not ids: what gets posted is what a person approved in the
-/// panel, and re-deriving it here would silently discard their edits. The file
-/// itself is still resolved from the index by id, so the webview never names a
-/// path for the backend to read and upload.
 #[tauri::command(async)]
 async fn deviantart_send(
     app: tauri::AppHandle,
@@ -795,210 +319,231 @@ async fn deviantart_send(
     publish: bool,
     stack: Option<String>,
 ) -> Result<DeviantArtSummary, String> {
-    if drafts.is_empty() {
-        return Err("nothing selected".to_string());
-    }
-    if publish && !state.deviantart.account().can_publish {
-        return Err(
-            "this connection was not granted the publish scope — upload to Sta.sh and submit \
-             from DeviantArt instead, or reconnect"
-                .to_string(),
-        );
-    }
-    let stack = stack.filter(|name| !name.trim().is_empty());
-    Ok(state
-        .deviantart
-        .send(&app, &drafts, publish, stack.as_deref())
-        .await)
-}
-
-const FORGE_URL_KEY: &str = "forge_url";
-/// Forge's own default. `127.0.0.1` rather than `localhost` because the latter
-/// can resolve to IPv6 first and Gradio binds v4.
-const DEFAULT_FORGE_URL: &str = "http://127.0.0.1:7860";
-
-/// Clear recorded failures and reprocess them.
-///
-/// Failures are usually permanent, but not always: an unmounted share or a
-/// missing ffmpeg fails everything it touches, and after fixing that the user
-/// needs a way to say "try again" short of removing and re-adding the folder.
-#[tauri::command(async)]
-async fn retry_failed(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    folder_id: Option<i64>,
-) -> Result<usize, String> {
-    let cleared = state.db.clear_errors(folder_id).map_err(stringify)?;
-    if cleared > 0 {
-        let pipeline = Arc::clone(&state.pipeline);
-        let handle = app.clone();
-        std::thread::spawn(move || pipeline::run_pending(pipeline, handle));
-    }
-    Ok(cleared)
+    api::deviantart_send(&app, &state, drafts, publish, stack).await
 }
 
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
 
-/// The current progress, for a UI that mounted mid-scan and missed the events.
+#[tauri::command(async)]
+async fn retry_failed(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    folder_id: Option<i64>,
+) -> Result<usize, String> {
+    api::retry_failed(&app, &state, folder_id)
+}
+
 #[tauri::command(async)]
 async fn scan_progress(state: State<'_, AppState>) -> Result<ScanProgress, String> {
-    Ok(state.pipeline.snapshot())
+    api::scan_progress(&state)
 }
 
 #[tauri::command(async)]
 async fn process_pending(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let pipeline = Arc::clone(&state.pipeline);
-    let handle = app.clone();
-    std::thread::spawn(move || pipeline::run_pending(pipeline, handle));
-    Ok(())
+    api::process_pending(&app, &state)
 }
 
-/// Find every picture the library holds more than once.
-///
-/// Two mechanisms, because the two kinds of file need different questions
-/// asked. **Images** are matched perceptually — a hash of the thumbnail, so a
-/// re-encode, a re-save or a copy at another resolution still matches; the
-/// thumbnail is already normalised to 512px, which is what makes resolution
-/// stop mattering. **Videos** are matched on their content key, an exact
-/// size-plus-head-and-tail hash the scan already computed, because a
-/// re-encoded video is a different video and looking for one is answering a
-/// question nobody asked.
 #[tauri::command(async)]
-async fn find_duplicates(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let hashes = state.db.all_fingerprints().map_err(stringify)?;
-    let grouping = dupes::group(&hashes);
-
-    let mut pairs: Vec<(i64, i64)> =
-        grouping.groups.iter().map(|(id, group)| (*group, *id)).collect();
-    let image_files = pairs.len() as i64;
-    let image_groups = grouping.group_count;
-
-    let videos = state.db.video_duplicates().map_err(stringify)?;
-    let video_files = videos.len() as i64;
-    let video_groups = videos
-        .iter()
-        .map(|(group, _)| *group)
-        .collect::<std::collections::HashSet<_>>()
-        .len() as i64;
-    pairs.extend(videos);
-
-    state.db.set_duplicate_groups(&pairs).map_err(stringify)?;
-
-    Ok(serde_json::json!({
-        "groups": image_groups + video_groups,
-        "files": image_files + video_files,
-        "imageGroups": image_groups,
-        "videoGroups": video_groups,
-        "hashed": hashes.len() as i64,
-        // Rows in buckets too large to be anything but blank frames. Reported
-        // rather than swallowed, so a silent cap is never mistaken for "none".
-        "skippedCommon": grouping.skipped_common as i64,
-    }))
+async fn find_duplicates(state: State<'_, AppState>) -> Result<Value, String> {
+    api::find_duplicates(&state)
 }
 
 #[tauri::command(async)]
 async fn list_exclusions(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    state.db.excluded_folders().map_err(stringify)
+    api::list_exclusions(&state)
 }
 
-/// Stop scanning a folder, and drop what it already contributed.
-///
-/// Both halves are the point. Excluding only future walks would leave the
-/// texture pack you just excluded sitting in the grid until something else
-/// happened to prune it, which reads as the setting not working.
-///
-/// Returns how many rows were removed. Files are never touched — this is an
-/// index that can be rebuilt, and the folder on disk is not ours to edit.
 #[tauri::command(async)]
 async fn exclude_folder(state: State<'_, AppState>, path: String) -> Result<i64, String> {
-    state
-        .db
-        .add_excluded_folder(&path, pipeline::now_ms())
-        .map_err(stringify)?;
-
-    let before = state.db.stats().map(|s| s.images + s.videos).unwrap_or(0);
-    let keys = state.db.delete_media_under(&path).map_err(stringify)?;
-    let after = state.db.stats().map(|s| s.images + s.videos).unwrap_or(0);
-
-    // Derived files outlive their rows deliberately — a thumbnail is addressed
-    // by content, so the same key can belong to a copy of the file elsewhere.
-    // Only the ones nothing else claims are removed.
-    for key in keys {
-        if state.db.content_key_is_orphaned(&key).unwrap_or(false) {
-            thumbs::forget_derived(
-                &state.pipeline.thumb_root(),
-                &state.pipeline.frame_root(),
-                &key,
-            );
-        }
-    }
-    Ok(before - after)
+    api::exclude_folder(&state, path)
 }
 
-/// Scan a folder again after excluding it. Nothing is re-read until the next
-/// walk, which the caller triggers.
 #[tauri::command(async)]
 async fn include_folder(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    state.db.remove_excluded_folder(&path).map_err(stringify)
+    api::include_folder(&state, path)
 }
 
-/// The original behind an Extras-tab upscale, linked perceptually through
-/// the duplicate grouping. Null when unlinked, which the UI explains.
 #[tauri::command(async)]
-async fn extras_original(
-    state: State<'_, AppState>,
-    id: i64,
-) -> Result<Option<MediaItem>, String> {
-    state.db.extras_original(id).map_err(stringify)
+async fn environment(state: State<'_, AppState>) -> Result<Value, String> {
+    api::environment(&state)
 }
 
-/// The most-depicted characters, for the sidebar leaderboard. Detected from
-/// prompts at labelling time; this is only the ranking query.
-#[tauri::command(async)]
-async fn top_characters(
-    state: State<'_, AppState>,
-    query: MediaQuery,
-    limit: i64,
-) -> Result<Vec<types::CharacterCount>, String> {
-    state.db.top_characters(&query, limit.clamp(1, 50)).map_err(stringify)
-}
-
-/// What the environment can actually do, so the UI can explain a missing
-/// capability instead of silently producing unrated files.
-#[tauri::command(async)]
-async fn environment(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    Ok(serde_json::json!({
-        "classifierAvailable": state.pipeline.classifier_ready(),
-        "ffmpegAvailable": video::available(),
-        "busy": state.pipeline.is_busy(),
-        "throttle": state.pipeline.throttle().level().as_str(),
-    }))
-}
-
-/// Cap background work at a share of the machine. See `throttle::ThrottleLevel`.
-///
-/// Takes effect on the *next* unit of work rather than immediately: a batch
-/// already inside the classifier finishes at full speed. Changing the level
-/// drops the classifier pool so it comes back at the right size with the right
-/// per-worker thread budget — which is the half of the throttle that pacing
-/// alone cannot do.
 #[tauri::command(async)]
 async fn set_throttle(state: State<'_, AppState>, level: String) -> Result<(), String> {
-    let level = throttle::ThrottleLevel::parse(&level);
-    if state.pipeline.throttle().set(level) {
-        state.pipeline.reset_pool();
-    }
-    video::set_thread_limit(state.pipeline.throttle().process_threads());
-    state
-        .db
-        .set_setting(throttle::SETTING_KEY, level.as_str())
-        .map_err(stringify)
+    api::set_throttle(&state, level)
 }
 
-fn stringify(error: anyhow::Error) -> String {
-    format!("{error:#}")
+// ---------------------------------------------------------------------------
+// Remote mode
+// ---------------------------------------------------------------------------
+
+#[tauri::command(async)]
+async fn remote_status(state: State<'_, AppState>) -> Result<RemoteStatus, String> {
+    Ok(state.remote.status(last_address(&state)))
+}
+
+/// Point this window at another machine's library.
+///
+/// The whole app follows: from here on every call the frontend makes is answered
+/// by the peer, and every tile is fetched from it. Nothing about the local
+/// library is touched — its scan keeps running, and disconnecting puts it back.
+#[tauri::command(async)]
+async fn remote_connect(
+    state: State<'_, AppState>,
+    address: String,
+    passphrase: String,
+) -> Result<RemoteStatus, String> {
+    let address = remote::parse_address(&address)?;
+    // An empty field means "use the one you remembered", which is what makes
+    // reconnecting a single click. Typing a new one replaces it.
+    let passphrase = if passphrase.trim().is_empty() {
+        remote::stored_client_passphrase()
+            .ok_or_else(|| "type the passphrase that machine is sharing with".to_string())?
+    } else {
+        passphrase
+    };
+
+    let session = remote::Session::connect(&address, &passphrase).await?;
+
+    // Both best-effort: a credential store that refuses, or a setting that
+    // will not write, costs a retyped passphrase next time and must not fail a
+    // connection that already works.
+    let _ = remote::store_client_passphrase(&passphrase);
+    let _ = state
+        .db
+        .set_setting(remote::LAST_ADDRESS_SETTING, &address);
+
+    state.remote.set_session(Some(Arc::new(session)));
+    Ok(state.remote.status(last_address(&state)))
+}
+
+#[tauri::command(async)]
+async fn remote_disconnect(state: State<'_, AppState>) -> Result<RemoteStatus, String> {
+    state.remote.set_session(None);
+    Ok(state.remote.status(last_address(&state)))
+}
+
+/// Run one operation on the connected machine.
+///
+/// The frontend's single native seam sends everything here while a session is
+/// live, rather than each of forty commands having to know about remote mode.
+/// Without a session this refuses rather than quietly answering from the local
+/// index — a frontend that thinks it is remote and a backend that thinks it is
+/// local must not silently agree.
+#[tauri::command(async)]
+async fn remote_call(
+    state: State<'_, AppState>,
+    name: String,
+    args: Option<Value>,
+) -> Result<Value, String> {
+    let session = state
+        .remote
+        .session()
+        .ok_or_else(|| "not connected to another machine".to_string())?;
+    session.call(&name, args.unwrap_or(Value::Null)).await
+}
+
+#[tauri::command(async)]
+async fn share_status(state: State<'_, AppState>) -> Result<ShareStatus, String> {
+    Ok(state.remote.share_status())
+}
+
+/// Start or stop answering for other machines on this network.
+///
+/// Off until asked, and it stays off across launches unless it was on when the
+/// app closed. A passphrase is required to start: it is the only thing between
+/// the LAN and a library that a session can delete from.
+#[tauri::command(async)]
+async fn set_share(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+    passphrase: Option<String>,
+) -> Result<ShareStatus, String> {
+    if !enabled {
+        state.remote.sharing.stop();
+        let _ = state.db.set_setting(remote::SHARE_SETTING, "0");
+        return Ok(state.remote.share_status());
+    }
+
+    let chosen = passphrase
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if state.remote.is_sharing() {
+        match &chosen {
+            // Already answering, with the passphrase it was started with.
+            None => return Ok(state.remote.share_status()),
+            // A new one has to be picked up by the running server, or the stored
+            // phrase and the one the port actually accepts would disagree —
+            // which reads as the new passphrase simply not working.
+            Some(_) => state.remote.sharing.stop(),
+        }
+    }
+
+    let passphrase = match chosen {
+        Some(value) => {
+            remote::store_host_passphrase(&value)?;
+            value
+        }
+        // Kept when sharing is switched off, so turning it back on does not ask
+        // again — and so the other machine's remembered passphrase still works.
+        None => remote::stored_host_passphrase().ok_or_else(|| {
+            "choose a passphrase first — the other machine has to type it".to_string()
+        })?,
+    };
+
+    state
+        .remote
+        .sharing
+        .start(shared_library(&app, &state, passphrase))?;
+    let _ = state.db.set_setting(remote::SHARE_SETTING, "1");
+    Ok(state.remote.share_status())
+}
+
+fn last_address(state: &AppState) -> Option<String> {
+    state.db.setting(remote::LAST_ADDRESS_SETTING).ok().flatten()
+}
+
+/// What this machine answers with while it is sharing.
+///
+/// The RPC closure blocks on the dispatcher. That is correct here and nowhere
+/// else: the server's workers are plain threads rather than runtime workers, and
+/// everything an operation does — SQLite, file reads, ffmpeg — blocks anyway.
+fn shared_library(app: &tauri::AppHandle, state: &AppState, passphrase: String) -> remote::Shared {
+    let dispatch_handle = app.clone();
+    let greeting_handle = app.clone();
+
+    remote::Shared {
+        roots: Arc::clone(&state.roots),
+        rpc: Arc::new(move |name, args| {
+            let handle = dispatch_handle.clone();
+            tauri::async_runtime::block_on(async move {
+                let state = handle.state::<AppState>();
+                api::dispatch(&handle, &state, &name, &args).await
+            })
+        }),
+        greeting: Arc::new(move || {
+            let state = greeting_handle.state::<AppState>();
+            let stats = state.db.stats().ok();
+            serde_json::json!({
+                // Checked by the client, so a Forge or a router page on the same
+                // port is reported as "not Luma Vault" rather than as a
+                // connection that half works.
+                "app": "luma-vault",
+                "version": env!("CARGO_PKG_VERSION"),
+                "host": remote::machine_name(),
+                "folders": stats.as_ref().map(|stats| stats.folders).unwrap_or(0),
+                "items": stats
+                    .as_ref()
+                    .map(|stats| stats.images + stats.videos)
+                    .unwrap_or(0),
+            })
+        }),
+        passphrase,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1064,18 +609,50 @@ pub fn run() {
             let watcher = Arc::new(FolderWatcher::new());
             watcher.start(Arc::clone(&db), Arc::clone(&pipeline), app.handle().clone());
 
-            app.manage(ProtocolRoots {
-                db: Arc::clone(&db),
-                thumb_root,
-                frame_root,
-            });
             app.manage(AppState {
                 deviantart: Arc::new(DeviantArt::new(Arc::clone(&db))),
+                roots: Arc::new(ProtocolRoots {
+                    db: Arc::clone(&db),
+                    thumb_root,
+                    frame_root,
+                }),
                 db,
                 pipeline: Arc::clone(&pipeline),
                 watcher,
                 upscaler: upscaler::resolve(&repo_root, resource_dir.as_deref()),
+                remote: Arc::new(RemoteState::new(remote::DEFAULT_PORT)),
             });
+
+            // Sharing comes back on if it was on when the app closed — the
+            // other machine is often a laptop that will simply try to connect.
+            // The passphrase is not stored beside the setting, so a wiped
+            // credential store leaves sharing off rather than open.
+            let handle = app.handle().clone();
+            let state = handle.state::<AppState>();
+            let was_sharing = state
+                .db
+                .setting(remote::SHARE_SETTING)
+                .ok()
+                .flatten()
+                .as_deref()
+                == Some("1");
+            if was_sharing {
+                match remote::stored_host_passphrase() {
+                    Some(passphrase) => {
+                        if let Err(error) = state
+                            .remote
+                            .sharing
+                            .start(shared_library(&handle, &state, passphrase))
+                        {
+                            eprintln!("[luma] cannot share this library: {error}");
+                        }
+                    }
+                    None => eprintln!(
+                        "[luma] sharing was on but no passphrase is stored — left off. \
+                         Set one in the remote panel."
+                    ),
+                }
+            }
 
             // Re-walk every folder, then resume anything the last session left
             // unfinished. The pipeline's work queue is a database query, so
@@ -1087,9 +664,38 @@ pub fn run() {
 
             Ok(())
         })
-        .register_uri_scheme_protocol(protocol::SCHEME, move |ctx, request| {
-            let roots = ctx.app_handle().state::<ProtocolRoots>();
-            protocol::handle(&roots, &request)
+        // Asynchronous, unlike the local-only version this replaced. A remote
+        // tile is a request to another machine, and answering it on the thread
+        // the protocol handler is called on would freeze the window for the
+        // length of every fetch. The local path moved onto the blocking pool
+        // with it, which also takes a slow network share off that thread.
+        .register_asynchronous_uri_scheme_protocol(protocol::SCHEME, move |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let session = app.state::<AppState>().remote.session();
+
+            match session {
+                Some(session) => {
+                    let path = protocol::extract_path(&request.uri().to_string());
+                    let range = request
+                        .headers()
+                        .get("range")
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_string);
+                    tauri::async_runtime::spawn(async move {
+                        let reply = match path {
+                            Some(path) => session.file(&path, range.as_deref()).await,
+                            None => protocol::FileReply::failure(400, "missing ?path= parameter"),
+                        };
+                        responder.respond(reply.into_response());
+                    });
+                }
+                None => {
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let roots = Arc::clone(&app.state::<AppState>().roots);
+                        responder.respond(protocol::handle(&roots, &request));
+                    });
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             list_folders,
@@ -1133,9 +739,13 @@ pub fn run() {
             deviantart_connect,
             deviantart_disconnect,
             deviantart_send,
+            remote_status,
+            remote_connect,
+            remote_disconnect,
+            remote_call,
+            share_status,
+            set_share,
         ])
         .run(tauri::generate_context!())
         .expect("cannot start luma-vault");
 }
-
-use std::path::Path;
