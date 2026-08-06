@@ -458,6 +458,16 @@ const BODY_FAMILIES: ReadonlyArray<{ mentions: RegExp; rungs: string[] }> = [
 const HIRES_UPSCALER = '4xUltrasharp_4xUltrasharpV10'
 
 /**
+ * How far the Hires pass enlarges, when the block does not name its own.
+ *
+ * Only the default. A block that already carries a hires pass keeps whatever
+ * factor it named, and a migration that has to preserve an original's final
+ * resolution recomputes one — see the note about the hires factor further
+ * down. This is the number used when there was no pass at all.
+ */
+const HIRES_FACTOR = '1.5'
+
+/**
  * The words in a prompt that describe a face, for ADetailer's own pass.
  *
  * The convention — "ADetailer jargon" — is a short prompt carrying only what
@@ -993,12 +1003,12 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
   // face pass knows better than a default.
   if (target.architecture === 'xl') {
     if (!next.has('Hires upscale') && !next.has('Hires upscaler')) {
-      next.set('Hires upscale', '1.65')
+      next.set('Hires upscale', HIRES_FACTOR)
       next.set('Hires steps', '30')
       next.set('Hires upscaler', HIRES_UPSCALER)
       if (!next.has('Denoising strength')) next.set('Denoising strength', '0.4')
       notes.push(
-        'Turned Hires fix on (1.65x, 30 steps, denoise 0.4) — the first pass alone stops at ' +
+        `Turned Hires fix on (${HIRES_FACTOR}x, 30 steps, denoise 0.4) — the first pass alone stops at ` +
           'the training resolution, and every keeper gets upscaled anyway.',
       )
     }

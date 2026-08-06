@@ -261,7 +261,7 @@ describe('the always-on passes', () => {
 
   it('adds Hires fix when the block has none', () => {
     const { block, notes } = migrateGeneration(SD_BLOCK, { architecture: 'xl', checkpoint: 'x' })
-    expect(block).toContain('Hires upscale: 1.65')
+    expect(block).toContain('Hires upscale: 1.5')
     expect(block).toContain('Hires steps: 30')
     expect(block).toContain('Hires upscaler: 4xUltrasharp_4xUltrasharpV10')
     expect(notes.some((note) => note.includes('Hires fix'))).toBe(true)

@@ -126,7 +126,7 @@ const settings = [
   `Model: ${target.name}`,
   'Clip skip: 2',
   'Denoising strength: 0.4',
-  'Hires upscale: 1.65',
+  'Hires upscale: 1.5',
   'Hires steps: 30',
   'Hires upscaler: 4xUltrasharp_4xUltrasharpV10',
   'ADetailer model: face_yolov8s.pt',

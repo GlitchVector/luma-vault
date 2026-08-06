@@ -153,7 +153,7 @@ Always pass `--adetailer-prompt`: a short face pass in ADetailer's own jargon �
 the *identity* tags you derived (character, hair, eyes, expression, headwear).
 Never body, pose or setting tags: the pass repaints a head crop, and a body tag
 inside it re-argues the body in a space where it cannot win. The script adds
-the rest — Hires fix (1.65x, 30 steps, 4xUltrasharp, denoise 0.4) and the
+the rest — Hires fix (1.5x, 30 steps, 4xUltrasharp, denoise 0.4) and the
 ADetailer model — to every block, and the extension turns both toggles on.
 
 - Canvas from the **attached image's aspect**: portrait → `832 1216`,

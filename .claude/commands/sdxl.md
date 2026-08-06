@@ -169,7 +169,7 @@ otherwise — Forge raises nothing and the picture simply comes out different.
 Sampler, upscaler and denoising the block already names are left alone — they
 are architecture-agnostic, and changing them would alter the picture for no
 reason. What the block *lacks* is topped up on every XL move: a Hires pass
-(1.65x, 30 steps, 4xUltrasharp, denoise 0.4) and an ADetailer face pass whose
+(1.5x, 30 steps, 4xUltrasharp, denoise 0.4) and an ADetailer face pass whose
 prompt is built from the face words already in the prompt — identity and
 expression, never body or setting. A block that carries its own hires or
 ADetailer settings keeps them untouched.
