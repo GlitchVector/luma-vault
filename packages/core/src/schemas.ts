@@ -390,6 +390,24 @@ export const mediaQuerySchema = z.object({
    */
   extras: z.boolean().nullable().default(null),
   /**
+   * Only rows the detector found this label on.
+   *
+   * Every label found, not the one the verdict names: `topLabel` is picked by
+   * rating weight, so labels carrying none — `FACE_FEMALE`, `FEET_COVERED`,
+   * `FEET_EXPOSED` — can never appear there however many pictures show them.
+   */
+  label: z.string().nullable().default(null),
+  /**
+   * Only animated images (true), or only still ones (false).
+   *
+   * By extension, because `kind` cannot express it — a GIF and a PNG are both
+   * `image`. "Everything except videos and GIFs" is this set to false *and*
+   * `kind` set to image; they are two questions and stay separable.
+   */
+  animated: z.boolean().nullable().default(null),
+  /** Only black-and-white rows (true), or only colour ones (false). */
+  greyscale: z.boolean().nullable().default(null),
+  /**
    * Show only items whose longest edge is at least this many pixels.
    *
    * A number rather than a `fourKOnly` flag because the rule *is* a number —

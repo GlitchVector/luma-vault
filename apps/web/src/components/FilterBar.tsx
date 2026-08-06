@@ -1,5 +1,14 @@
-import { FOUR_K_EDGE, type MediaQuery, type Rating, type SortOrder } from '@luma/core'
+import {
+  ANIME_LABELS,
+  FOUR_K_EDGE,
+  NUDENET_LABELS,
+  titleOf,
+  type MediaQuery,
+  type Rating,
+  type SortOrder,
+} from '@luma/core'
 import { Pill } from '@luma/ui'
+import { useState } from 'react'
 
 interface FilterBarProps {
   query: MediaQuery
@@ -15,6 +24,18 @@ interface FilterBarProps {
   onToggleTimeline: () => void
   onChange: (patch: Partial<MediaQuery>) => void
 }
+
+/**
+ * The second resolution rung, beside 4K.
+ *
+ * "Big enough to be worth looking at" is a different question from "is this
+ * 4K", and both send {@link MediaQuery.minLongestEdge} — so the bar can never
+ * select something the grid's 4K badge would contradict.
+ */
+const BIG_EDGE = 1000
+
+/** Everything either model can put a name to, for the "found" picker. */
+const DETECTABLE = [...NUDENET_LABELS, ...ANIME_LABELS]
 
 const RATINGS: Array<{ value: Rating; label: string }> = [
   { value: 'sfw', label: 'SFW' },
@@ -73,6 +94,15 @@ export function FilterBar({
   onToggleTimeline,
   onChange,
 }: FilterBarProps) {
+  const [more, setMore] = useState(false)
+  // Shown on the button so a filter left on inside a collapsed panel cannot
+  // quietly explain an empty grid.
+  const activeExtras =
+    (query.label ? 1 : 0) +
+    (query.animated !== null ? 1 : 0) +
+    (query.greyscale !== null ? 1 : 0) +
+    (query.minLongestEdge !== null ? 1 : 0)
+
   return (
     <div className="flex flex-wrap items-center gap-1.5 border-b border-white/5 bg-zinc-950/40 px-4 py-2">
       {/* No search box here. It lives above the grid, where it is large enough
@@ -319,9 +349,127 @@ export function FilterBar({
         Timeline
       </Pill>
 
+      <Pill
+        active={more}
+        onClick={() => setMore((previous) => !previous)}
+        title="Resolution, colour, animation, and everything the classifier can label"
+      >
+        More{activeExtras > 0 ? ` · ${activeExtras}` : ''}
+      </Pill>
+
       <span className="ml-auto text-[11px] tabular-nums text-zinc-500">
         {shown.toLocaleString()} / {total.toLocaleString()}
       </span>
+
+      {more ? (
+        <div className="flex w-full flex-wrap items-center gap-1.5 border-t border-white/5 pt-2">
+          {/* Two rungs of the same filter rather than two filters. 1000px is
+              "big enough to be worth looking at", which is a different question
+              from "is this 4K", and both send the same field — so the grid's 4K
+              badge can never disagree with what the bar selected. */}
+          <span className="text-[11px] text-zinc-500">Size</span>
+          <Pill
+            active={query.minLongestEdge === BIG_EDGE}
+            title={`Only pictures whose longest edge is at least ${BIG_EDGE}px`}
+            onClick={() =>
+              onChange({ minLongestEdge: query.minLongestEdge === BIG_EDGE ? null : BIG_EDGE })
+            }
+          >
+            ≥{BIG_EDGE}px
+          </Pill>
+
+          <span className="mx-1 h-4 w-px bg-white/10" />
+
+          <span className="text-[11px] text-zinc-500">Kind</span>
+          {/* Animation is not a `kind`: a GIF and a PNG are both images, and
+              the container is all the name reveals. Kept separate from the
+              video pills above so "stills only" can be both at once. */}
+          <Pill
+            active={query.animated === true}
+            title="Only animated images — GIF, WebP and AVIF"
+            onClick={() => onChange({ animated: query.animated === true ? null : true })}
+          >
+            GIFs
+          </Pill>
+          <Pill
+            active={query.animated === false && query.kind === 'image'}
+            title="Only still pictures: no videos, and no GIFs or other animated images"
+            onClick={() =>
+              onChange(
+                query.animated === false && query.kind === 'image'
+                  ? { animated: null, kind: null }
+                  : { animated: false, kind: 'image' },
+              )
+            }
+          >
+            Stills only
+          </Pill>
+
+          <span className="mx-1 h-4 w-px bg-white/10" />
+
+          <span className="text-[11px] text-zinc-500">Colour</span>
+          {/* Read from the colour signature the duplicate finder already
+              stores, so this costs no decoding. Sepia and other tints score
+              high and are deliberately excluded — they are not black and
+              white in the sense anybody means it. */}
+          <Pill
+            active={query.greyscale === true}
+            title="Black and white only — measured from the picture, not from its name"
+            onClick={() => onChange({ greyscale: query.greyscale === true ? null : true })}
+          >
+            B&amp;W
+          </Pill>
+          <Pill
+            active={query.greyscale === false}
+            title="Only pictures that carry colour"
+            onClick={() => onChange({ greyscale: query.greyscale === false ? null : false })}
+          >
+            Colour
+          </Pill>
+
+          <span className="mx-1 h-4 w-px bg-white/10" />
+
+          {/* Every label the detector found, not the one the verdict names.
+              `topLabel` is picked by rating weight, so the labels carrying
+              none — a face, feet — could never be selected here at all, and
+              they are on more pictures than most of the ones that can. */}
+          <label className="text-[11px] text-zinc-500" htmlFor="label-filter">
+            Found
+          </label>
+          <select
+            id="label-filter"
+            value={query.label ?? ''}
+            onChange={(event) => onChange({ label: event.target.value || null })}
+            className="h-7 max-w-[16rem] rounded-full bg-white/5 px-2.5 text-xs text-zinc-300 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-400"
+          >
+            <option value="" className="bg-zinc-900">
+              anything
+            </option>
+            {DETECTABLE.map((label) => (
+              <option key={label} value={label} className="bg-zinc-900">
+                {titleOf(label) ?? label}
+              </option>
+            ))}
+          </select>
+
+          {activeExtras > 0 ? (
+            <button
+              type="button"
+              onClick={() =>
+                onChange({
+                  label: null,
+                  animated: null,
+                  greyscale: null,
+                  minLongestEdge: null,
+                })
+              }
+              className="text-[11px] text-zinc-500 underline underline-offset-2 hover:text-zinc-300"
+            >
+              clear these
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

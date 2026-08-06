@@ -170,6 +170,52 @@ Then show the user the prompt you composed, with one line on anything you
 were unsure of — a character you almost recognised, an outfit detail you had
 to approximate. Those are the lines they will want to edit.
 
+## When the model is NoobAI
+
+If the user names `noob` (`--model noob`), the checkpoint is NoobAI-XL and the
+quality block above is the wrong vocabulary. Swap it:
+
+Positive, still verbatim and still first:
+
+```
+masterpiece, best quality, newest, absurdres, highres
+```
+
+Negative baseline:
+
+```
+worst quality, low quality, normal quality, old, early, lowres, bad anatomy,
+bad hands, mutated hands, missing fingers, extra digits, jpeg artifacts,
+signature, watermark, username, artist name
+```
+
+`newest` and the `old, early` pair are recency tags NoobAI was trained with and
+the other XL checkpoints never saw; `very aesthetic` is not one of its tags.
+`very awa` is its aesthetic push — add it only if the user asks for a stronger
+look, not by default.
+
+Everything else about composing the prompt is unchanged: same danbooru tags,
+same BREAK structure, same body questions.
+
+**The v-pred release needs a Forge that supports it — check before promising
+anything.** The script reads `v_pred` out of the checkpoint's header, writes
+`Euler a` instead of `DPM++ 2M SDE`, and prints a warning. That warning is not
+boilerplate: the *sampler* is all a parameter block can carry, and the
+prediction *mode* is the webui's to apply.
+
+Forge builds before mid-2025 read `v_pred` through their vendored
+`huggingface_guess` and then called nothing with the answer, taking the
+predictor from the diffusers scheduler config of
+`stable-diffusion-xl-base-1.0` — `epsilon` — so every SDXL was sampled as
+epsilon. Current builds map it in `backend/loader.py`.
+
+The symptom on an old build: saturated red-and-blue noise, no error raised, and
+every setting in the block looking correct.
+
+So if the user is on such a build, steer them to an **Epsilon-pred** NoobAI
+release (1.1 or 1.0) — the prompt vocabulary above is identical — or to
+updating Forge. Do not tell them it is handled.
+
 ## Close with these, always
 
 The tab always opens on an XL model here, so both caveats always apply:

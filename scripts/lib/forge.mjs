@@ -23,25 +23,83 @@ export async function forge(path, options) {
   return response.json()
 }
 
-/** `sd`, `xl` or `flux`, from the tensor names in the safetensors header. */
-export function architectureOf(file) {
+/**
+ * What a checkpoint says about itself, from one read of its safetensors header.
+ *
+ * Both answers come from the same parse because both are in the same place: the
+ * header lists every tensor, and a v-prediction checkpoint carries `v_pred` as
+ * a **non-weight** entry beside them — NoobAI's v-pred release also carries
+ * `ztsnr`. That is not a convention this app invented; it is what Forge and
+ * A1111 detect the mode from, which is why nothing has to be configured for
+ * the webui and the block to agree.
+ */
+export function inspectCheckpoint(file) {
   const fd = openSync(file, 'r')
   try {
     const head = Buffer.alloc(8)
     readSync(fd, head, 0, 8, 0)
     const length = Number(head.readBigUInt64LE(0))
-    if (length <= 0 || length > 64 * 1024 * 1024) return 'sd'
+    if (length <= 0 || length > 64 * 1024 * 1024) return { architecture: 'sd', vPred: false }
     const json = Buffer.alloc(length)
     readSync(fd, json, 0, length, 8)
     const keys = Object.keys(JSON.parse(json.toString('utf8')))
-    if (keys.some((key) => key.includes('double_blocks.'))) return 'flux'
-    // SDXL is the one with a second text encoder.
-    return keys.some((key) => key.startsWith('conditioner.embedders.1.')) ? 'xl' : 'sd'
+
+    const architecture = keys.some((key) => key.includes('double_blocks.'))
+      ? 'flux'
+      : // SDXL is the one with a second text encoder.
+        keys.some((key) => key.startsWith('conditioner.embedders.1.'))
+        ? 'xl'
+        : 'sd'
+    return { architecture, vPred: keys.includes('v_pred') }
   } catch {
-    return 'sd'
+    // A header that cannot be read is not a reason to refuse the migration:
+    // `sd` is the conservative reading, and epsilon is the common case.
+    return { architecture: 'sd', vPred: false }
   } finally {
     closeSync(fd)
   }
+}
+
+/** `sd`, `xl` or `flux`, from the tensor names in the safetensors header. */
+export function architectureOf(file) {
+  return inspectCheckpoint(file).architecture
+}
+
+/**
+ * Which booru vocabulary a checkpoint was trained on, from its filename.
+ *
+ * By name, unlike everything else here, because there is nothing in the file
+ * that says it — the tensors of a NoobAI checkpoint and an Illustrious one are
+ * identically shaped. A wrong guess costs a slightly different set of quality
+ * tags, which is why a heuristic is acceptable at all.
+ */
+export function familyOf(name) {
+  return /noob/i.test(name) ? 'noob' : undefined
+}
+
+/**
+ * Name the one failure a parameter block cannot prevent, and its symptom.
+ *
+ * A v-prediction checkpoint carries `v_pred` as a non-weight tensor. Whether
+ * that is *acted on* is the webui's business, and older builds do not: before
+ * mid-2025 Forge read the marker through its vendored `huggingface_guess` and
+ * then called nothing with the answer, taking its predictor from the diffusers
+ * scheduler config of `stable-diffusion-xl-base-1.0` — `epsilon` — so every
+ * SDXL was sampled as epsilon. Current builds map it properly in
+ * `backend/loader.py`.
+ *
+ * Stated as a symptom rather than a verdict, because the script cannot tell
+ * which build is answering on the other end of the port, and asserting the
+ * wrong one is worse than describing what to look for. Nothing else will
+ * mention it: the render fails loudly and attributes itself to nothing.
+ */
+export function warnAboutVPrediction(name) {
+  console.error(
+    `note: ${name} is a v-prediction checkpoint — the block asks for Euler a, but applying\n` +
+      '  the prediction mode is the webui\'s job. If the result is saturated red-and-blue\n' +
+      '  noise, this Forge is sampling it as epsilon: update Forge (fixed mid-2025), or use\n' +
+      '  an Epsilon-pred release of the same model.',
+  )
 }
 
 /** The newest installed checkpoint whose name contains `wanted`. */

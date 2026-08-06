@@ -1,6 +1,7 @@
 import { Button, EmptyState } from '@luma/ui'
 import {
   hasRecycleBin,
+  isFourK,
   rangeBetween,
   retainVisible,
   toggleSelected,
@@ -19,6 +20,7 @@ import { RemoteDialog } from '#/components/RemoteDialog.tsx'
 import { StatusBar } from '#/components/StatusBar.tsx'
 import { TimelinePanel } from '#/components/TimelinePanel.tsx'
 import { ToastHost } from '#/components/ToastHost.tsx'
+import { toast } from '#/lib/toasts.ts'
 import { UpscaleResults } from '#/components/UpscaleResults.tsx'
 import { askConfirm, showMessage } from '#/lib/dialogs.ts'
 import {
@@ -36,6 +38,26 @@ import { useLibrary } from '#/lib/useLibrary.ts'
 import { useRemote } from '#/lib/useRemote.ts'
 
 const TILE_SIZE_KEY = 'luma.tileSize'
+
+/**
+ * How long a second bare tap of Ctrl has to arrive to count as a double tap.
+ *
+ * The way out of selecting mode by keyboard. 500ms is the interval Windows
+ * itself uses for a double click, so it is the one already in everybody's
+ * hands — long enough to be comfortable, short enough that two deliberate
+ * presses a moment apart are not mistaken for one gesture.
+ */
+export const DOUBLE_TAP_MS = 500
+
+/**
+ * How often the background upscale queue asks Forge whether it has finished.
+ *
+ * A generation ending is not something this app is told about, so the only way
+ * to know is to keep asking. Three seconds is slow enough to be nothing next to
+ * a generation and fast enough that a queued picture starts while you are still
+ * in the folder you asked from.
+ */
+export const FORGE_RETRY_MS = 3000
 
 /**
  * The tile size to open with.
@@ -78,11 +100,39 @@ export function App() {
   useEffect(() => {
     selectingRef.current = selecting
   })
+  // The latest `openId`, for the background upscale queue: it is read inside a
+  // promise that outlives the render which started it, to decide whether a
+  // reload can land now or has to wait for the lightbox to close.
+  const openIdRef = useRef(openId)
+  useEffect(() => {
+    openIdRef.current = openId
+  })
   // The batch in flight, and what it produced. Two pieces of state rather
   // than one: the progress has to keep updating while the run is going, and
   // the summary only exists once it has finished.
   const [upscaling, setUpscaling] = useState<UpscaleProgress | null>(null)
   const [upscaleResults, setUpscaleResults] = useState<UpscaleSummary | null>(null)
+  /**
+   * Pictures asked for at 4K from the lightbox, waiting their turn.
+   *
+   * Separate from the selection's batch button and deliberately quieter: this
+   * is fired one key at a time in the middle of a review pass, so it must never
+   * take the screen or the GPU away from what is being done. A queue rather
+   * than a call per keypress because the upscaler wants the whole card — twenty
+   * shift-ups through a folder would otherwise be twenty runs at once.
+   */
+  const [upscaleQueue, setUpscaleQueue] = useState<readonly number[]>([])
+  /** The one background upscale in flight, if any. */
+  const [backgroundUpscale, setBackgroundUpscale] = useState<number | null>(null)
+  /**
+   * A finished background upscale the grid has not been told about yet.
+   *
+   * Reloading puts the variant in the grid and hides what it was made from —
+   * which reorders the list the lightbox is stepping through. Doing that under
+   * somebody mid-pass moves the next picture out from under the arrow key, so
+   * it waits until the lightbox is closed.
+   */
+  const pendingReload = useRef(false)
   // The pictures being reviewed for DeviantArt. A snapshot taken when the panel
   // opens rather than a live read of `selected`: the panel holds edited drafts,
   // and a filter change underneath it must not silently drop a row someone has
@@ -292,6 +342,95 @@ export function App() {
   }, [selected, library])
 
   /**
+   * Ask for one picture at 4K, from the lightbox, without interrupting anything.
+   *
+   * Refused for a picture that is already there, and for one that already has a
+   * variant — both would spend minutes of GPU to produce a file that exists.
+   * The backend refuses the first as well (`already_large`), but a queue that
+   * fills with no-ops would still make the ones behind them wait.
+   */
+  const queueUpscale = useCallback((item: MediaItem) => {
+    if (isFourK(item.width, item.height)) {
+      toast(`${item.name} is already 4K`, 'muted')
+      return
+    }
+    if (item.upscaledTo) {
+      toast(`${item.name} already has a 4K version`, 'muted')
+      return
+    }
+    setUpscaleQueue((current) => {
+      if (current.includes(item.id)) return current
+      toast(`Queued ${item.name} for 4K`, 'picked')
+      return [...current, item.id]
+    })
+  }, [])
+
+  /**
+   * Drain that queue, one picture at a time, whenever the GPU is free.
+   *
+   * Three things can hold it: a foreground batch from the selection toolbar,
+   * another background upscale still running, and Forge generating. The first
+   * two are ours and are simply waited for; Forge is asked every few seconds,
+   * because a generation finishing is not something this app is told about.
+   *
+   * An unreachable Forge counts as free, the same as it does for the toolbar
+   * button — this is a gate against competing for the card, not against Forge
+   * being closed.
+   */
+  useEffect(() => {
+    if (upscaleQueue.length === 0) return
+    if (backgroundUpscale !== null || upscaling !== null) return
+
+    let cancelled = false
+    const attempt = () => {
+      void forgeStatus().then(
+        (status) => {
+          if (cancelled || status.busy) return
+          start()
+        },
+        () => {
+          if (!cancelled) start()
+        },
+      )
+    }
+    const start = () => {
+      const next = upscaleQueue[0]
+      if (next === undefined) return
+      setUpscaleQueue((current) => current.slice(1))
+      setBackgroundUpscale(next)
+      void upscaleMedia([next]).then(
+        () => {
+          setBackgroundUpscale(null)
+          // Held back while the lightbox is up: see `pendingReload`.
+          if (openIdRef.current === null) library.reload()
+          else pendingReload.current = true
+        },
+        (error: unknown) => {
+          setBackgroundUpscale(null)
+          // A toast rather than a dialog. This was asked for with one key in
+          // the middle of something else, and a modal over the picture being
+          // reviewed is a worse interruption than the failure is a problem.
+          toast(`Could not upscale: ${String(error)}`, 'muted')
+        },
+      )
+    }
+
+    attempt()
+    const timer = setInterval(attempt, FORGE_RETRY_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [upscaleQueue, backgroundUpscale, upscaling, library])
+
+  // The deferred reload, once the lightbox is out of the way.
+  useEffect(() => {
+    if (openId !== null || !pendingReload.current) return
+    pendingReload.current = false
+    library.reload()
+  }, [openId, library])
+
+  /**
    * The lightbox's judgement keys, over a selection, from the grid.
    *
    * The same gesture has to mean the same thing in both places. Having Delete
@@ -353,11 +492,21 @@ export function App() {
   // already on is left alone, because leaving it discards the selection and a
   // set assembled by hand must not be destroyed by typing Ctrl-C.
   //
-  // The way back *out* by keyboard is a long hold: 1.5 seconds of bare Ctrl,
-  // uninterrupted by a click or another key, leaves the mode exactly like the
-  // toolbar button — selection dropped and all. Long enough to be nobody's
-  // combination and nobody's aim; a hold that gets used for picking is
-  // disarmed by the click, so it cannot fire mid-gesture.
+  // The way back *out* by keyboard is a **double tap**: two bare taps of Ctrl
+  // inside {@link DOUBLE_TAP_MS} leave the mode exactly like the toolbar button
+  // — selection dropped and all.
+  //
+  // Only *bare* taps count, and that is the whole safety of the thing. A press
+  // that had another key with it, or a click while it was held, is not a tap at
+  // all: so Ctrl-C followed straight away by Ctrl-V cannot destroy a selection,
+  // and neither can holding Ctrl to pick a run of pictures. Whether a press was
+  // bare is only known when it comes *up*, which is why the pairing happens on
+  // keyup rather than on the way down like the mode itself.
+  //
+  // This replaced a 1.5-second hold. The hold was unusable in practice: a
+  // second and a half is long enough to feel broken, there is nothing on screen
+  // counting it down, and letting go a moment early does nothing at all — so
+  // the only feedback for getting it wrong is that nothing happened.
   useEffect(() => {
     // Not while the lightbox is up: it owns the keyboard there, and Ctrl is
     // held for its own shortcuts.
@@ -365,12 +514,15 @@ export function App() {
 
     let down = false
     let opened = false
-    let holding: ReturnType<typeof setTimeout> | undefined
+    /** Whether the Ctrl now held is still a bare tap: no other key, no click. */
+    let bare = false
+    /** A first tap is waiting for its partner. */
+    let pairing: ReturnType<typeof setTimeout> | undefined
 
-    const disarm = () => {
-      if (holding === undefined) return
-      clearTimeout(holding)
-      holding = undefined
+    const forgetFirstTap = () => {
+      if (pairing === undefined) return
+      clearTimeout(pairing)
+      pairing = undefined
     }
 
     const revert = () => {
@@ -392,27 +544,28 @@ export function App() {
         const target = event.target as HTMLElement | null
         const tag = target?.tagName
         if (target?.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+          // Not a tap either: Ctrl pressed inside the search box is on its way
+          // to being Ctrl-A, and must never pair with one pressed outside it.
+          bare = false
           return
         }
+        bare = true
         opened = !selectingRef.current
         if (opened) setSelecting(true)
-        holding = setTimeout(() => {
-          holding = undefined
-          opened = false
-          setSelecting(false)
-          setSelected(new Set())
-          anchor.current = null
-        }, 1500)
         return
       }
+      // Anything else pressed between two taps means they were not one
+      // gesture. Unconditional, because this is true whether or not a Ctrl is
+      // still held: tap Ctrl, type something, tap Ctrl is two separate taps.
+      forgetFirstTap()
       if (down) {
-        disarm()
+        bare = false
         revert()
       }
     }
     // A click while Ctrl is still held is someone *using* the mode they just
     // turned on — hold Ctrl, click several pictures, let go — not the second
-    // half of a Ctrl-click combination.
+    // half of a Ctrl-click combination, and not a tap.
     //
     // So this does not take the mode back; it gives up the right to. Reverting
     // here fired before the click reached the grid, so `selecting` was false by
@@ -421,21 +574,39 @@ export function App() {
     // which clearing this achieves.
     const onPointerDown = () => {
       opened = false
-      disarm()
+      bare = false
+      // And it separates two taps for the same reason a keypress does: tap
+      // Ctrl, pick a picture, tap Ctrl is somebody using the mode, not asking
+      // to leave it.
+      forgetFirstTap()
     }
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key !== 'Control') return
       down = false
       opened = false
-      disarm()
+      if (!bare) return
+      bare = false
+
+      if (pairing !== undefined) {
+        forgetFirstTap()
+        setSelecting(false)
+        setSelected(new Set())
+        anchor.current = null
+        return
+      }
+      pairing = setTimeout(() => {
+        pairing = undefined
+      }, DOUBLE_TAP_MS)
     }
     // Focus left with the key still down: the keyup is going to another
     // window and nothing more is coming. Holding Ctrl across a switch to
-    // Forge must not leave a half-pressed state behind.
+    // Forge must not leave a half-pressed state behind — and a tap made before
+    // leaving must not pair with one made on the way back.
     const onBlur = () => {
       down = false
       opened = false
-      disarm()
+      bare = false
+      forgetFirstTap()
     }
 
     window.addEventListener('keydown', onKeyDown)
@@ -443,7 +614,7 @@ export function App() {
     window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('blur', onBlur)
     return () => {
-      disarm()
+      forgetFirstTap()
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('pointerdown', onPointerDown)
@@ -790,6 +961,7 @@ export function App() {
           // upscaled variant — so it sets the open id directly rather than
           // walking the filtered list the way `onStep` does.
           onOpenId={setOpenId}
+          onUpscale={queueUpscale}
           onToggleSelect={toggleSelect}
           selected={selected.has(openId)}
           showBoxes={showLightboxBoxes}

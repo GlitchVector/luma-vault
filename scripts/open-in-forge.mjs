@@ -19,7 +19,9 @@
 
 import {
   DEFAULT_MODEL,
-  architectureOf,
+  familyOf,
+  warnAboutVPrediction,
+  inspectCheckpoint,
   fail,
   openWithBlock,
   resolveModel,
@@ -70,7 +72,7 @@ if (!Number.isFinite(args.width) || !Number.isFinite(args.height)) {
 }
 
 const target = await resolveModel(args.model)
-const architecture = architectureOf(target.filename)
+const { architecture, vPred } = inspectCheckpoint(target.filename)
 if (architecture !== 'xl') {
   // Not fatal — the block still opens — but the canvas and tuning here are
   // SDXL's, and generating an SD1.5 image at 832x1216 gives doubled anatomy,
@@ -88,10 +90,16 @@ if (architecture !== 'xl') {
 // tags are identity — quoted, because it contains commas and the settings line
 // is comma-separated.
 const quote = (value) => '"' + String(value).replaceAll('"', "'") + '"'
+// A v-prediction checkpoint predicts v rather than noise. The sampler is the
+// half a parameter block can carry — the *mode* is the webui's job, and not
+// every build does it. See the warning below.
+const sampler = vPred
+  ? ['Sampler: Euler a']
+  : ['Sampler: DPM++ 2M SDE', 'Schedule type: Karras']
+if (vPred) warnAboutVPrediction(target.name)
 const settings = [
   'Steps: 28',
-  'Sampler: DPM++ 2M SDE',
-  'Schedule type: Karras',
+  ...sampler,
   'CFG scale: 5',
   'Seed: -1',
   `Size: ${args.width}x${args.height}`,

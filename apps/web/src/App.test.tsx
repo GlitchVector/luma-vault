@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDialogs } from '#/lib/dialogs.ts'
 import { resetInViewRegistry } from '#/lib/useInView.ts'
-import { App } from './App.tsx'
+import { App, DOUBLE_TAP_MS, FORGE_RETRY_MS } from './App.tsx'
 
 /**
  * Deleting a file, end to end, against a fake backend.
@@ -547,9 +547,11 @@ describe('the lightbox shortcuts a review pass leans on', () => {
   // dispatches in a row never let React re-render between them, so every one
   // would be handled by the closure the first render made — and three presses
   // meant for three pictures would all land on the first.
-  function press(key: string) {
+  function press(key: string, init: KeyboardEventInit = {}) {
     act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }),
+      )
     })
   }
 
@@ -575,6 +577,85 @@ describe('the lightbox shortcuts a review pass leans on', () => {
         { id: LIBRARY_SIZE - 2, stars: 4 },
       ]),
     )
+  })
+
+  it('shift-up rates, moves on, and queues a 4K upscale', async () => {
+    // The same verdict as a plain arrow-up with one more consequence: this one
+    // is worth the pixels. One motion, without leaving the pass to find a
+    // button.
+    await openFirst()
+    press('ArrowUp', { shiftKey: true })
+
+    await waitFor(() => expect(starCalls).toEqual([{ id: LIBRARY_SIZE, stars: 4 }]))
+    await waitFor(() => expect(upscaleCalls).toEqual([[LIBRARY_SIZE]]))
+  })
+
+  it('leaves plain arrow-up spending no GPU at all', async () => {
+    // The shift is the whole difference. A pass through a folder rating things
+    // four must not quietly start upscaling every one of them.
+    await openFirst()
+    press('ArrowUp')
+
+    await waitFor(() => expect(starCalls).toEqual([{ id: LIBRARY_SIZE, stars: 4 }]))
+    expect(upscaleCalls).toEqual([])
+  })
+
+  it('does not upscale a picture that is already 4K', async () => {
+    // Minutes of GPU to produce a file that exists. Still rates it and still
+    // moves on — the verdict half of the key is unconditional.
+    library[0] = { ...library[0]!, width: 3840, height: 2160 }
+    await openFirst()
+    press('ArrowUp', { shiftKey: true })
+
+    await waitFor(() => expect(starCalls).toEqual([{ id: LIBRARY_SIZE, stars: 4 }]))
+    expect(await screen.findByText(/already 4K/)).toBeTruthy()
+    expect(upscaleCalls).toEqual([])
+  })
+
+  it('does not upscale one that already has a 4K version', async () => {
+    library[0] = { ...library[0]!, upscaledTo: '/media/image-320_upscaled_4k.png' }
+    await openFirst()
+    press('ArrowUp', { shiftKey: true })
+
+    await waitFor(() => expect(starCalls).toEqual([{ id: LIBRARY_SIZE, stars: 4 }]))
+    expect(upscaleCalls).toEqual([])
+  })
+
+  it('holds a queued upscale back until Forge has finished generating', async () => {
+    // Both want the whole card. The keypress still means something — the
+    // picture is remembered and started once the GPU is free, so a review pass
+    // never has to care what Forge is doing.
+    forgeState = { reachable: true, busy: true, job: 'Batch 3 out of 3', progress: 0.85 }
+    await openFirst()
+
+    vi.useFakeTimers()
+    try {
+      press('ArrowUp', { shiftKey: true })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(FORGE_RETRY_MS * 2)
+      })
+      expect(upscaleCalls).toEqual([])
+
+      forgeState = { reachable: true, busy: false, job: null, progress: 0 }
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(FORGE_RETRY_MS + 100)
+      })
+      expect(upscaleCalls).toEqual([[LIBRARY_SIZE]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('runs a burst one picture at a time rather than all at once', async () => {
+    // The upscaler wants the whole card, so three shift-ups are three runs in
+    // turn — never one call carrying three, and never three at once.
+    await openFirst()
+    press('ArrowUp', { shiftKey: true })
+    press('ArrowUp', { shiftKey: true })
+    press('ArrowUp', { shiftKey: true })
+
+    await waitFor(() => expect(upscaleCalls.length).toBe(3))
+    expect(upscaleCalls).toEqual([[LIBRARY_SIZE], [LIBRARY_SIZE - 1], [LIBRARY_SIZE - 2]])
   })
 
   it('shows the rating it just applied before moving on', async () => {
@@ -767,11 +848,18 @@ describe('starting selection with a tap of Ctrl', () => {
   })
 
   it('does not throw away a selection already made', async () => {
+    // The click goes through the real sequence — pointerdown, then click —
+    // because that ordering is now load-bearing twice over: it tells the
+    // handler the mode is being used, and it separates the tap before it from
+    // the tap after, which would otherwise pair into a double tap and discard
+    // the very selection this is about.
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
     ctrlDown()
     ctrlUp()
-    screen.getByTitle(`image-${LIBRARY_SIZE}.png`).click()
+    const tile = screen.getByTitle(`image-${LIBRARY_SIZE}.png`)
+    fireEvent.pointerDown(tile, { button: 0 })
+    fireEvent.click(tile)
     await screen.findByText('1 selected')
 
     ctrlDown()
@@ -793,10 +881,30 @@ describe('starting selection with a tap of Ctrl', () => {
     expect(screen.queryByText('Nothing selected')).toBeNull()
   })
 
-  it('a long hold on Ctrl leaves the mode and drops the selection', async () => {
-    // Tapping Ctrl never leaves the mode — that guard is tested above. The
-    // deliberate way out is holding it: 1.5 seconds of bare Ctrl does what
-    // the toolbar button does, mode off and selection gone.
+  it('a double tap of Ctrl leaves the mode and drops the selection', async () => {
+    // Tapping Ctrl once never leaves the mode — that guard is tested above.
+    // The deliberate way out is tapping it twice: two bare taps inside the
+    // window do what the toolbar button does, mode off and selection gone.
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    ctrlDown()
+    clickTile(LIBRARY_SIZE)
+    await screen.findByText('1 selected')
+    ctrlUp()
+
+    ctrlDown()
+    ctrlUp()
+    ctrlDown()
+    ctrlUp()
+
+    expect(screen.queryByText('1 selected')).toBeNull()
+    expect(screen.queryByText('Nothing selected')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Select' })).toBeTruthy()
+  })
+
+  it('two taps too far apart are two taps, not a double', async () => {
+    // The second tap has to arrive inside the window. Past it, this is just
+    // someone turning the mode on twice.
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
     ctrlDown()
@@ -807,35 +915,35 @@ describe('starting selection with a tap of Ctrl', () => {
     vi.useFakeTimers()
     try {
       ctrlDown()
+      ctrlUp()
       act(() => {
-        vi.advanceTimersByTime(1500)
+        vi.advanceTimersByTime(DOUBLE_TAP_MS + 50)
       })
+      ctrlDown()
+      ctrlUp()
     } finally {
       vi.useRealTimers()
     }
 
-    expect(screen.queryByText('1 selected')).toBeNull()
-    expect(screen.queryByText('Nothing selected')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Select' })).toBeTruthy()
+    expect(screen.getByText('1 selected')).toBeTruthy()
   })
 
-  it('a hold that gets used for picking never fires the exit', async () => {
-    // Hold Ctrl, click a picture, keep holding while aiming at the next —
-    // however long that takes, the mode must not vanish mid-gesture.
+  it('a tap used for picking is not a tap, so it cannot pair', async () => {
+    // Hold Ctrl, click a picture, let go — then tap Ctrl. The click makes the
+    // first press a *use* of the mode rather than a tap, so the tap after it
+    // has nothing to pair with and the mode must survive.
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
 
-    vi.useFakeTimers()
-    try {
-      ctrlDown()
-      clickTile(LIBRARY_SIZE)
-      act(() => {
-        vi.advanceTimersByTime(4000)
-      })
-      expect(screen.getByText('1 selected')).toBeTruthy()
-    } finally {
-      vi.useRealTimers()
-    }
+    ctrlDown()
+    clickTile(LIBRARY_SIZE)
+    ctrlUp()
+    await screen.findByText('1 selected')
+
+    ctrlDown()
+    ctrlUp()
+
+    expect(screen.getByText('1 selected')).toBeTruthy()
   })
 
   it('survives a keyup lost to another window', async () => {
@@ -852,43 +960,58 @@ describe('starting selection with a tap of Ctrl', () => {
       window.dispatchEvent(new Event('blur'))
     })
 
-    vi.useFakeTimers()
-    try {
-      ctrlDown()
-      act(() => {
-        vi.advanceTimersByTime(1500)
-      })
-    } finally {
-      vi.useRealTimers()
-    }
+    ctrlDown()
+    ctrlUp()
+    ctrlDown()
+    ctrlUp()
 
     expect(screen.queryByText('Nothing selected')).toBeNull()
     expect(screen.getByRole('button', { name: 'Select' })).toBeTruthy()
   })
 
-  it('a combination disarms the exit along with the mode', async () => {
-    // Ctrl-C held past 1.5 seconds is a slow copy, not a request to leave a
-    // mode that was on before the Ctrl went down.
+  it('a keypress between two taps separates them', async () => {
+    // Tap Ctrl, type something, tap Ctrl. Two taps with a keystroke between
+    // them are two taps, whatever the clock says — the same rule a click
+    // follows, and the reason the search box cannot swallow a selection.
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
-    screen.getByRole('button', { name: 'Select' }).click()
-    await screen.findByText('Nothing selected')
+    ctrlDown()
+    clickTile(LIBRARY_SIZE)
+    await screen.findByText('1 selected')
+    ctrlUp()
 
-    vi.useFakeTimers()
-    try {
+    ctrlDown()
+    ctrlUp()
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', bubbles: true }))
+    })
+    ctrlDown()
+    ctrlUp()
+
+    expect(screen.getByText('1 selected')).toBeTruthy()
+  })
+
+  it('a combination is not a tap, so Ctrl-C then Ctrl-V keeps the selection', async () => {
+    // The failure this guards: two combinations typed in quick succession are
+    // four Ctrl events inside the window. If a press with another key on it
+    // counted as a tap, a copy-paste would silently destroy a set assembled by
+    // hand.
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    ctrlDown()
+    clickTile(LIBRARY_SIZE)
+    await screen.findByText('1 selected')
+    ctrlUp()
+
+    for (const key of ['c', 'v']) {
       ctrlDown()
       act(() => {
-        window.dispatchEvent(
-          new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }),
-        )
+        window.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true }))
       })
-      act(() => {
-        vi.advanceTimersByTime(4000)
-      })
-      expect(screen.getByText('Nothing selected')).toBeTruthy()
-    } finally {
-      vi.useRealTimers()
+      ctrlUp()
     }
+
+    expect(screen.getByText('1 selected')).toBeTruthy()
   })
 })
 
@@ -2020,6 +2143,84 @@ describe('the Prompt filter', () => {
 
     pill().click()
     await waitFor(() => expect(sent()?.hasPrompt).toBeNull())
+  })
+})
+
+describe('the More filters panel', () => {
+  const sent = () =>
+    queries.at(-1) as
+      | { greyscale?: boolean | null; animated?: boolean | null; label?: string | null; minLongestEdge?: number | null }
+      | undefined
+
+  async function openMore() {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    screen.getByRole('button', { name: /^More/ }).click()
+  }
+
+  it('stays out of the way until it is asked for', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    // The bar is already crowded; these are the filters you reach for
+    // occasionally, not the ones you steer with.
+    expect(screen.queryByRole('button', { name: 'B&W' })).toBeNull()
+
+    screen.getByRole('button', { name: /^More/ }).click()
+    expect(await screen.findByRole('button', { name: 'B&W' })).toBeTruthy()
+  })
+
+  it('asks the index for black and white', async () => {
+    await openMore()
+    queries.length = 0
+    screen.getByRole('button', { name: 'B&W' }).click()
+    await waitFor(() => expect(sent()?.greyscale).toBe(true))
+
+    screen.getByRole('button', { name: 'B&W' }).click()
+    await waitFor(() => expect(sent()?.greyscale).toBeNull())
+  })
+
+  it('sends both halves of "stills only", because it is two questions', async () => {
+    // Animation is not a kind — a GIF and a PNG are both images — so excluding
+    // videos and excluding GIFs are separate predicates that have to compose.
+    await openMore()
+    queries.length = 0
+    screen.getByRole('button', { name: 'Stills only' }).click()
+
+    await waitFor(() => expect(sent()?.animated).toBe(false))
+    expect((queries.at(-1) as { kind?: string | null }).kind).toBe('image')
+  })
+
+  it('filters on a label the verdict could never have named', async () => {
+    // FACE_FEMALE carries no rating weight, so it can never be a topLabel —
+    // the whole reason the labels table exists.
+    await openMore()
+    queries.length = 0
+    fireEvent.change(screen.getByLabelText('Found'), { target: { value: 'FACE_FEMALE' } })
+
+    await waitFor(() => expect(sent()?.label).toBe('FACE_FEMALE'))
+  })
+
+  it('counts what is on, so a collapsed panel cannot secretly empty the grid', async () => {
+    await openMore()
+    screen.getByRole('button', { name: 'B&W' }).click()
+    await screen.findByRole('button', { name: 'More · 1' })
+
+    screen.getByRole('button', { name: 'More · 1' }).click()
+    // Collapsed again, and still saying that something is narrowing the grid.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'B&W' })).toBeNull())
+    expect(screen.getByRole('button', { name: 'More · 1' })).toBeTruthy()
+  })
+
+  it('clears the whole panel in one go', async () => {
+    await openMore()
+    screen.getByRole('button', { name: 'B&W' }).click()
+    screen.getByRole('button', { name: 'GIFs' }).click()
+    const clear = await screen.findByText('clear these')
+    queries.length = 0
+
+    clear.click()
+    await waitFor(() => expect(sent()?.greyscale).toBeNull())
+    expect(sent()?.animated).toBeNull()
   })
 })
 
