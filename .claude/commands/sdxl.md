@@ -31,6 +31,26 @@ garment, pose, setting — and pass what the prompt does not already say as
 the file either. What the prompt *does* say is left alone and stays in front,
 where its weight is; anything already there is dropped rather than repeated.
 
+### The second witness: what it was made from
+
+For an img2img, `--show` also prints the picture it was **made from**, and that
+one's prompt. Nothing in any file records the init image — but a denoising pass
+keeps the composition it started from, so the library can *recognise* it, and
+then walk back through the chain to whatever txt2img began it. It works about
+two times in three; when it does not, it says so rather than guessing.
+
+This is frequently where the words are. One real chain starts from a prompt
+reading `very detailed human left hand` — an inpaint repairing a hand — and six
+passes back names the character, her hair, her eyes and her dress.
+
+**Read it against the picture; never paste it through.** The point of an
+img2img pass is often to keep a composition and change the subject, so an
+ancestor can confidently name someone who is no longer there — the output says
+`the trail goes cold here` or `this is where the lineage starts` so you know how
+far back you are looking, and the weakest hop in bits so you know how much to
+trust it. Anything it names that you can *see* in the picture is worth putting
+in `--add`; anything you cannot see is not.
+
 Note the aspect too. A square source with a standing figure in it usually wants
 `--size 832x1216`, and the canvas is worth asking about whenever the two
 disagree.
@@ -125,11 +145,14 @@ otherwise — Forge raises nothing and the picture simply comes out different.
 2. Reads the parameter block **from the file**, not the index. The index keeps
    six display fields; a real block carries schedule type, clip skip, ControlNet
    and every ADetailer setting.
-3. Picks the newest installed checkpoint matching the target, by file date.
-4. Detects its architecture from the safetensors header — `sd`, `xl`, `flux`.
-5. Rewrites the block via `migrateGeneration` in `@luma/core` (tested there).
-6. Selects the checkpoint in Forge **before** opening the tab.
-7. Opens the tab; the prefill extension fills every field.
+3. For an img2img, finds what it was made from by perceptual hash and walks the
+   chain back — `origin.ts` in `@luma/core`, sharing its rule with the app
+   through `contracts/origin-vectors.json`. Reported, never merged.
+4. Picks the newest installed checkpoint matching the target, by file date.
+5. Detects its architecture from the safetensors header — `sd`, `xl`, `flux`.
+6. Rewrites the block via `migrateGeneration` in `@luma/core` (tested there).
+7. Selects the checkpoint in Forge **before** opening the tab.
+8. Opens the tab; the prefill extension fills every field.
 
 ## The rewrite, when crossing SD1.5 → SDXL
 

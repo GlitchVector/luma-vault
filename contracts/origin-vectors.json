@@ -1,0 +1,370 @@
+{
+  "//": "Shared test vectors for logic that necessarily exists TWICE: once in Rust (apps/desktop/src/origin.rs, where the app answers \"what was this made from\") and once in TypeScript (packages/core/src/origin.ts, where the migrate-prompt script answers it with the app closed). Duplicated logic drifts — so both implementations are pinned by THESE cases, and a threshold change means editing this file and watching both suites fail.",
+  "//phash": "A 16-character hex string, because a 64-bit hash does not survive a JSON number.",
+  "//grey": "A flat colour signature: every one of the 192 bytes set to this value. Two rows therefore sit exactly |a - b| apart, which is what makes the colour cases readable.",
+  "//thresholds": "hash > 3 (the dupe threshold) and <= 8; colour <= 16; strictly older; at most 12 hops. Measured on a 155,000-row library: 8 bits and colour 16 links 65% of img2img rows against 4% of txt2img ones, which have no source image and so are the negative control.",
+  "cases": [
+    {
+      "name": "walks a chain back to the txt2img that started it",
+      "why": "five bits per hop puts the root ten bits from the top, out of reach in one step",
+      "rows": [
+        {
+          "id": 1,
+          "phash": "00ff00ff0f0f3333",
+          "modifiedAt": 1000,
+          "img2img": false,
+          "grey": 9
+        },
+        {
+          "id": 2,
+          "phash": "00ff00ff0f0f332c",
+          "modifiedAt": 2000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 3,
+          "phash": "00ff00ff0eff332c",
+          "modifiedAt": 3000,
+          "img2img": true,
+          "grey": 9
+        }
+      ],
+      "start": 3,
+      "expect": {
+        "id": 1,
+        "hops": 2,
+        "reachedRoot": true,
+        "weakestHop": 5
+      }
+    },
+    {
+      "name": "reports an ancestor the trail went cold on, and does not call it a root",
+      "why": "40% of real cases end this way; the ancestor is still worth having",
+      "rows": [
+        {
+          "id": 1,
+          "phash": "00ff00ff0f0f332c",
+          "modifiedAt": 1000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 2,
+          "phash": "00ff00ff0f0f3333",
+          "modifiedAt": 2000,
+          "img2img": true,
+          "grey": 9
+        }
+      ],
+      "start": 2,
+      "expect": {
+        "id": 1,
+        "hops": 1,
+        "reachedRoot": false,
+        "weakestHop": 5
+      }
+    },
+    {
+      "name": "a picture with no ancestor has no origin",
+      "why": "the inverted hash is 64 bits away — nothing in the library made this",
+      "rows": [
+        {
+          "id": 1,
+          "phash": "00ff00ff0f0f3333",
+          "modifiedAt": 1000,
+          "img2img": false,
+          "grey": 9
+        },
+        {
+          "id": 2,
+          "phash": "ff00ff00f0f0cccc",
+          "modifiedAt": 2000,
+          "img2img": true,
+          "grey": 9
+        }
+      ],
+      "start": 2,
+      "expect": null
+    },
+    {
+      "name": "the same picture re-saved is not what it was made from",
+      "why": "three bits is the dupe threshold: a re-encode or an upscale, which dupes already pairs",
+      "rows": [
+        {
+          "id": 1,
+          "phash": "00ff00ff0f0f3333",
+          "modifiedAt": 1000,
+          "img2img": false,
+          "grey": 9
+        },
+        {
+          "id": 2,
+          "phash": "00ff00ff0f0f3334",
+          "modifiedAt": 2000,
+          "img2img": true,
+          "grey": 9
+        }
+      ],
+      "start": 2,
+      "expect": null
+    },
+    {
+      "name": "a picture cannot be made from a later one",
+      "why": "also what makes the walk acyclic — there is no visited set because time is one",
+      "rows": [
+        {
+          "id": 1,
+          "phash": "00ff00ff0f0f332c",
+          "modifiedAt": 5000,
+          "img2img": false,
+          "grey": 9
+        },
+        {
+          "id": 2,
+          "phash": "00ff00ff0f0f3333",
+          "modifiedAt": 2000,
+          "img2img": true,
+          "grey": 9
+        }
+      ],
+      "start": 2,
+      "expect": null
+    },
+    {
+      "name": "colour overrules a hash that likes the shape",
+      "why": "a repaint may move the palette; a different scene is not a repaint",
+      "rows": [
+        {
+          "id": 1,
+          "phash": "00ff00ff0f0f332c",
+          "modifiedAt": 1000,
+          "img2img": false,
+          "grey": 200
+        },
+        {
+          "id": 2,
+          "phash": "00ff00ff0f0f3333",
+          "modifiedAt": 2000,
+          "img2img": true,
+          "grey": 10
+        }
+      ],
+      "start": 2,
+      "expect": null
+    },
+    {
+      "name": "a colour move a denoising pass would explain is allowed",
+      "why": "the threshold is twice the dupe one for exactly this: 12 apart still links",
+      "rows": [
+        {
+          "id": 1,
+          "phash": "00ff00ff0f0f332c",
+          "modifiedAt": 1000,
+          "img2img": false,
+          "grey": 21
+        },
+        {
+          "id": 2,
+          "phash": "00ff00ff0f0f3333",
+          "modifiedAt": 2000,
+          "img2img": true,
+          "grey": 9
+        }
+      ],
+      "start": 2,
+      "expect": {
+        "id": 1,
+        "hops": 1,
+        "reachedRoot": true,
+        "weakestHop": 5
+      }
+    },
+    {
+      "name": "reports the weakest link rather than the hop it ended on",
+      "why": "seven bits back to the middle, four from there to the root",
+      "rows": [
+        {
+          "id": 1,
+          "phash": "00ff00ff0f0f3333",
+          "modifiedAt": 1000,
+          "img2img": false,
+          "grey": 9
+        },
+        {
+          "id": 2,
+          "phash": "00ff00ff0f0f333c",
+          "modifiedAt": 2000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 3,
+          "phash": "00ff00ff08ff333c",
+          "modifiedAt": 3000,
+          "img2img": true,
+          "grey": 9
+        }
+      ],
+      "start": 3,
+      "expect": {
+        "id": 1,
+        "hops": 2,
+        "reachedRoot": true,
+        "weakestHop": 7
+      }
+    },
+    {
+      "name": "a tie goes to the newer ancestor",
+      "why": "a chain generates forward in time, so the later of two equals is the likelier parent",
+      "rows": [
+        {
+          "id": 1,
+          "phash": "00ff00ff0f0f332c",
+          "modifiedAt": 1000,
+          "img2img": false,
+          "grey": 9
+        },
+        {
+          "id": 2,
+          "phash": "00ff00ff0f0f332c",
+          "modifiedAt": 2000,
+          "img2img": false,
+          "grey": 9
+        },
+        {
+          "id": 3,
+          "phash": "00ff00ff0f0f3333",
+          "modifiedAt": 3000,
+          "img2img": true,
+          "grey": 9
+        }
+      ],
+      "start": 3,
+      "expect": {
+        "id": 2,
+        "hops": 1,
+        "reachedRoot": true,
+        "weakestHop": 5
+      }
+    },
+    {
+      "name": "a long chain stops at the hop limit",
+      "why": "unbounded work otherwise, on a library that generates from its own output all day",
+      "rows": [
+        {
+          "id": 1,
+          "phash": "00ff00ff0f0f333c",
+          "modifiedAt": 1000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 2,
+          "phash": "00ff00ff0f0f33c3",
+          "modifiedAt": 2000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 3,
+          "phash": "00ff00ff0f0f3c33",
+          "modifiedAt": 3000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 4,
+          "phash": "00ff00ff0f0fc333",
+          "modifiedAt": 4000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 5,
+          "phash": "00ff00ff0f003333",
+          "modifiedAt": 5000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 6,
+          "phash": "00ff00ff0fff3333",
+          "modifiedAt": 6000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 7,
+          "phash": "00ff00ff000f3333",
+          "modifiedAt": 7000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 8,
+          "phash": "00ff00ffff0f3333",
+          "modifiedAt": 8000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 9,
+          "phash": "00ff00f00f0f3333",
+          "modifiedAt": 9000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 10,
+          "phash": "00ff000f0f0f3333",
+          "modifiedAt": 10000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 11,
+          "phash": "00ff0fff0f0f3333",
+          "modifiedAt": 11000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 12,
+          "phash": "00fff0ff0f0f3333",
+          "modifiedAt": 12000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 13,
+          "phash": "00f000ff0f0f3333",
+          "modifiedAt": 13000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 14,
+          "phash": "000f00ff0f0f3333",
+          "modifiedAt": 14000,
+          "img2img": true,
+          "grey": 9
+        },
+        {
+          "id": 15,
+          "phash": "0fff00ff0f0f3333",
+          "modifiedAt": 15000,
+          "img2img": true,
+          "grey": 9
+        }
+      ],
+      "start": 15,
+      "expect": {
+        "id": 3,
+        "hops": 12,
+        "reachedRoot": false,
+        "weakestHop": 8
+      }
+    }
+  ]
+}

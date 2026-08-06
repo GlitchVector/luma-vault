@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { rateFrame, rollUpVideo } from './classify.ts'
+import { walkToOrigin, type Origin, type OriginCandidate } from './origin.ts'
 import { planFrameTimestamps } from './sampling.ts'
 import type { Detection, FrameVerdict, Rating } from './schemas.ts'
 
@@ -43,6 +44,20 @@ const VECTORS = JSON.parse(
     expectCount: number
     expectFirst?: number
     expectEvenlySpaced?: boolean
+  }>
+}
+
+const ORIGIN_VECTORS = JSON.parse(
+  readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '../../../contracts/origin-vectors.json'),
+    'utf8',
+  ),
+) as {
+  cases: Array<{
+    name: string
+    rows: Array<{ id: number; phash: string; modifiedAt: number; img2img: boolean; grey: number }>
+    start: number
+    expect: Origin | null
   }>
 }
 
@@ -90,6 +105,32 @@ describe('video vectors (shared with apps/desktop/src/rating.rs)', () => {
         sexyFrameCount: verdict.sexyFrameCount,
         posterFrameIndex: verdict.posterFrameIndex,
       }).toEqual(testCase.expect)
+    })
+  }
+})
+
+describe('origin vectors (shared with apps/desktop/src/origin.rs)', () => {
+  it('has cases to run', () => {
+    expect(ORIGIN_VECTORS.cases.length).toBeGreaterThan(0)
+  })
+
+  for (const testCase of ORIGIN_VECTORS.cases) {
+    it(testCase.name, () => {
+      const rows: OriginCandidate[] = testCase.rows.map((row) => ({
+        id: row.id,
+        phash: BigInt(`0x${row.phash}`),
+        modifiedAt: row.modifiedAt,
+        img2img: row.img2img,
+      }))
+      // `grey` is a flat signature — every one of the 192 bytes at that value —
+      // so two rows sit exactly |a - b| apart. See the fixture's own note.
+      const greys = new Map(testCase.rows.map((row) => [row.id, row.grey]))
+      const colourOf = (id: number) => {
+        const grey = greys.get(id)
+        return grey === undefined ? undefined : new Uint8Array(192).fill(grey)
+      }
+
+      expect(walkToOrigin(rows, testCase.start, colourOf)).toEqual(testCase.expect)
     })
   }
 })

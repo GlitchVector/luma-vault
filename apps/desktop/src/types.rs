@@ -159,6 +159,27 @@ pub struct MediaItem {
     pub upscaled_to: Option<String>,
 }
 
+/// The picture an img2img was made from — see [`crate::origin`] for the rule
+/// and the measurements behind it.
+///
+/// Carries the whole ancestor rather than its id because the one thing every
+/// caller wants from it is the prompt, and a second round trip to fetch the row
+/// that was just found would be the only reason to have the id at all.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceOrigin {
+    /// The furthest ancestor the trail reached.
+    pub item: MediaItem,
+    /// How many img2img passes back it was found. Never zero.
+    pub hops: u32,
+    /// Whether that ancestor is where the lineage started, or merely where the
+    /// trail went cold. Stating the first when it means the second is a lie the
+    /// UI must not tell — 28% of img2img rows reach a real root, 40% do not.
+    pub reached_root: bool,
+    /// The widest hop in the chain. Confidence is set by the worst step.
+    pub weakest_hop: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaFrame {

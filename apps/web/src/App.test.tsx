@@ -143,6 +143,7 @@ vi.mock('#/lib/native.ts', () => ({
   mediaById: (id: number) => Promise.resolve(library.find((item) => item.id === id) ?? null),
   mediaFrames: () => Promise.resolve([]),
   extrasOriginal: () => Promise.resolve(null),
+  sourceOrigin: () => Promise.resolve(null),
   deleteItem: (id: number, permanent: boolean) => {
     deleteCalls.push({ id, permanent })
     library = library.filter((item) => item.id !== id)

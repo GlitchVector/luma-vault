@@ -70,6 +70,18 @@ export {
   type MigrationTarget,
 } from './migrate.ts'
 
+export {
+  SAME_PICTURE,
+  MAX_HASH_DISTANCE,
+  MAX_COLOUR_DISTANCE,
+  MAX_HOPS,
+  hashDistance,
+  colourDistance,
+  walkToOrigin,
+  type Origin,
+  type OriginCandidate,
+} from './origin.ts'
+
 export { highlight, excerpt, searchTerms, type HighlightPart } from './highlight.ts'
 
 export {
@@ -136,6 +148,7 @@ export {
   deviantArtSummarySchema,
   remoteStatusSchema,
   shareStatusSchema,
+  sourceOriginSchema,
 } from './schemas.ts'
 export type {
   Detection,
@@ -163,4 +176,5 @@ export type {
   DeviantArtSummary,
   RemoteStatus,
   ShareStatus,
+  SourceOrigin,
 } from './schemas.ts'

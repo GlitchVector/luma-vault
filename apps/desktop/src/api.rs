@@ -19,7 +19,7 @@ use serde_json::Value;
 use crate::db::{self, Db};
 use crate::types::{
     CharacterCount, DeviantArtAccount, DeviantArtDraft, DeviantArtSummary, Folder, LibraryStats,
-    MediaFrame, MediaItem, MediaPage, MediaQuery, ScanProgress, TimelineBucket,
+    MediaFrame, MediaItem, MediaPage, MediaQuery, ScanProgress, SourceOrigin, TimelineBucket,
 };
 use crate::{imports, pipeline, thumbs, throttle, types, upscaler, video, AppState};
 
@@ -158,6 +158,22 @@ pub fn top_characters(
         .db
         .top_characters(&query, limit.clamp(1, 50))
         .map_err(stringify)
+}
+
+/// What an img2img was made from, found perceptually and walked back to the
+/// picture that started the lineage.
+///
+/// Null is an ordinary answer, not an error: a third of img2img rows have no
+/// findable source, either because it was never in this library or because it
+/// was deleted.
+pub fn source_origin(state: &AppState, id: i64) -> Result<Option<SourceOrigin>, String> {
+    let found = state.db.source_origin(id).map_err(stringify)?;
+    Ok(found.map(|(item, origin)| SourceOrigin {
+        item,
+        hops: origin.hops,
+        reached_root: origin.reached_root,
+        weakest_hop: origin.weakest_hop,
+    }))
 }
 
 /// The original behind an Extras-tab upscale, linked perceptually through
@@ -918,6 +934,7 @@ pub async fn dispatch(
         "media_timeline" => ok(media_timeline(state, arg(args, "query")?)?),
         "top_characters" => ok(top_characters(state, arg(args, "query")?, arg(args, "limit")?)?),
         "extras_original" => ok(extras_original(state, arg(args, "id")?)?),
+        "source_origin" => ok(source_origin(state, arg(args, "id")?)?),
         "recent_media" => ok(recent_media(state, arg(args, "limit")?)?),
         "media_frames" => ok(media_frames(state, arg(args, "mediaId")?)?),
         "media_by_id" => ok(media_by_id(state, arg(args, "id")?)?),

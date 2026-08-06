@@ -31,6 +31,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { migrateGeneration } from '../packages/core/src/migrate.ts'
+import { walkToOrigin } from '../packages/core/src/origin.ts'
 import {
   DEFAULT_MODEL,
   architectureOf,
@@ -55,13 +56,74 @@ function indexPath() {
   return found
 }
 
+/** Read-only, so the app may be running. SQLite allows concurrent readers under WAL. */
+function openIndex() {
+  return new DatabaseSync(`file:${indexPath().replaceAll('\\', '/')}?mode=ro`, { open: true })
+}
+
+/**
+ * The picture this one was made from, and the prompt that describes it.
+ *
+ * An img2img keeps its subject in an init image no parameter block carries, so
+ * its own prompt routinely says nothing about the clothes, the character or the
+ * setting. That init image is usually still in the library and can be
+ * recognised even though it can never be named — see `@luma/core/origin`, whose
+ * rule this shares with the app through `contracts/origin-vectors.json`.
+ *
+ * Null whenever there is nothing trustworthy to say, which is a third of the
+ * time.
+ */
+function findOrigin(id) {
+  const db = openIndex()
+  try {
+    // Only the columns the walk compares on. The colour signatures are 192
+    // bytes each and there are six figures of them; they are fetched below for
+    // the handful of rows that get that far.
+    const candidates = db.prepare(
+      `select id, phash, modified_at,
+              coalesce(json_extract(generation_json, '$.needsSourceImage'), 0) as img2img
+        from media
+        where phash is not null and colour_sig is not null and error is null`,
+    )
+    candidates.setReadBigInts(true)
+    const rows = candidates.all().map((row) => ({
+      id: Number(row.id),
+      phash: BigInt.asUintN(64, row.phash),
+      modifiedAt: Number(row.modified_at),
+      img2img: Number(row.img2img) === 1,
+    }))
+
+    const signature = db.prepare('select colour_sig from media where id = ?')
+    const cache = new Map()
+    const colourOf = (want) => {
+      if (!cache.has(want)) cache.set(want, signature.get(want)?.colour_sig ?? undefined)
+      return cache.get(want)
+    }
+
+    const origin = walkToOrigin(rows, id, colourOf)
+    if (!origin) return null
+
+    const found = db
+      .prepare('select name, path, generation_json from media where id = ?')
+      .get(origin.id)
+    if (!found) return null
+    let prompt = ''
+    try {
+      prompt = JSON.parse(found.generation_json ?? '{}').prompt ?? ''
+    } catch {
+      // A row whose metadata will not parse still has a name worth naming.
+    }
+    return { ...origin, name: found.name, path: found.path, prompt }
+  } finally {
+    db.close()
+  }
+}
+
 function findImage(name) {
-  // Read-only: the app may be running, and this must never be the reason a scan
-  // fails. SQLite allows concurrent readers under WAL.
-  const db = new DatabaseSync(`file:${indexPath().replaceAll('\\', '/')}?mode=ro`, { open: true })
+  const db = openIndex()
   const rows = db
     .prepare(
-      `select path, name from media
+      `select id, path, name, generation_json from media
         where name like ? and generation_json is not null
         order by length(name), added_at desc limit 25`,
     )
@@ -163,16 +225,61 @@ if (!imageName) {
   )
 }
 
+/**
+ * Print what this picture was made from, when it was made from anything.
+ *
+ * Deliberately printed and never merged into the migrated prompt. The point of
+ * an img2img chain is frequently to keep a composition and change the subject,
+ * so an ancestor's prompt can confidently name a character who is no longer in
+ * the picture — merging it would reintroduce exactly what the person replaced.
+ * It is evidence to read beside the image, which is step 1 of `/sdxl`, not an
+ * input to paste.
+ */
+function reportOrigin(id) {
+  const origin = findOrigin(id)
+  if (!origin) {
+    console.log('made from   an image that is not in this library, or no longer is')
+    return
+  }
+  const passes = origin.hops === 1 ? '1 img2img pass' : `${origin.hops} img2img passes`
+  console.log(`made from   ${origin.name}`)
+  console.log(`            ${passes} back, weakest hop ${origin.weakestHop} of 8 bits`)
+  console.log(
+    origin.reachedRoot
+      ? '            this is where the lineage starts'
+      : '            the trail goes cold here — this one was made from something too',
+  )
+  if (!origin.prompt) {
+    console.log('            no prompt recorded on it')
+    return
+  }
+  console.log('')
+  console.log(origin.prompt)
+}
+
 const row = findImage(imageName)
 const file = externalPath(row.path)
 const block = parameterBlock(file)
 if (!block) fail(`${row.name} has no readable parameter block.`)
+
+// The index already decided this, with the rule in `generated.rs`. Re-deriving
+// it from the block here would be a third copy of it.
+let isImg2img = false
+try {
+  isImg2img = JSON.parse(row.generation_json ?? '{}').needsSourceImage === true
+} catch {
+  // Unparseable metadata is not a reason to fail a migration.
+}
 
 if (show) {
   // Before Forge is contacted, so this works with it closed.
   console.log(file)
   console.log('')
   console.log(block)
+  if (isImg2img) {
+    console.log('')
+    reportOrigin(row.id)
+  }
   process.exit(0)
 }
 
@@ -197,6 +304,11 @@ console.log(`to    ${target.name}  (${architecture})`)
 console.log('')
 for (const note of notes) console.log('  - ' + note)
 if (notes.length === 0) console.log('  - Same architecture: model and seed changed, nothing else.')
+
+if (isImg2img) {
+  console.log('')
+  reportOrigin(row.id)
+}
 
 // Selecting first is the difference between a dropdown that shows the model and
 // one that renders empty over a correctly loaded model.

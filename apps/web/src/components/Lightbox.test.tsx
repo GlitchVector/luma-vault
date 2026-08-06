@@ -6,6 +6,15 @@ import { resetToasts, toast } from '#/lib/toasts.ts'
 
 /** What extrasOriginal resolves to. Null unless a case sets it. */
 let extrasOriginalState: import('@luma/core').MediaItem | null = null
+/** What sourceOrigin resolves to, and how many rows asked for one. */
+let sourceOriginState: import('@luma/core').SourceOrigin | null = null
+let originCalls = 0
+/**
+ * Held open like `mediaById`, because "still looking" is a state the panel has
+ * to render differently from "looked and found nothing" — a case that resolved
+ * itself could not tell the two apart.
+ */
+let answerOrigin: (() => void) | null = null
 import { ToastHost } from '#/components/ToastHost.tsx'
 import { resetPreloads } from '#/lib/preload.ts'
 import { DialogHost } from './DialogHost.tsx'
@@ -73,6 +82,12 @@ vi.mock('#/lib/native.ts', () => ({
   mediaFrames: () => Promise.resolve([]),
   setStars: () => Promise.resolve(),
   extrasOriginal: () => Promise.resolve(extrasOriginalState),
+  sourceOrigin: () => {
+    originCalls += 1
+    return new Promise<import('@luma/core').SourceOrigin | null>((resolve) => {
+      answerOrigin = () => resolve(sourceOriginState)
+    })
+  },
   deleteItem: () => Promise.resolve(),
   revealInFileManager: () => Promise.resolve(),
   generationParameters: () => Promise.resolve(null),
@@ -149,6 +164,9 @@ afterEach(() => {
   // case fire into the next.
   resetToasts()
   extrasOriginalState = null
+  sourceOriginState = null
+  originCalls = 0
+  answerOrigin = null
   vi.unstubAllGlobals()
 })
 
@@ -947,5 +965,173 @@ describe('the extras pill swaps the image', () => {
     // No flip — there is nothing to flip to — and the title explains.
     expect(screen.queryByText('original')).toBeNull()
     expect(pill.closest('button')?.title).toMatch(/was not found/)
+  })
+})
+
+/**
+ * The panel used to say the source image "is not recorded in any file … and
+ * cannot be recovered", full stop. Nothing records it, but the library can
+ * often *recognise* it — and when it does, the prompt that actually describes
+ * the picture is the ancestor's, not this row's.
+ */
+describe('what an img2img was made from', () => {
+  const img2imgSeed = () =>
+    makeItem(1, {
+      generation: {
+        tool: 'Stable Diffusion',
+        // The real shape of the problem: an inpaint repairing a hand, whose
+        // prompt says nothing whatever about who is in the picture.
+        prompt: 'very detailed human left hand',
+        needsSourceImage: true,
+        postprocessed: false,
+      },
+    })
+
+  const ancestor = makeItem(99, {
+    name: '00352-3427824797.png',
+    generation: {
+      tool: 'Stable Diffusion',
+      prompt: '1girl, kiryu coco, dragon horns, small china dress',
+      needsSourceImage: false,
+      postprocessed: false,
+    },
+  })
+
+  it('does not call a picture sourceless while it is still looking', async () => {
+    sourceOriginState = { item: ancestor, hops: 6, reachedRoot: true, weakestHop: 6 }
+    renderLightbox({ seed: img2imgSeed(), showGeneration: true })
+
+    expect(await screen.findByText(/Looking for it/)).toBeTruthy()
+    expect(screen.queryByText(/Nothing here looks like its source/)).toBeNull()
+  })
+
+  it('names the ancestor and shows the prompt this row never carried', async () => {
+    sourceOriginState = { item: ancestor, hops: 6, reachedRoot: true, weakestHop: 6 }
+    const { container } = renderLightbox({ seed: img2imgSeed(), showGeneration: true })
+    await screen.findByText(/Looking for it/)
+
+    await act(async () => {
+      answerOrigin?.()
+    })
+
+    expect(screen.getByRole('button', { name: '00352-3427824797.png' })).toBeTruthy()
+    expect(container.textContent).toContain('6 img2img passes back')
+    expect(screen.getByText(/kiryu coco, dragon horns, small china dress/)).toBeTruthy()
+  })
+
+  it('opens the ancestor when its name is clicked', async () => {
+    sourceOriginState = { item: ancestor, hops: 2, reachedRoot: true, weakestHop: 5 }
+    const opened: number[] = []
+    renderLightbox({
+      seed: img2imgSeed(),
+      showGeneration: true,
+      onOpenId: (id) => opened.push(id),
+    })
+    await screen.findByText(/Looking for it/)
+    await act(async () => {
+      answerOrigin?.()
+    })
+
+    screen.getByRole('button', { name: '00352-3427824797.png' }).click()
+    expect(opened).toEqual([99])
+  })
+
+  it('says the trail went cold rather than calling the ancestor the original', async () => {
+    // 40% of real cases. Presenting this one as where the lineage started
+    // would be a claim the data does not support.
+    sourceOriginState = {
+      item: { ...ancestor, generation: { ...ancestor.generation!, needsSourceImage: true } },
+      hops: 1,
+      reachedRoot: false,
+      weakestHop: 8,
+    }
+    const { container } = renderLightbox({ seed: img2imgSeed(), showGeneration: true })
+    await screen.findByText(/Looking for it/)
+    await act(async () => {
+      answerOrigin?.()
+    })
+
+    expect(container.textContent).toContain('An earlier picture in the same lineage')
+    expect(container.textContent).not.toContain('The picture this one starts from')
+  })
+
+  it('says so plainly when nothing in the library looks like the source', async () => {
+    sourceOriginState = null
+    renderLightbox({ seed: img2imgSeed(), showGeneration: true })
+    await screen.findByText(/Looking for it/)
+    await act(async () => {
+      answerOrigin?.()
+    })
+
+    expect(screen.getByText(/Nothing here looks like its source/)).toBeTruthy()
+  })
+
+  it('never asks for a row that was not made from another image', async () => {
+    // The walk scans every fingerprinted row in the library. Running it for a
+    // txt2img would be that cost spent looking for something that cannot exist.
+    renderLightbox({
+      seed: makeItem(1, {
+        generation: {
+          tool: 'Stable Diffusion',
+          prompt: '1girl, silver hair',
+          needsSourceImage: false,
+          postprocessed: false,
+        },
+      }),
+      showGeneration: true,
+    })
+    await screen.findByText('1girl, silver hair')
+
+    expect(originCalls).toBe(0)
+  })
+})
+
+describe('an Extras upscale of an img2img', () => {
+  it('looks up the source of the row whose prompt the panel is showing', async () => {
+    // The panel shows the upscaled picture's generation, not the postprocess
+    // line. Keying the lookup on the row on screen instead asked about a row
+    // that is not an img2img — so nothing was ever requested and the panel sat
+    // on "looking for it" for good.
+    const upscaled = makeItem(1, {
+      name: 'holiday-1-gigapixel.png',
+      generation: {
+        tool: 'Stable Diffusion',
+        prompt: 'very detailed human left hand',
+        needsSourceImage: true,
+        postprocessed: true,
+      },
+    })
+    extrasOriginalState = makeItem(50, {
+      name: '00244-529498367.png',
+      generation: {
+        tool: 'Stable Diffusion',
+        prompt: 'very detailed human left hand',
+        needsSourceImage: true,
+        postprocessed: false,
+      },
+    })
+    sourceOriginState = {
+      item: makeItem(99, {
+        name: '00083-3427824797.png',
+        generation: {
+          tool: 'Stable Diffusion',
+          prompt: '1girl, kiryu coco, small china dress',
+          needsSourceImage: false,
+          postprocessed: false,
+        },
+      }),
+      hops: 6,
+      reachedRoot: true,
+      weakestHop: 5,
+    }
+
+    renderLightbox({ seed: upscaled, showGeneration: true })
+    await waitFor(() => expect(originCalls).toBe(1))
+    await act(async () => {
+      answerOrigin?.()
+    })
+
+    expect(screen.getByRole('button', { name: '00083-3427824797.png' })).toBeTruthy()
+    expect(screen.queryByText(/Looking for it/)).toBeNull()
   })
 })

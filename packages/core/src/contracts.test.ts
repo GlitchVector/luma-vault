@@ -16,6 +16,7 @@ import {
   remoteStatusSchema,
   scanProgressSchema,
   shareStatusSchema,
+  sourceOriginSchema,
   timelineBucketSchema,
 } from './schemas.ts'
 
@@ -43,6 +44,7 @@ const CASES: Array<[file: string, schema: z.ZodType]> = [
   ['deviantart-summary.json', deviantArtSummarySchema],
   ['remote-status.json', z.array(remoteStatusSchema)],
   ['share-status.json', z.array(shareStatusSchema)],
+  ['source-origin.json', z.array(sourceOriginSchema)],
 ]
 
 describe('contract fixtures', () => {
