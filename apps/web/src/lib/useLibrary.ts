@@ -79,6 +79,9 @@ export function useLibrary() {
   const [query, setQueryState] = useState<MediaQuery>(DEFAULT_QUERY)
   const [items, setItems] = useState<MediaItem[]>([])
   const [total, setTotal] = useState(0)
+  // The same number, readable without a render. `loadMore` runs in bursts and
+  // has to know where the results end without waiting for one.
+  const totalRef = useRef(0)
   const [loading, setLoading] = useState(true)
 
   const dirty = useRef(false)
@@ -127,6 +130,7 @@ export function useLibrary() {
         return merged
       })
       setTotal(page.total)
+      totalRef.current = page.total
     } catch (error) {
       if (ticket === generation.current) {
         console.error('query failed', error)
@@ -153,14 +157,34 @@ export function useLibrary() {
     [runQuery],
   )
 
+  /**
+   * Append the next page, unless one is already on its way.
+   *
+   * **One at a time, and not merely as an optimisation.** `runQuery` stamps
+   * each call with a generation and drops any response that is no longer the
+   * newest — which is what makes a filter change cancel the query it replaced.
+   * Two appends in flight together hit that same rule: the first page to return
+   * is no longer the newest, so it is discarded, and those rows are simply
+   * missing from the grid until something reloads it. The grid now asks
+   * whenever the end is in reach, so this is reached in bursts and the guard is
+   * what keeps the chain to one page per request.
+   */
+  const appending = useRef(false)
   const loadMore = useCallback(() => {
+    if (appending.current) return
     setQueryState((previous) => {
-      if (items.length >= total) return previous
+      // `loaded` rather than `items.length`: a burst of asks arrives faster
+      // than the render that would refresh a captured length, and the stale one
+      // keeps paging past the end of the results.
+      if (loaded.current >= totalRef.current) return previous
       const next = { ...previous, offset: previous.offset + previous.limit }
-      void runQuery(next, true)
+      appending.current = true
+      void runQuery(next, true).finally(() => {
+        appending.current = false
+      })
       return next
     })
-  }, [items.length, total, runQuery])
+  }, [runQuery])
 
   /**
    * Re-fetch what is currently on screen.

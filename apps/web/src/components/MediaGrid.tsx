@@ -1,6 +1,23 @@
 import type { MediaItem } from '@luma/core'
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { MediaTile } from './MediaTile.tsx'
+
+/**
+ * How far below the last loaded tile the next page is asked for.
+ *
+ * A **percentage**, not pixels, and that is the point: `rootMargin` resolves a
+ * percentage against the viewport, so this is "two screens ahead" on a laptop
+ * and on a 4K panel alike. The fixed 1200px it replaced was a screen and a half
+ * on a small window and barely half a screen on a tall one — which is precisely
+ * where the wait was most visible, because a tall window also empties a page
+ * faster.
+ *
+ * Two screens rather than one because the request is not instant: a page is a
+ * query against a six-figure index plus the thumbnails to decode, and the point
+ * is for it to have landed *before* the scroll arrives rather than to start
+ * then.
+ */
+const LOOKAHEAD = '200% 0px'
 
 interface MediaGridProps {
   items: MediaItem[]
@@ -70,6 +87,8 @@ export function MediaGrid({
 }: MediaGridProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const reachEndRef = useRef(onReachEnd)
+  /** Whether the end of the loaded content is inside the lookahead band. */
+  const [nearEnd, setNearEnd] = useState(false)
 
   // A latest-ref so the observer below is created once rather than on every
   // render — the caller almost certainly passes a fresh closure each time.
@@ -82,16 +101,32 @@ export function MediaGrid({
     if (!sentinel || typeof IntersectionObserver === 'undefined') return
 
     const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) reachEndRef.current()
-      },
-      // Fire a screen early so the next page is already arriving by the time
-      // the user gets there.
-      { rootMargin: '1200px 0px' },
+      // Only records the state. Asking for the page is the effect below, so
+      // there is one path to it rather than two racing ones.
+      (entries) => setNearEnd(entries.some((entry) => entry.isIntersecting)),
+      { rootMargin: LOOKAHEAD },
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
   }, [])
+
+  /**
+   * Ask for the next page while the end is in reach — again after each one
+   * lands, until the band is clear.
+   *
+   * The re-ask is the point. An IntersectionObserver reports *changes*, so a
+   * sentinel that was already in view and stays in view never fires a second
+   * time: with a lookahead this deep, one page often fails to push it back out,
+   * and paging would stall until the next scroll nudged it. Re-running on
+   * `items.length` turns that into a chain that refills the buffer and stops on
+   * its own when the sentinel finally leaves the band.
+   *
+   * Safe to fire more often than needed: `loadMore` ignores a request while one
+   * is already in flight, and stops at the end of the results.
+   */
+  useEffect(() => {
+    if (nearEnd) reachEndRef.current()
+  }, [nearEnd, items.length])
 
   const handleOpen = useCallback((id: number, range: boolean) => onOpen(id, range), [onOpen])
 
