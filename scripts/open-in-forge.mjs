@@ -42,7 +42,7 @@ function unescape(value) {
 }
 
 function parseArgs(argv) {
-  const args = { model: DEFAULT_MODEL, width: 832, height: 1216, dryRun: false }
+  const args = { model: DEFAULT_MODEL, width: 832, height: 1216, cfg: 5, dryRun: false }
   for (let at = 0; at < argv.length; at++) {
     const flag = argv[at]
     if (flag === '--dry-run') args.dryRun = true
@@ -53,6 +53,9 @@ function parseArgs(argv) {
     else if (flag === '--model') args.model = argv[++at]
     else if (flag === '--width') args.width = Number(argv[++at])
     else if (flag === '--height') args.height = Number(argv[++at])
+    // Booru-XL sits at 5, but NoobAI wants 4-6 and burns colour at the top of
+    // that — a saturated, night-lit render from a daylight prompt is the tell.
+    else if (flag === '--cfg') args.cfg = Number(argv[++at])
     else fail(`unknown argument: ${flag}`)
   }
   return args
@@ -100,7 +103,7 @@ if (vPred) warnAboutVPrediction(target.name)
 const settings = [
   'Steps: 28',
   ...sampler,
-  'CFG scale: 5',
+  `CFG scale: ${args.cfg}`,
   'Seed: -1',
   `Size: ${args.width}x${args.height}`,
   `Model: ${target.name}`,
