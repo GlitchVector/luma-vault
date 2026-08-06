@@ -92,6 +92,38 @@ the four buttons — `close-up`, `portrait`, `upper body`, `lower body`,
 `very wide shot` — and any of them typed under Other is equally valid; pass
 it through as given.
 
+
+### The third question in that second call: the style
+
+Ask it every time, alongside the shot. It is the axis with the largest visible
+effect on the result and the least obvious controls:
+
+| Question | Options |
+|---|---|
+| Style | as seen · `2D` · `2.5D` · `3D` |
+
+Pass the answer as `--style 2d`, `--style 2.5d` or `--style 3d`; "as seen"
+passes nothing.
+
+- **2D** — flat anime. `anime coloring, flat color`, arguing against
+  `realistic, photorealistic, shiny skin`.
+- **2.5D** — soft semi-real anime, the glossy look. `realistic, shiny skin`,
+  arguing against `flat color, anime coloring, photorealistic`.
+- **3D** — rendered. `photorealistic, realistic, shiny skin`, arguing against
+  `anime coloring, flat color, lineart, sketch`.
+
+2.5D and 3D both assert `realistic`; the only difference between them is
+whether `photorealistic` is asked for or argued against. That single tag is
+what separates a soft anime-shaded figure from a rendered one.
+
+**Do not hand-write these tags.** The obvious words for this axis are mostly
+not danbooru tags at all — `3d`, `cel shading`, `soft shading`, `glossy skin`
+and `detailed skin` are all absent from the 10,861 names in
+`models/anime-tagger/selected_tags.csv`, so a prompt asking for them is asking
+in a language the model never learned. `shiny skin` is the one that carries the
+gloss. The flag applies the checked set and clears whatever competing rendering
+tag the prompt already had.
+
 ## 3. Run the script
 
 It does the whole thing; pass the arguments through untouched:

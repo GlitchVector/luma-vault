@@ -724,3 +724,56 @@ describe('the Hassaku / Illustrious family', () => {
     expect(migrateGeneration(SD15, TO_HASSAKU).block).not.toContain('4n1v3rs3')
   })
 })
+
+describe('the rendering style axis', () => {
+  const BLOCK = 'a girl, blue hair\nNegative prompt: lowres\nSteps: 20, Size: 512x768, Model: x'
+  const at = (style: '2d' | '2.5d' | '3d') =>
+    migrateGeneration(BLOCK, { architecture: 'xl', checkpoint: 'y', style })
+
+  it('asserts only tags the models were actually trained on', () => {
+    // The point of the whole feature. `3d`, `cel shading`, `soft shading` and
+    // `glossy skin` all read like they should work and are absent from the
+    // 10,861 names in models/anime-tagger/selected_tags.csv, so they carry no
+    // learned meaning — `shiny skin` is the one that does.
+    const all = ['2d', '2.5d', '3d'].map((s) => at(s as '2d').block).join(' ')
+    expect(all).not.toMatch(/glossy skin|soft shading|cel shading/)
+    expect(at('2.5d').block).toContain('shiny skin')
+  })
+
+  it('separates 2.5D from 3D on photorealistic', () => {
+    // Both assert `realistic`; the difference is whether photorealism is asked
+    // for or argued against, which is what makes one soft and one rendered.
+    const soft = at('2.5d')
+    const rendered = at('3d')
+    expect(soft.block).toContain('realistic')
+    expect(rendered.block).toContain('realistic')
+    const softNegative = soft.block.split('\n').find((l) => l.startsWith('Negative prompt:'))!
+    expect(softNegative).toContain('photorealistic')
+    expect(rendered.block.split('\n')[1]).toContain('photorealistic')
+  })
+
+  it('argues against the look it is not asking for', () => {
+    const flat = at('2d')
+    expect(flat.block.split('\n')[1]).toContain('anime coloring')
+    const negative = flat.block.split('\n').find((l) => l.startsWith('Negative prompt:'))!
+    expect(negative).toContain('realistic')
+  })
+
+  it('clears a competing rendering tag rather than arguing with it', () => {
+    // Two rendering instructions in one prompt is the framing-rung problem
+    // again: the result is neither.
+    const { block } = migrateGeneration(
+      'a girl, realistic, blue hair\nSteps: 20, Size: 512x768',
+      { architecture: 'xl', checkpoint: 'y', style: '2d' },
+    )
+    const prompt = block.split('Negative prompt:')[0]!
+    expect(prompt).toContain('anime coloring')
+    expect(prompt).not.toMatch(/(^|[^a-z])realistic/)
+  })
+
+  it('leaves the prompt alone when no style was asked for', () => {
+    const { block } = migrateGeneration(BLOCK, { architecture: 'xl', checkpoint: 'y' })
+    expect(block).not.toContain('anime coloring')
+    expect(block).not.toContain('shiny skin')
+  })
+})

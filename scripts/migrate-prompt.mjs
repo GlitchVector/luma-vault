@@ -213,6 +213,7 @@ const body = flag('--body')
 // doc comment in migrate.ts.
 const add = flag('--add')
 const size = flag('--size')
+const style = flag('--style')
 if (size && !/^\d+\s*x\s*\d+$/.test(size)) fail(`--size takes WxH, e.g. --size 832x1216 (got "${size}")`)
 const [imageName, targetName = DEFAULT_MODEL] = argv
 if (!imageName) {
@@ -304,6 +305,7 @@ const { block: migrated, notes } = migrateGeneration(block, {
   body,
   add,
   size,
+  style,
 })
 
 console.log(`from  ${row.name}`)

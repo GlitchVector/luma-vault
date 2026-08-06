@@ -51,6 +51,15 @@ export interface MigrationTarget {
    */
   family?: 'noob' | 'aniverse' | 'hassaku'
   /**
+   * How the picture is rendered: flat anime, semi-real, or photoreal.
+   *
+   * The axis with the largest visible effect on a booru model and the one with
+   * the least obvious controls, because the tags that do it are ordinary words
+   * — so `glossy skin` reads like it should work and does nothing. See
+   * {@link STYLES}.
+   */
+  style?: '2d' | '2.5d' | '3d'
+  /**
    * The emphasis mode the webui is *currently* set to.
    *
    * Passed in so the block can state it. A block that says nothing about a
@@ -468,6 +477,45 @@ const HIRES_UPSCALER = '4xUltrasharp_4xUltrasharpV10'
 const HIRES_FACTOR = '1.5'
 
 /**
+ * The rendering axis, in tags the models were actually trained on.
+ *
+ * **Every term here was checked against `models/anime-tagger/selected_tags.csv`**,
+ * the same standard `TAG_ALIASES` is held to — because the obvious words for
+ * this are mostly not tags. `3d`, `cel shading`, `soft shading`, `glossy skin`
+ * and `detailed skin` are all absent from those 10,861 names, so a prompt
+ * asking for them is asking in a language the model never learned. `shiny
+ * skin` is the one that carries the gloss, `realistic` the semi-real
+ * rendering, `photorealistic` the rest of the way.
+ *
+ * 2.5D and 3D both assert `realistic` — the difference between them is
+ * `photorealistic`, negated in one and asserted in the other, which is what
+ * separates a soft anime-shaded figure from a rendered one.
+ */
+const STYLES = {
+  '2d': {
+    positive: 'anime coloring, flat color',
+    negative: ['realistic', 'photorealistic', 'shiny skin'],
+  },
+  '2.5d': {
+    positive: 'realistic, shiny skin',
+    negative: ['flat color', 'anime coloring', 'photorealistic'],
+  },
+  '3d': {
+    positive: 'photorealistic, realistic, shiny skin',
+    negative: ['anime coloring', 'flat color', 'lineart', 'sketch'],
+  },
+} as const
+
+/** Every rendering tag any style asserts, so a switch can clear the others. */
+const STYLE_VOCABULARY = [
+  'anime coloring',
+  'flat color',
+  'realistic',
+  'photorealistic',
+  'shiny skin',
+]
+
+/**
  * The words in a prompt that describe a face, for ADetailer's own pass.
  *
  * The convention — "ADetailer jargon" — is a short prompt carrying only what
@@ -644,6 +692,32 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
 
   let nextPrompt = prompt
   let nextNegative = negative
+
+  // How the picture is *rendered*, imposed before anything else so the quality
+  // block still lands in front of it. Applied on every move, not only a
+  // crossing one: this is the person choosing a look, not the migration
+  // translating anything.
+  if (target.style) {
+    const style = STYLES[target.style]
+    // Whatever the prompt already says about rendering is removed rather than
+    // argued with — `realistic` in front of `anime coloring` is two competing
+    // instructions and the result is neither, exactly like two framing rungs.
+    const cleared = dropTermsByLine(nextPrompt, [...STYLE_VOCABULARY])
+    nextPrompt = cleared.text ? `${style.positive},\n${cleared.text}` : style.positive
+    const already = nextNegative.toLowerCase()
+    const additions = style.negative.filter(
+      (term) => !new RegExp(`(^|[^a-z])${term}([^a-z]|$)`).test(already),
+    )
+    if (additions.length > 0) {
+      nextNegative = [nextNegative.trim().replace(/,$/, ''), ...additions].filter(Boolean).join(', ')
+    }
+    notes.push(
+      `Style set to ${target.style}: ${style.positive} in front, and ${style.negative.join(', ')} ` +
+        'in the negative. Every one is a real danbooru tag — checked against ' +
+        'models/anime-tagger/selected_tags.csv, where `3d`, `cel shading` and `glossy skin` are ' +
+        'not, and so carry no learned meaning at all.',
+    )
+  }
 
   if (crossing) {
     // 1. LoRAs. Architecture-specific, and silently ignored rather than an error.
