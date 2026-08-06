@@ -15,6 +15,7 @@ import { DEFAULT_TILE_SIZE, MAX_TILE_SIZE, MIN_TILE_SIZE } from '#/components/Me
 import { SearchBar } from '#/components/SearchBar.tsx'
 import { DeviantArtPanel } from '#/components/DeviantArtPanel.tsx'
 import { DialogHost } from '#/components/DialogHost.tsx'
+import { RemoteDialog } from '#/components/RemoteDialog.tsx'
 import { StatusBar } from '#/components/StatusBar.tsx'
 import { TimelinePanel } from '#/components/TimelinePanel.tsx'
 import { ToastHost } from '#/components/ToastHost.tsx'
@@ -32,6 +33,7 @@ import {
   type UpscaleSummary,
 } from '#/lib/native.ts'
 import { useLibrary } from '#/lib/useLibrary.ts'
+import { useRemote } from '#/lib/useRemote.ts'
 
 const TILE_SIZE_KEY = 'luma.tileSize'
 
@@ -55,6 +57,8 @@ function storedTileSize(): number {
 
 export function App() {
   const library = useLibrary()
+  const remote = useRemote()
+  const [showRemote, setShowRemote] = useState(false)
   const [openId, setOpenId] = useState<number | null>(null)
   // Read once, on mount — not on every render, and never written back on a
   // render that did not change it.
@@ -348,6 +352,12 @@ export function App() {
   // Taken back only when this keydown is what turned it on. A mode that was
   // already on is left alone, because leaving it discards the selection and a
   // set assembled by hand must not be destroyed by typing Ctrl-C.
+  //
+  // The way back *out* by keyboard is a long hold: 1.5 seconds of bare Ctrl,
+  // uninterrupted by a click or another key, leaves the mode exactly like the
+  // toolbar button — selection dropped and all. Long enough to be nobody's
+  // combination and nobody's aim; a hold that gets used for picking is
+  // disarmed by the click, so it cannot fire mid-gesture.
   useEffect(() => {
     // Not while the lightbox is up: it owns the keyboard there, and Ctrl is
     // held for its own shortcuts.
@@ -355,6 +365,13 @@ export function App() {
 
     let down = false
     let opened = false
+    let holding: ReturnType<typeof setTimeout> | undefined
+
+    const disarm = () => {
+      if (holding === undefined) return
+      clearTimeout(holding)
+      holding = undefined
+    }
 
     const revert = () => {
       if (!opened) return
@@ -365,7 +382,11 @@ export function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Control') {
         // Auto-repeat fires keydown over and over while the key is held.
-        if (down) return
+        // The browser's own flag rather than one kept here: a kept flag went
+        // stale whenever the keyup landed in another window — press Ctrl,
+        // click over into Forge, come back — and then it ate every following
+        // press whole. Nothing turned on, nothing timed out, no error.
+        if (event.repeat) return
         down = true
 
         const target = event.target as HTMLElement | null
@@ -375,9 +396,19 @@ export function App() {
         }
         opened = !selectingRef.current
         if (opened) setSelecting(true)
+        holding = setTimeout(() => {
+          holding = undefined
+          opened = false
+          setSelecting(false)
+          setSelected(new Set())
+          anchor.current = null
+        }, 1500)
         return
       }
-      if (down) revert()
+      if (down) {
+        disarm()
+        revert()
+      }
     }
     // A click while Ctrl is still held is someone *using* the mode they just
     // turned on — hold Ctrl, click several pictures, let go — not the second
@@ -390,20 +421,33 @@ export function App() {
     // which clearing this achieves.
     const onPointerDown = () => {
       opened = false
+      disarm()
     }
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key !== 'Control') return
       down = false
       opened = false
+      disarm()
+    }
+    // Focus left with the key still down: the keyup is going to another
+    // window and nothing more is coming. Holding Ctrl across a switch to
+    // Forge must not leave a half-pressed state behind.
+    const onBlur = () => {
+      down = false
+      opened = false
+      disarm()
     }
 
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('blur', onBlur)
     return () => {
+      disarm()
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('blur', onBlur)
     }
   }, [openId])
 
@@ -485,6 +529,10 @@ export function App() {
         <FolderSidebar
           folders={folders}
           stats={library.stats}
+          characters={library.characters}
+          // The name is a ready-made search term: detection found it verbatim
+          // in the prompt, and search runs over prompts.
+          onCharacter={(name) => setQuery({ search: name })}
           tileSize={tileSize}
           onTileSize={(size) => {
             setTileSize(size)
@@ -720,7 +768,14 @@ export function App() {
         progress={progress}
         environment={library.environment}
         onSetThrottle={(level) => void actions.setThrottle(level)}
+        remote={remote.status}
+        share={remote.share}
+        onOpenRemote={() => setShowRemote(true)}
       />
+
+      {showRemote ? (
+        <RemoteDialog remote={remote} onClose={() => setShowRemote(false)} />
+      ) : null}
 
       {openId !== null ? (
         <Lightbox

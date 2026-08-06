@@ -37,7 +37,8 @@
       "sampler": "DPM++ 2M Karras",
       "steps": "28",
       "cfgScale": "7",
-      "needsSourceImage": false
+      "needsSourceImage": false,
+      "postprocessed": false
     },
     "dupeGroup": 1,
     "upscaledFrom": "/Volumes/vault/Images/holiday.png",

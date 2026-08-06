@@ -79,6 +79,13 @@ pub struct Generation {
     /// meaning of absence here is `false`.
     #[serde(default)]
     pub needs_source_image: bool,
+    /// Ran through the Extras tab — an upscale of an existing image, not a
+    /// generation. The block gives it away: `Postprocess upscale by: 2,
+    /// Postprocess upscaler: ...` and nothing else, no steps and no seed —
+    /// which is also why these images seem to have a strange "prompt": with
+    /// no settings line to anchor on, the postprocess line is all there is.
+    #[serde(default)]
+    pub postprocessed: bool,
 }
 
 /// Was this made from another image?
@@ -273,6 +280,7 @@ fn parse_a1111(text: &str) -> Generation {
     let mut generation = Generation {
         tool: "Stable Diffusion".to_string(),
         needs_source_image: needs_source_image(text),
+        postprocessed: text.contains("Postprocess upscale") || text.contains("Postprocess upscaler"),
         ..Default::default()
     };
 
@@ -479,6 +487,7 @@ fn parse_comfy(text: &str) -> Option<Generation> {
         // walked rather than a string searched. Claiming "reproducible" would
         // be a guess; this only marks what it can prove.
         needs_source_image: false,
+        postprocessed: false,
         negative_prompt: prompts.get(1).cloned(),
         prompt: prompts.first().cloned(),
         model,
@@ -501,6 +510,7 @@ fn parse_novelai(text: &str) -> Option<Generation> {
     Some(Generation {
         tool: "NovelAI".to_string(),
         needs_source_image: false,
+        postprocessed: false,
         prompt: get("prompt"),
         // NovelAI calls the negative prompt "uc", for undesired content.
         negative_prompt: get("uc"),
@@ -543,6 +553,176 @@ fn png_with_text(keyword: &str, value: &str) -> Vec<u8> {
     out.extend_from_slice(&data);
     out.extend_from_slice(&[0, 0, 0, 0]); // CRC, never checked
     out
+}
+
+/// Whether a path runs through an Extras output folder.
+///
+/// The era this exists for wrote NO postprocess metadata at all — worse, old
+/// A1111 copied the ORIGINAL image's whole parameter block into the upscale,
+/// so by its own metadata an extras file claims to be its source. Measured on
+/// a real library: 1,130 extras files, zero with a `Postprocess` key. The
+/// folder is the only signal that survives, exactly as remembered.
+pub fn extras_path(path: &str) -> bool {
+    path.split(['\\', '/']).any(|part| {
+        let part = part.to_ascii_lowercase();
+        part == "extras" || part == "extras-images"
+    })
+}
+
+/// Qualifiers whose parenthesised form is not a character.
+///
+/// Danbooru's `name (qualifier)` convention is nearly always a character tag
+/// in a prompt — `aqua (konosuba)` — but the same shape also spells copyright
+/// tags (`fate (series)`), cosplay-of tags and a few style words, and counting
+/// those as people would put "fate (series)" on the leaderboard.
+const NOT_A_CHARACTER: &[&str] = &[
+    "series", "cosplay", "style", "game", "company", "band", "meme", "artist",
+    "franchise", "medium",
+    // Scene and camera vocabulary that prompts parenthesise the same way a
+    // character is — `earth (planet)`, `tokyo (city)`, `seductive smile
+    // (looking at viewer)` — and which a real library promptly put on the
+    // leaderboard between Misty and Asuna. A series is a *work*; these are
+    // what the qualifier says when the fragment describes the picture instead
+    // of naming somebody in it.
+    "planet", "sky", "city", "space", "moon", "sun", "location", "place",
+    "background", "scenery", "landscape", "weather", "pose", "gesture",
+    "expression", "emotion", "viewer", "looking", "behind", "close-up",
+    "object", "animal", "food", "weapon", "color", "colour",
+    // Anatomy and clothing: `cross-laced (footwear)` and `cinema shot
+    // (lactating breasts)` wear the character shape too. Checked word by
+    // word, so any qualifier containing one of these is out -- a series
+    // name does not contain "breasts".
+    "footwear", "clothing", "clothes", "breasts", "breast", "ass", "butt",
+    "hips", "thighs", "hair", "skin", "body", "chest", "legs", "feet",
+    "large", "small", "huge",
+];
+
+/// A qualifier is rejected when *any* of its words is blocked -- full-phrase
+/// matching turned into whack-a-mole the moment real prompts arrived.
+/// Danbooru's character tags with 300+ posts, normalised like detection is —
+/// lowercase, underscores as spaces. ~6,700 names, 125KB, built from the tag
+/// list the A1111 tag-autocomplete project publishes (category 4 = character).
+///
+/// This is what makes *bare* names detectable at all: `murasaki shion` has no
+/// `(series)` qualifier on danbooru — VTuber names mostly do not — and without
+/// a dictionary it is shape-identical to `silver hair`. Exact membership is
+/// the whole test; there is no fuzzy matching to be wrong with.
+static CHARACTER_NAMES: std::sync::OnceLock<std::collections::HashSet<&'static str>> =
+    std::sync::OnceLock::new();
+
+fn known_character(name: &str) -> bool {
+    CHARACTER_NAMES
+        .get_or_init(|| {
+            include_str!("../assets/characters.txt")
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .collect()
+        })
+        .contains(name)
+}
+
+/// Lowercase, underscores to spaces, runs of whitespace collapsed — the one
+/// spelling both detection paths and the dictionary agree on.
+fn normalise(value: &str) -> String {
+    value.replace('_', " ").to_lowercase().split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A name is words, not syntax: LoRA leftovers and weights carry characters
+/// no name does.
+fn wordy(value: &str) -> bool {
+    value
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '\'' | '.' | '-' | '_' | '!'))
+}
+
+fn blocked_qualifier(qualifier: &str) -> bool {
+    qualifier.split_whitespace().any(|word| NOT_A_CHARACTER.contains(&word))
+        || NOT_A_CHARACTER.contains(&qualifier)
+}
+
+/// The characters a prompt names, in danbooru's `name (series)` form.
+///
+/// Deliberately only that form. A bare `tsukishiro yanagi` is indistinguishable
+/// from an ordinary tag pair without a dictionary the size of danbooru itself —
+/// `silver hair` has the same shape — and a wrong guess here becomes a wrong
+/// leaderboard entry that looks like data. The parenthesised convention is the
+/// unambiguous one, and prompts written for booru models use it precisely
+/// because the models were trained on it.
+///
+/// Normalised to lowercase with collapsed spaces, so `Aqua (Konosuba)` and
+/// `aqua  (konosuba)` count as one character.
+pub fn characters_of(prompt: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for raw in prompt.split([',', '\n']) {
+        // Strip emphasis wrappers and weights: `(aqua \(konosuba\):1.2)` is
+        // the same tag wearing syntax. Escaped parens are the prompt-level
+        // spelling of literal ones; park them on sentinel bytes so *only the
+        // outer emphasis layers* are peeled — the character form's own parens
+        // are interior and must survive, which is exactly what a blanket
+        // bracket-strip got wrong the first time.
+        let parked = raw.replace("\\(", "\u{1}").replace("\\)", "\u{2}");
+        let mut cleaned = parked.trim().to_string();
+        loop {
+            let trimmed = cleaned.trim();
+            // A trailing `:1.2` first, so `(tag:1.2)` peels in two steps —
+            // keeping the close-paren the weight was wearing.
+            if let Some((head, tail)) = trimmed.rsplit_once(':') {
+                let tail = tail.trim();
+                if tail.trim_end_matches(')').parse::<f64>().is_ok() {
+                    cleaned =
+                        if tail.ends_with(')') { format!("{head})") } else { head.to_string() };
+                    continue;
+                }
+            }
+            if (trimmed.starts_with('(') && trimmed.ends_with(')'))
+                || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+                || (trimmed.starts_with('{') && trimmed.ends_with('}'))
+            {
+                cleaned = trimmed[1..trimmed.len() - 1].to_string();
+                continue;
+            }
+            break;
+        }
+        let restored = cleaned.replace('\u{1}', "(").replace('\u{2}', ")");
+        let cleaned = restored.trim();
+
+        let Some((name, rest)) = cleaned.split_once('(') else {
+            // No qualifier. Only the dictionary can tell `murasaki shion`
+            // from `silver hair` here — exact membership, no guessing.
+            if !cleaned.is_empty() && cleaned.len() <= 50 && wordy(cleaned) {
+                let bare = normalise(cleaned);
+                if known_character(&bare) && !found.contains(&bare) {
+                    found.push(bare);
+                }
+            }
+            continue;
+        };
+        let Some((qualifier, tail)) = rest.split_once(')') else { continue };
+        // Anything after the close-paren means this was not a lone tag.
+        if !tail.trim().is_empty() {
+            continue;
+        }
+        let name = name.trim();
+        let qualifier = qualifier.trim();
+        if name.is_empty() || qualifier.is_empty() || name.len() > 40 || qualifier.len() > 40 {
+            continue;
+        }
+        if !wordy(name) || !wordy(qualifier) {
+            continue;
+        }
+        if blocked_qualifier(&qualifier.to_lowercase().replace('_', " ")) {
+            continue;
+        }
+
+        // Underscores are danbooru's own spelling of spaces — `d.va_(overwatch)`
+        // and `blue_archive` are the underscore forms of the same tags.
+        let canonical = format!("{} ({})", normalise(name), normalise(qualifier));
+        if !found.contains(&canonical) {
+            found.push(canonical);
+        }
+    }
+    found
 }
 
 #[cfg(test)]
@@ -770,5 +950,196 @@ Steps: 20, Seed: 1"), None);
         let found = parse(&head).expect("still recognised");
         assert_eq!(found.tool, "ComfyUI");
         assert_eq!(found.prompt, None);
+    }
+}
+
+#[cfg(test)]
+mod character_tests {
+    use super::characters_of;
+
+    #[test]
+    fn finds_the_danbooru_character_form() {
+        assert_eq!(
+            characters_of("masterpiece, aqua (konosuba), blue hair, ocean"),
+            vec!["aqua (konosuba)".to_string()]
+        );
+    }
+
+    #[test]
+    fn normalises_case_and_spacing_so_variants_count_as_one() {
+        assert_eq!(
+            characters_of("Aqua  (Konosuba), 1girl"),
+            vec!["aqua (konosuba)".to_string()]
+        );
+    }
+
+    #[test]
+    fn sees_through_emphasis_and_weights() {
+        // `(aqua \(konosuba\):1.2)` is the same tag wearing syntax.
+        assert_eq!(
+            characters_of(r"(aqua \(konosuba\):1.2), solo"),
+            vec!["aqua (konosuba)".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_copyright_or_cosplay_qualifier_is_not_a_person() {
+        // Counting these would put "fate (series)" on the leaderboard.
+        assert_eq!(characters_of("fate (series), saber (cosplay)"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_bare_name_is_found_by_the_dictionary_not_by_shape() {
+        // `tsukishiro yanagi` has the same shape as `silver hair`. The first
+        // version refused to guess and skipped both; the dictionary resolves
+        // the ambiguity by membership, so the name is found and the hair
+        // colour still is not.
+        assert_eq!(
+            characters_of("tsukishiro yanagi, glasses"),
+            vec!["tsukishiro yanagi".to_string()]
+        );
+        assert_eq!(characters_of("silver hair, glasses"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn several_characters_all_count_once_each() {
+        assert_eq!(
+            characters_of("2girls, aqua (konosuba), megumin (konosuba), aqua (konosuba)"),
+            vec!["aqua (konosuba)".to_string(), "megumin (konosuba)".to_string()]
+        );
+    }
+
+    #[test]
+    fn syntax_fragments_are_not_names() {
+        // LoRA leftovers, weighted style tags, empty parens.
+        assert_eq!(
+            characters_of("<lora:styleXL:0.8>, (masterpiece:1.2), ()"),
+            Vec::<String>::new()
+        );
+    }
+}
+
+#[cfg(test)]
+mod leaderboard_hygiene_tests {
+    use super::characters_of;
+
+    #[test]
+    fn scene_vocabulary_in_character_shape_is_not_a_person() {
+        // Straight off a real library's leaderboard, sitting between Misty
+        // and Asuna: the shape is right and the meaning is not.
+        assert_eq!(
+            characters_of("earth (planet), star (sky), tokyo (city), seductive smile (looking at viewer)"),
+            Vec::<String>::new()
+        );
+        // The second harvest, one re-run later: anatomy and clothing
+        // qualifiers. Word-level, so "lactating breasts" falls to "breasts".
+        assert_eq!(
+            characters_of(
+                "cross-laced (footwear), cinema shot (lactating breasts), extra large (fat ass)"
+            ),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn underscore_form_normalises_to_the_spaced_form() {
+        // `d.va_(overwatch)` is danbooru's own underscore spelling. Without
+        // normalising, it and `d.va (overwatch)` count as two characters and
+        // the joining underscore dangles off the name.
+        assert_eq!(
+            characters_of("d.va_(overwatch), 1girl"),
+            vec!["d.va (overwatch)".to_string()]
+        );
+        assert_eq!(
+            characters_of("asuna_(blue_archive), asuna (blue archive)"),
+            vec!["asuna (blue archive)".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_underscore_spelling_of_a_blocked_qualifier_is_still_blocked() {
+        assert_eq!(
+            characters_of("seductive_smile_(looking_at_viewer)"),
+            Vec::<String>::new()
+        );
+    }
+}
+
+
+#[cfg(test)]
+mod dictionary_tests {
+    use super::characters_of;
+
+    #[test]
+    fn a_bare_name_the_dictionary_knows_is_detected() {
+        // The gap that motivated the dictionary: VTuber tags mostly have no
+        // `(series)` qualifier, so shape alone could never find them.
+        assert_eq!(
+            characters_of("masterpiece, murasaki shion, purple hair, witch hat"),
+            vec!["murasaki shion".to_string()]
+        );
+        assert_eq!(
+            characters_of("Murasaki_Shion, 1girl"),
+            vec!["murasaki shion".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_bare_fragment_the_dictionary_does_not_know_is_still_skipped() {
+        // Shape-identical to a name; only membership separates them.
+        assert_eq!(
+            characters_of("silver hair, blue eyes, thick thighs, wide shot"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn both_paths_together_find_a_mixed_cast() {
+        assert_eq!(
+            characters_of("aqua (konosuba), murasaki shion, ocean"),
+            vec!["aqua (konosuba)".to_string(), "murasaki shion".to_string()]
+        );
+    }
+}
+
+
+#[cfg(test)]
+mod extras_tests {
+    use super::parse_a1111;
+
+    #[test]
+    fn an_extras_block_is_postprocessed_not_generated_settings() {
+        // The whole block of an Extras-tab upscale: no steps, no seed, just
+        // the postprocess keys.
+        let generation = parse_a1111("Postprocess upscale by: 2, Postprocess upscaler: 4x-UltraSharp");
+        assert!(generation.postprocessed);
+        assert_eq!(generation.tool, "Stable Diffusion");
+    }
+
+    #[test]
+    fn an_ordinary_block_is_not_postprocessed() {
+        let generation =
+            parse_a1111("a girl\nNegative prompt: lowres\nSteps: 28, Seed: 1, Size: 832x1216");
+        assert!(!generation.postprocessed);
+    }
+}
+
+
+#[cfg(test)]
+mod extras_path_tests {
+    use super::extras_path;
+
+    #[test]
+    fn an_extras_folder_segment_marks_the_path() {
+        assert!(extras_path(r"\\?\UNC\nas\vault\AI images\extras\00000.png"));
+        assert!(extras_path("/media/outputs/extras-images/00001.png"));
+    }
+
+    #[test]
+    fn only_whole_segments_count() {
+        // A file or folder merely *containing* the word is not the tab's
+        // output folder.
+        assert!(!extras_path(r"D:\pics\extrasomething\a.png"));
+        assert!(!extras_path(r"D:\pics\my-extras-notes.png"));
     }
 }

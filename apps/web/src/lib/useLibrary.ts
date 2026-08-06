@@ -1,4 +1,5 @@
 import type {
+  CharacterCount,
   Folder,
   LibraryStats,
   MediaItem,
@@ -20,6 +21,9 @@ export const DEFAULT_QUERY: MediaQuery = {
   tag: null,
   minStars: null,
   unstarred: false,
+  hasPrompt: null,
+  img2img: null,
+  extras: null,
   minLongestEdge: null,
   duplicatesOnly: false,
   modifiedAfter: null,
@@ -42,6 +46,18 @@ const IDLE_PROGRESS: ScanProgress = {
   errors: [],
 }
 
+/** Cheap enough to run on a timer, and the fields the status bar actually draws. */
+function sameProgress(a: ScanProgress, b: ScanProgress): boolean {
+  return (
+    a.phase === b.phase &&
+    a.done === b.done &&
+    a.total === b.total &&
+    a.current === b.current &&
+    a.folderId === b.folderId &&
+    a.errors.length === b.errors.length
+  )
+}
+
 /**
  * Everything the main view needs, in one hook.
  *
@@ -58,6 +74,7 @@ export function useLibrary() {
   const [progress, setProgress] = useState<ScanProgress>(IDLE_PROGRESS)
   const [environment, setEnvironment] = useState<native.Environment | null>(null)
   const [exclusions, setExclusions] = useState<string[]>([])
+  const [characters, setCharacters] = useState<CharacterCount[]>([])
 
   const [query, setQueryState] = useState<MediaQuery>(DEFAULT_QUERY)
   const [items, setItems] = useState<MediaItem[]>([])
@@ -68,20 +85,24 @@ export function useLibrary() {
   // Guards against an out-of-order response overwriting a newer one: a slow
   // query for the previous filter must not clobber the current results.
   const generation = useRef(0)
+  /** The query most recently sent, for refreshes that happen outside one. */
+  const queryRef = useRef<MediaQuery>(DEFAULT_QUERY)
   // How many rows are on screen right now. A ref rather than reading `items`,
   // so `reload` does not have to be rebuilt — and re-subscribed — on every
   // append.
   const loaded = useRef(0)
 
   const refreshFolders = useCallback(async () => {
-    const [nextFolders, nextStats, nextExclusions] = await Promise.all([
+    const [nextFolders, nextStats, nextExclusions, nextCharacters] = await Promise.all([
       native.listFolders(),
       native.libraryStats(),
       native.listExclusions(),
+      native.topCharacters({ ...queryRef.current, search: '' }, 30),
     ])
     setFolders(nextFolders)
     setStats(nextStats)
     setExclusions(nextExclusions)
+    setCharacters(nextCharacters)
   }, [])
 
   const runQuery = useCallback(async (next: MediaQuery, append: boolean) => {
@@ -89,7 +110,16 @@ export function useLibrary() {
     if (!append) setLoading(true)
 
     try {
-      const page = await native.queryMedia(next)
+      queryRef.current = next
+      const [page, nextCharacters] = await Promise.all([
+        native.queryMedia(next),
+        // The leaderboard follows the grid's filters — except the search term.
+        // Clicking a character IS a search, so a leaderboard narrowed by it
+        // would collapse to that one name and there would be no way to hop to
+        // another character from the list that just navigated you here.
+        native.topCharacters({ ...next, search: '' }, 30),
+      ])
+      setCharacters(nextCharacters)
       if (ticket !== generation.current) return
       setItems((previous) => {
         const merged = append ? [...previous, ...page.items] : page.items
@@ -164,12 +194,26 @@ export function useLibrary() {
     void native.scanProgress().then(setProgress)
   }, [refreshFolders, runQuery])
 
-  // Live progress.
+  // Live progress: subscribed to, and also polled.
+  //
+  // The subscription is the local case — events arrive four times a second and
+  // cost nothing. The poll is the remote one: those events are emitted into the
+  // webview of the machine doing the work and never cross the wire, so a status
+  // bar in a remote session would otherwise sit at "Idle" through a scan of
+  // 60,000 files. One snapshot read every two seconds is cheap enough that it is
+  // not worth branching on which mode this is.
   useEffect(() => {
     let lastPhase = IDLE_PROGRESS.phase
-    const unsubscribe = native.onScanProgress((next) => {
-      setProgress(next)
-      dirty.current = true
+
+    const apply = (next: ScanProgress) => {
+      // Identity is kept when nothing moved, or an idle poll would re-render the
+      // whole app every two seconds for no news.
+      setProgress((previous) => (sameProgress(previous, next) ? previous : next))
+      // Only while something is actually running. The subscription only fires
+      // during a scan, but the poll answers forever, and marking the library
+      // dirty on an idle snapshot would have the reconcile timer below
+      // re-querying the grid every four seconds for the life of the app.
+      if (next.phase !== 'idle' && next.phase !== 'done') dirty.current = true
       // A phase boundary is the one moment worth reconciling immediately: it is
       // when a batch of new rows becomes visible all at once.
       if (next.phase !== lastPhase) {
@@ -177,8 +221,19 @@ export function useLibrary() {
         dirty.current = false
         reload()
       }
-    })
-    return unsubscribe
+    }
+
+    const unsubscribe = native.onScanProgress(apply)
+    const timer = window.setInterval(() => {
+      // A failed poll is not worth reporting: the next one is two seconds away,
+      // and a lost connection is already announced by everything else failing.
+      void native.scanProgress().then(apply, () => {})
+    }, 2000)
+
+    return () => {
+      unsubscribe()
+      window.clearInterval(timer)
+    }
   }, [reload])
 
   // Reconcile at a human pace while a scan runs.
@@ -297,6 +352,7 @@ export function useLibrary() {
   return {
     folders,
     exclusions,
+    characters,
     stats,
     progress,
     environment,

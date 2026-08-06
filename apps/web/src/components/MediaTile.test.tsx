@@ -180,6 +180,51 @@ describe('MediaTile', () => {
       expect(screen.getByText('4K')).toBeTruthy()
     })
 
+    it("badges an img2img generation, off the block's own claim", () => {
+      render(
+        <MediaTile
+          item={{
+            ...item,
+            generation: { tool: 'Stable Diffusion', needsSourceImage: true, postprocessed: false },
+          }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+      expect(screen.getByTitle(/Made from another image/)).toBeTruthy()
+    })
+
+    it('badges an Extras-tab upscale with e', () => {
+      render(
+        <MediaTile
+          item={{
+            ...item,
+            generation: { tool: 'Stable Diffusion', needsSourceImage: false, postprocessed: true },
+          }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+      expect(screen.getByTitle(/Upscaled in the Extras tab/)).toBeTruthy()
+    })
+
+    it('leaves a txt2img generation without the i2i badge', () => {
+      render(
+        <MediaTile
+          item={{
+            ...item,
+            generation: { tool: 'Stable Diffusion', needsSourceImage: false, postprocessed: false },
+          }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+      expect(screen.queryByTitle(/Made from another image/)).toBeNull()
+    })
+
     it('leaves a smaller picture unbadged', () => {
       render(
         <MediaTile

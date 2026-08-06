@@ -114,6 +114,42 @@ suites fail together. **Never fix one side alone.**
 
 The same applies to `sampling.rs` / `sampling.ts`.
 
+## Remote mode
+
+One machine browsing another's library over the LAN. `apps/desktop/src/remote.rs`
+holds both ends, because they are two ends of one wire.
+
+```
+client                                        host (sharing switched on)
+native.ts invoke ─▶ remote_call ──POST /rpc─▶ api::dispatch   (its index)
+luma://?path=…  ─▶ protocol handler ─GET /file▶ protocol::serve (its allowlist)
+```
+
+Three decisions carry the whole feature:
+
+- **The frontend does not know.** `apps/web/src/lib/native.ts` already funnelled
+  every call through one function, so that function decides local or remote and
+  the other forty wrappers — and every component above them — are untouched. The
+  route is read from the backend once and cached; a per-call probe would be an
+  IPC round trip per tile.
+- **The page never talks to the peer.** The CSP forbids the webview any remote
+  origin, and that restriction is what makes the `luma://` allowlist meaningful.
+  Rust does the network instead, so remote mode adds no hole to it.
+- **`api.rs` exists for this.** Command bodies moved there so the HTTP route and
+  the IPC command run the *same* function under the same name and argument keys.
+  A purpose-built read API on the host would have been a second implementation
+  of forty operations against one database — the drift risk this file warns
+  about everywhere else.
+
+The `luma://` handler is registered **asynchronously** as a result: a remote tile
+is a request to another machine, and answering it on the handler's own thread
+would freeze the window for the length of every fetch. The local path went onto
+the blocking pool with it, which also takes a slow network share off that thread.
+
+Progress is polled as well as subscribed to (`useLibrary`), because
+`luma://progress` events are emitted into the webview of the machine doing the
+work and never cross the wire.
+
 ## Storage
 
 Everything lives under the OS app-data directory:
@@ -137,3 +173,18 @@ canonicalized so `..` and symlinks cannot escape. The CSP forbids the page from
 reaching any remote origin, which is what makes the allowlist meaningful: even a
 compromised page has nowhere to send what it reads. The `fs` plugin is **not**
 granted to the webview — its only native file access is the folder picker.
+
+A **shared** library goes through the same `protocol::serve`, so it hands out
+exactly the files the webview beside it could see. Three things guard the port,
+and all three are needed:
+
+1. sharing is off until somebody switches it on, per machine, and the setting
+   survives a restart only if a passphrase is still in the credential store;
+2. a passphrase on **every** request, file route included, compared as digests so
+   the comparison leaks no timing;
+3. private addresses only, at both ends — the client refuses to dial a public
+   address and the host refuses to answer one.
+
+A session can do everything a person at that machine can, deletions included.
+That is deliberate, and it means the passphrase is the only thing between the LAN
+and the library.

@@ -62,6 +62,13 @@ fn media_query_matches_the_shared_fixture() {
 }
 
 #[test]
+fn character_count_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::CharacterCount>>(include_str!(
+        "../../../contracts/character-count.json"
+    ));
+}
+
+#[test]
 fn timeline_matches_the_shared_fixture() {
     round_trip::<Vec<crate::types::TimelineBucket>>(include_str!(
         "../../../contracts/timeline.json"
@@ -86,6 +93,20 @@ fn deviantart_account_matches_the_shared_fixture() {
 fn deviantart_summary_matches_the_shared_fixture() {
     round_trip::<crate::types::DeviantArtSummary>(include_str!(
         "../../../contracts/deviantart-summary.json"
+    ));
+}
+
+#[test]
+fn remote_status_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::RemoteStatus>>(include_str!(
+        "../../../contracts/remote-status.json"
+    ));
+}
+
+#[test]
+fn share_status_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::ShareStatus>>(include_str!(
+        "../../../contracts/share-status.json"
     ));
 }
 

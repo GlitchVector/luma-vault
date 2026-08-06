@@ -90,6 +90,10 @@ function makeDom({ hash, adetailerModel = '', scriptsContainer = true, toggles =
             },
         },
         '#txt2img_script_container': scriptsContainer ? {} : null,
+        '#setting_CLIP_stop_at_last_layers input': [
+            { type: 'range', value: '1', dispatchEvent: () => {} },
+            { type: 'number', value: '1', dispatchEvent: () => {} },
+        ],
         '#script_txt2img_adetailer_ad_model input, #script_txt2img_adetailer_ad_model select':
             { value: adetailerModel },
         'input[type=radio]': radios,
@@ -121,8 +125,15 @@ function makeDom({ hash, adetailerModel = '', scriptsContainer = true, toggles =
     return { window, document, logs, clicks, elements, textarea, typed, fetches: [] }
 }
 
-async function run(dom, { tick }) {
+async function run(dom, { tick, between }) {
     const timers = []
+    // Intervals genuinely recur, one firing per drain round, until cleared.
+    // The first version pushed them into `timers` like timeouts, so an
+    // interval fired exactly once — which happened to be enough for every
+    // handler until the clip-skip enforcer, whose entire point is firing
+    // *again* after something else has meddled.
+    const intervals = new Map()
+    let nextInterval = 1
     const context = vm.createContext({
         window: dom.window,
         document: dom.document,
@@ -130,13 +141,14 @@ async function run(dom, { tick }) {
         Event: class { constructor(type) { this.type = type } },
         Object,
         Boolean,
+        String,
         console: {
             log: (...args) => dom.logs.push(args.join(' ')),
             warn: (...args) => dom.logs.push('WARN ' + args.join(' ')),
         },
         setTimeout: (fn) => timers.push(fn),
-        setInterval: (fn) => { timers.push(fn); return 1 },
-        clearInterval: () => {},
+        setInterval: (fn) => { const id = nextInterval++; intervals.set(id, fn); return id },
+        clearInterval: (id) => { intervals.delete(id) },
         onUiLoaded: (fn) => fn(),
         JSON,
         // The checkpoint and VAE are set over HTTP, because Forge's paste
@@ -155,10 +167,12 @@ async function run(dom, { tick }) {
     for (let round = 0; round < tick; round += 1) {
         const pending = timers.splice(0, timers.length)
         for (const fn of pending) fn()
+        for (const fn of [...intervals.values()]) fn()
         // The extension sets the checkpoint over HTTP before pasting, so the
         // paste is queued from a promise callback. Draining timers without
         // yielding never reaches it.
         await new Promise((resolve) => setImmediate(resolve))
+        if (between) between(round)
     }
 }
 
@@ -369,3 +383,39 @@ const BLOCK_PLAIN = 'a girl by a pool\nNegative prompt: lowres\nSteps: 30, Seed:
 }
 
 console.log('\nall extension tests passed')
+
+// --- clip skip survives the preset stomp ------------------------------------
+{
+    const BLOCK_CLIP = 'a girl\nNegative prompt: lowres\nSteps: 28, Seed: 1, Clip skip: 2'
+    const dom = makeDom({ hash: `#luma_params=${encodeURIComponent(BLOCK_CLIP)}` })
+    const slider = dom.elements['#setting_CLIP_stop_at_last_layers input']
+
+    let stomped = false
+    await run(dom, {
+        tick: 16,
+        between: (round) => {
+            // The paste has landed by now; play the part of `on_preset_change`
+            // firing late off root_block.load and stamping the slider back.
+            if (round === 10) {
+                assert.equal(slider[0].value, '2', 'set from the block before the stomp')
+                slider[0].value = '1'
+                slider[1].value = '1'
+                stomped = true
+            }
+        },
+    })
+
+    assert.ok(stomped, 'the stomp actually ran')
+    assert.equal(slider[0].value, '2', 'range re-asserted after the stomp')
+    assert.equal(slider[1].value, '2', 'number re-asserted after the stomp')
+    console.log('ok  clip skip is re-asserted after a late preset stomp')
+}
+
+// --- and is left alone when the block does not name it ----------------------
+{
+    const dom = makeDom({ hash: `#luma_params=${encodeURIComponent(BLOCK_PLAIN)}` })
+    const slider = dom.elements['#setting_CLIP_stop_at_last_layers input']
+    await run(dom, { tick: 16 })
+    assert.equal(slider[0].value, '1', 'untouched without a Clip skip field')
+    console.log('ok  clip skip is left alone when the block does not name it')
+}

@@ -60,12 +60,27 @@ const starBatches: Array<{ ids: number[]; stars: number | null }> = []
 const timelineQueries: Array<Record<string, unknown>> = []
 /** When set, the next timeline fetches reject with this message. */
 let timelineFailure: string | null = null
+/** The character leaderboard the sidebar shows. Empty unless a case sets it. */
+let topCharactersState: Array<{ name: string; count: number }> = []
+/** Every query the leaderboard was asked with, so following can be asserted. */
+const topCharacterQueries: Array<Record<string, unknown>> = []
 /** Every query the grid asked the backend for, so a filter can be checked end to end. */
 const queries: Array<{ minStars?: number | null; minLongestEdge?: number | null }> = []
 /** Ids each upscale run was asked for. */
 const upscaleCalls: number[][] = []
 /** What Forge claims to be doing, for the upscale gate. */
 let forgeState = { reachable: true, busy: false, job: null as string | null, progress: 0 }
+/** Which library the window is showing. Local unless a case says otherwise. */
+let remoteState = {
+  connected: false,
+  address: '',
+  host: '',
+  folders: 0,
+  items: 0,
+  lastAddress: '',
+  hasPassphrase: false,
+}
+let shareState = { sharing: false, port: 7870, addresses: [] as string[], hasPassphrase: false }
 /** Each batch delete, so one call for the whole set can be asserted. */
 const deleteBatches: Array<{ ids: number[]; permanent: boolean }> = []
 /** What the DeviantArt panel actually asked the backend to upload. */
@@ -127,6 +142,7 @@ vi.mock('#/lib/native.ts', () => ({
   },
   mediaById: (id: number) => Promise.resolve(library.find((item) => item.id === id) ?? null),
   mediaFrames: () => Promise.resolve([]),
+  extrasOriginal: () => Promise.resolve(null),
   deleteItem: (id: number, permanent: boolean) => {
     deleteCalls.push({ id, permanent })
     library = library.filter((item) => item.id !== id)
@@ -143,6 +159,10 @@ vi.mock('#/lib/native.ts', () => ({
       failed: 0,
     }),
   listExclusions: () => Promise.resolve([]),
+  topCharacters: (query: Record<string, unknown>, limit: number) => {
+    topCharacterQueries.push({ ...query, askedLimit: limit })
+    return Promise.resolve(topCharactersState)
+  },
   scanProgress: () =>
     Promise.resolve({ phase: 'idle', folderId: null, done: 0, total: 0, current: null, errors: [] }),
   environment: () =>
@@ -216,6 +236,11 @@ vi.mock('#/lib/native.ts', () => ({
   },
   onUpscaleProgress: () => Promise.resolve(() => {}),
   forgeStatus: () => Promise.resolve(forgeState),
+  remoteStatus: () => Promise.resolve(remoteState),
+  remoteConnect: () => Promise.resolve(remoteState),
+  remoteDisconnect: () => Promise.resolve(remoteState),
+  shareStatus: () => Promise.resolve(shareState),
+  setShare: () => Promise.resolve(shareState),
   DEVIANTART_STUDIO_URL: 'https://www.deviantart.com/studio',
   DEVIANTART_APPS_URL: 'https://www.deviantart.com/developers/apps',
   deviantArtAccount: () => Promise.resolve(deviantArtAccountState),
@@ -247,6 +272,8 @@ beforeEach(() => {
   starBatches.length = 0
   timelineQueries.length = 0
   timelineFailure = null
+  topCharactersState = []
+  topCharacterQueries.length = 0
   queries.length = 0
   upscaleCalls.length = 0
   deleteBatches.length = 0
@@ -261,6 +288,16 @@ beforeEach(() => {
     canPublish: true,
   }
   forgeState = { reachable: true, busy: false, job: null, progress: 0 }
+  remoteState = {
+    connected: false,
+    address: '',
+    host: '',
+    folders: 0,
+    items: 0,
+    lastAddress: '',
+    hasPassphrase: false,
+  }
+  shareState = { sharing: false, port: 7870, addresses: [], hasPassphrase: false }
   // The tile size is remembered here, so a case that sets it would otherwise
   // decide the starting size of every case after it.
   localStorage.clear()
@@ -753,6 +790,104 @@ describe('starting selection with a tap of Ctrl', () => {
 
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Rating' })).toBeNull())
     expect(screen.queryByText('Nothing selected')).toBeNull()
+  })
+
+  it('a long hold on Ctrl leaves the mode and drops the selection', async () => {
+    // Tapping Ctrl never leaves the mode — that guard is tested above. The
+    // deliberate way out is holding it: 1.5 seconds of bare Ctrl does what
+    // the toolbar button does, mode off and selection gone.
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    ctrlDown()
+    clickTile(LIBRARY_SIZE)
+    await screen.findByText('1 selected')
+    ctrlUp()
+
+    vi.useFakeTimers()
+    try {
+      ctrlDown()
+      act(() => {
+        vi.advanceTimersByTime(1500)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(screen.queryByText('1 selected')).toBeNull()
+    expect(screen.queryByText('Nothing selected')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Select' })).toBeTruthy()
+  })
+
+  it('a hold that gets used for picking never fires the exit', async () => {
+    // Hold Ctrl, click a picture, keep holding while aiming at the next —
+    // however long that takes, the mode must not vanish mid-gesture.
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    vi.useFakeTimers()
+    try {
+      ctrlDown()
+      clickTile(LIBRARY_SIZE)
+      act(() => {
+        vi.advanceTimersByTime(4000)
+      })
+      expect(screen.getByText('1 selected')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('survives a keyup lost to another window', async () => {
+    // Press Ctrl, click over into Forge on the other monitor, come back: the
+    // keyup landed there and never arrived here. A stale "already down" flag
+    // used to eat every following press whole — no mode, no exit, no error.
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    screen.getByRole('button', { name: 'Select' }).click()
+    await screen.findByText('Nothing selected')
+
+    ctrlDown() // its keyup is never delivered
+    act(() => {
+      window.dispatchEvent(new Event('blur'))
+    })
+
+    vi.useFakeTimers()
+    try {
+      ctrlDown()
+      act(() => {
+        vi.advanceTimersByTime(1500)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(screen.queryByText('Nothing selected')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Select' })).toBeTruthy()
+  })
+
+  it('a combination disarms the exit along with the mode', async () => {
+    // Ctrl-C held past 1.5 seconds is a slow copy, not a request to leave a
+    // mode that was on before the Ctrl went down.
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    screen.getByRole('button', { name: 'Select' }).click()
+    await screen.findByText('Nothing selected')
+
+    vi.useFakeTimers()
+    try {
+      ctrlDown()
+      act(() => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }),
+        )
+      })
+      act(() => {
+        vi.advanceTimersByTime(4000)
+      })
+      expect(screen.getByText('Nothing selected')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -1568,7 +1703,7 @@ describe('the prompt panel', () => {
     library[0]!.generation = {
       tool: 'Stable Diffusion',
       prompt: '1girl, silver hair',
-      needsSourceImage: false,
+      needsSourceImage: false, postprocessed: false,
     }
     await open(LIBRARY_SIZE)
 
@@ -1581,22 +1716,22 @@ describe('the prompt panel', () => {
     await open(LIBRARY_SIZE)
 
     expect(screen.queryByRole('button', { name: 'Hide prompt' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Prompt' })).toBeNull()
+    expect(screen.queryByTitle(/Generated with/)).toBeNull()
   })
 
   it('stays closed once closed, rather than returning on the next picture', async () => {
     // Forcing it open per picture would make the close button useless — one
     // arrow key and it would be back.
     for (const row of library.slice(0, 2)) {
-      row.generation = { tool: 'Stable Diffusion', prompt: 'a prompt', needsSourceImage: false }
+      row.generation = { tool: 'Stable Diffusion', prompt: 'a prompt', needsSourceImage: false, postprocessed: false }
     }
     await open(LIBRARY_SIZE)
 
     screen.getByRole('button', { name: 'Hide prompt' }).click()
-    await screen.findByRole('button', { name: 'Prompt' })
+    await screen.findByTitle(/Generated with/)
 
     fireEvent.keyDown(window, { key: 'ArrowRight' })
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Prompt' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByTitle(/Generated with/)).toBeTruthy())
     expect(screen.queryByRole('button', { name: 'Hide prompt' })).toBeNull()
   })
 })
@@ -1830,5 +1965,275 @@ describe('moving the timeline selection', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect(queries).toHaveLength(0)
+  })
+})
+
+describe('the character leaderboard', () => {
+  it('ranks names in the sidebar and clicking one becomes the search', async () => {
+    topCharactersState = [
+      { name: 'aqua (konosuba)', count: 4182 },
+      { name: 'tsukishiro yanagi (zenless zone zero)', count: 96 },
+    ]
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    // Ranked, biggest first, counts visible.
+    const aqua = await screen.findByTitle('Show only aqua (konosuba)')
+    // Formatted the same way the component formats it, whatever this
+    // machine's locale does to thousands separators.
+    expect(aqua.textContent).toContain((4182).toLocaleString())
+    queries.length = 0
+
+    aqua.click()
+    // The click IS a search: the term reaches the backend and the box shows
+    // it, so the filter is visible and clearable like any typed search.
+    await waitFor(() =>
+      expect((queries.at(-1) as { search?: string } | undefined)?.search).toBe('aqua (konosuba)'),
+    )
+    expect(
+      (screen.getByPlaceholderText(/search/i) as HTMLInputElement).value,
+    ).toBe('aqua (konosuba)')
+  })
+
+  it('shows nothing when the library has no detected characters', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    expect(screen.queryByText('Characters')).toBeNull()
+  })
+})
+
+describe('the Prompt filter', () => {
+  it('cycles off → with prompt → without → off', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    queries.length = 0
+    const sent = () => queries.at(-1) as { hasPrompt?: boolean | null } | undefined
+
+    const pill = () => screen.getByRole('button', { name: /^(Prompt|No Prompt)$/ })
+    pill().click()
+    await waitFor(() => expect(sent()?.hasPrompt).toBe(true))
+
+    pill().click()
+    await waitFor(() => expect(sent()?.hasPrompt).toBe(false))
+    expect(screen.getByRole('button', { name: 'No Prompt' })).toBeTruthy()
+
+    pill().click()
+    await waitFor(() => expect(sent()?.hasPrompt).toBeNull())
+  })
+})
+
+describe('img2img', () => {
+  it('the pill cycles off → only → exclude → off', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    queries.length = 0
+    const sent = () => queries.at(-1) as { img2img?: boolean | null } | undefined
+    const pill = () => screen.getByRole('button', { name: /^(img2img|No img2img)$/ })
+
+    pill().click()
+    await waitFor(() => expect(sent()?.img2img).toBe(true))
+    pill().click()
+    await waitFor(() => expect(sent()?.img2img).toBe(false))
+    expect(screen.getByRole('button', { name: 'No img2img' })).toBeTruthy()
+    pill().click()
+    await waitFor(() => expect(sent()?.img2img).toBeNull())
+  })
+})
+
+
+describe('the leaderboard follows the filters', () => {
+  it('re-asks with the grid query when a filter changes', async () => {
+    topCharactersState = [{ name: 'aqua (konosuba)', count: 3 }]
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    topCharacterQueries.length = 0
+
+    screen.getByRole('button', { name: 'Videos' }).click()
+    await waitFor(() =>
+      expect(topCharacterQueries.some((query) => query.kind === 'video')).toBe(true),
+    )
+    // Thirty, not ten: the sidebar sizes the list to the window, and the
+    // fetch has to carry enough rows for the tall case.
+    expect(topCharacterQueries.every((query) => query.askedLimit === 30)).toBe(true)
+  })
+
+  it('never narrows itself by the search term', async () => {
+    // Clicking a character IS a search. A leaderboard narrowed by it would
+    // collapse to that one name, and the list that navigated you somewhere
+    // could never take you anywhere else.
+    topCharactersState = [
+      { name: 'aqua (konosuba)', count: 3 },
+      { name: 'murasaki shion', count: 2 },
+    ]
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    ;(await screen.findByTitle('Show only aqua (konosuba)')).click()
+
+    await waitFor(() =>
+      expect((queries.at(-1) as { search?: string } | undefined)?.search).toBe('aqua (konosuba)'),
+    )
+    // Every leaderboard fetch, including the one this click caused, asked
+    // with the search stripped.
+    expect(topCharacterQueries.length).toBeGreaterThan(0)
+    for (const asked of topCharacterQueries) expect(asked.search).toBe('')
+  })
+})
+
+describe('timeline and search together', () => {
+  const WEEK = 7 * 24 * 60 * 60 * 1000
+  const MONDAY = 1_719_792_000_000
+
+  it('a dragged range survives searching, and clearing the search', async () => {
+    // The reported sequence: select a timerange, then search — the results
+    // must narrow to BOTH. Then delete the term — the range must still be
+    // there, selection and all. The first version wiped the selection on
+    // every filter change, both directions.
+    library = Array.from({ length: 4 }, (_, week) => ({
+      ...makeItem(week + 1),
+      modifiedAt: MONDAY + week * WEEK + 1000,
+    }))
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+    screen.getByRole('button', { name: 'Timeline' }).click()
+    const bars = await screen.findAllByTitle(/Click to show only/)
+    bars[0]!.click()
+    await waitFor(() =>
+      expect((queries.at(-1) as { modifiedAfter?: number | null }).modifiedAfter).toBe(MONDAY),
+    )
+
+    const search = screen.getByPlaceholderText(/search/i)
+    fireEvent.change(search, { target: { value: 'aqua (konosuba)' } })
+    await waitFor(() => {
+      const sent = queries.at(-1) as { search?: string; modifiedAfter?: number | null }
+      expect(sent.search).toBe('aqua (konosuba)')
+      // The range rides along — this is the "results didn't update
+      // accordingly" half of the bug.
+      expect(sent.modifiedAfter).toBe(MONDAY)
+    })
+
+    fireEvent.change(search, { target: { value: '' } })
+    await waitFor(() => {
+      const sent = queries.at(-1) as { search?: string; modifiedAfter?: number | null }
+      expect(sent.search).toBe('')
+      // And clearing the term must not reset the timeline — the other half.
+      expect(sent.modifiedAfter).toBe(MONDAY)
+    })
+    // The selection is still drawn: handles present, clear still offered.
+    expect(
+      screen.getByRole('button', { name: 'Drag to move the selection' }),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'clear' })).toBeTruthy()
+  })
+})
+
+describe('the timeline axis under search', () => {
+  const WEEK = 7 * 24 * 60 * 60 * 1000
+  const MONDAY = 1_719_792_000_000
+
+  it('asks for the unsearched span alongside the searched counts', async () => {
+    // The axis belongs to the library, the heights to the search: one fetch
+    // with the term stripped (start and end of the strip hold still), one
+    // with it applied (the bars tell the matches' story).
+    library = Array.from({ length: 4 }, (_, week) => ({
+      ...makeItem(week + 1),
+      modifiedAt: MONDAY + week * WEEK + 1000,
+    }))
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+    screen.getByRole('button', { name: 'Timeline' }).click()
+    await screen.findAllByTitle(/Click to show only/)
+    timelineQueries.length = 0
+
+    fireEvent.change(screen.getByPlaceholderText(/search/i), {
+      target: { value: 'murasaki shion' },
+    })
+
+    await waitFor(() => {
+      const searches = timelineQueries.map((asked) => (asked as { search?: string }).search)
+      expect(searches).toContain('')
+      expect(searches).toContain('murasaki shion')
+    })
+    // The strip is still there and still spans the full library — four bars,
+    // not just the weeks the term matches.
+    expect(screen.getAllByTitle(/Click to show only/)).toHaveLength(4)
+  })
+})
+
+describe('the Extras filter', () => {
+  it('cycles off → only → exclude → off', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    queries.length = 0
+    const sent = () => queries.at(-1) as { extras?: boolean | null } | undefined
+    const pill = () => screen.getByRole('button', { name: /^(Extras|No Extras)$/ })
+
+    pill().click()
+    await waitFor(() => expect(sent()?.extras).toBe(true))
+    pill().click()
+    await waitFor(() => expect(sent()?.extras).toBe(false))
+    expect(screen.getByRole('button', { name: 'No Extras' })).toBeTruthy()
+    pill().click()
+    await waitFor(() => expect(sent()?.extras).toBeNull())
+  })
+})
+
+describe('remote mode', () => {
+  it('says which machine the window is showing, and opens the panel', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    // Local by default, and the button is there in that state — one that only
+    // appeared once connected would be one you could not connect with.
+    const button = await screen.findByRole('button', { name: 'Local' })
+    button.click()
+
+    expect(await screen.findByRole('dialog', { name: 'Remote mode' })).toBeTruthy()
+    // Both halves are in the one panel: the machine you type an address into,
+    // and the machine you switch sharing on at.
+    expect(screen.getByLabelText('Address')).toBeTruthy()
+    expect(screen.getByLabelText('Sharing passphrase')).toBeTruthy()
+  })
+
+  it('names the peer in the status bar while a session is live', async () => {
+    remoteState = {
+      connected: true,
+      address: '192.168.1.42:7870',
+      host: 'DESKTOP-VAULT',
+      folders: 3,
+      items: 66412,
+      lastAddress: '192.168.1.42:7870',
+      hasPassphrase: true,
+    }
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    // The machine, not the number, because that is what a person recognises.
+    const badge = await screen.findByRole('button', { name: 'Remote · DESKTOP-VAULT' })
+    // Delete means "delete over there" from here, so the reminder has to be
+    // legible at a glance rather than a word among nine others.
+    expect(badge.closest('footer')?.className).toContain('indigo')
+
+    badge.click()
+    // The way back is where the way in was.
+    expect(await screen.findByRole('button', { name: 'Back to this machine' })).toBeTruthy()
+    // And there is no address field to type into while one is already open.
+    expect(screen.queryByLabelText('Address')).toBeNull()
+  })
+
+  it('shows that this library is being shared, and where', async () => {
+    shareState = {
+      sharing: true,
+      port: 7870,
+      addresses: ['192.168.1.7:7870'],
+      hasPassphrase: true,
+    }
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    const button = await screen.findByRole('button', { name: 'Sharing' })
+    button.click()
+    // The address to type on the other machine, verbatim.
+    expect(await screen.findByText('192.168.1.7:7870')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Stop sharing' })).toBeTruthy()
   })
 })

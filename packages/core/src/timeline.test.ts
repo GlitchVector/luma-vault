@@ -7,6 +7,8 @@ import {
   fillWeeks,
   mergeWeeks,
   moveSelection,
+  overlayCounts,
+  selectionFromRange,
   selectionRange,
   trimIslands,
   weekRange,
@@ -277,5 +279,59 @@ describe('moveSelection', () => {
   it('is identity at delta zero, and inert on an empty strip', () => {
     expect(moveSelection({ first: 2, last: 5 }, 0, 10)).toEqual({ first: 2, last: 5 })
     expect(moveSelection({ first: 2, last: 5 }, 3, 0)).toEqual({ first: 2, last: 5 })
+  })
+})
+
+
+describe('selectionFromRange', () => {
+  const bars = mergeWeeks(
+    fillWeeks([
+      { start: MONDAY, count: 1 },
+      { start: MONDAY + 3 * WEEK_MS, count: 1 },
+    ]),
+  )
+
+  it('round-trips with selectionRange', () => {
+    // The pair is what lets the query be the single source of truth: the
+    // panel writes a range from a selection and re-derives the selection
+    // from the range, through any re-bucketing in between.
+    const chosen = { first: 1, last: 2 }
+    const range = selectionRange(bars, chosen)!
+    expect(selectionFromRange(bars, range.after, range.before)).toEqual(chosen)
+  })
+
+  it('clamps to partial overlap when the bars shifted under the range', () => {
+    // A filter change can trim weeks off the span; the surviving overlap is
+    // still the selection, not nothing.
+    expect(selectionFromRange(bars, MONDAY - 5 * WEEK_MS, MONDAY + WEEK_MS)).toEqual({
+      first: 0,
+      last: 0,
+    })
+  })
+
+  it('is null when range and bars are disjoint', () => {
+    expect(selectionFromRange(bars, MONDAY + 50 * WEEK_MS, MONDAY + 52 * WEEK_MS)).toBeNull()
+  })
+})
+
+
+describe('overlayCounts', () => {
+  const span = fillWeeks([
+    { start: MONDAY, count: 100 },
+    { start: MONDAY + 2 * WEEK_MS, count: 50 },
+  ])
+
+  it('keeps the axis and re-counts from the narrower set', () => {
+    expect(overlayCounts(span, [{ start: MONDAY + WEEK_MS, count: 7 }])).toEqual([
+      { start: MONDAY, count: 0 },
+      { start: MONDAY + WEEK_MS, count: 7 },
+      { start: MONDAY + 2 * WEEK_MS, count: 0 },
+    ])
+  })
+
+  it('ignores matches outside the span — the axis decides what is drawable', () => {
+    const overlaid = overlayCounts(span, [{ start: MONDAY + 90 * WEEK_MS, count: 5 }])
+    expect(overlaid).toHaveLength(3)
+    expect(overlaid.every((week) => week.count === 0)).toBe(true)
   })
 })

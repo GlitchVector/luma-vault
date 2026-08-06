@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { migrateGeneration } from './migrate.ts'
+import { facePrompt, migrateGeneration } from './migrate.ts'
 
 /**
  * These pin the three failures the migration exists to prevent, all of which
@@ -251,5 +251,152 @@ describe('migrateGeneration, edge cases', () => {
       'a castle\nSteps: 20, Size: 512x512, ADetailer prompt: "a face, smiling, detailed", CFG scale: 7'
     const { block } = migrateGeneration(source, TO_XL)
     expect(block).toContain('ADetailer prompt: "a face, smiling, detailed"')
+  })
+})
+
+describe('the always-on passes', () => {
+  const SD_BLOCK =
+    'a girl, blue hair, huge ass, looking at viewer\nNegative prompt: lowres\n' +
+    'Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 1, Size: 512x768, Model: aniverse_v20'
+
+  it('adds Hires fix when the block has none', () => {
+    const { block, notes } = migrateGeneration(SD_BLOCK, { architecture: 'xl', checkpoint: 'x' })
+    expect(block).toContain('Hires upscale: 1.65')
+    expect(block).toContain('Hires steps: 30')
+    expect(block).toContain('Hires upscaler: 4xUltrasharp_4xUltrasharpV10')
+    expect(notes.some((note) => note.includes('Hires fix'))).toBe(true)
+  })
+
+  it('leaves a hires pass the block already names alone', () => {
+    const withHires = SD_BLOCK.replace(
+      'Model: aniverse_v20',
+      'Model: aniverse_v20, Hires upscale: 2, Hires steps: 12, Hires upscaler: Latent',
+    )
+    const { block } = migrateGeneration(withHires, { architecture: 'xl', checkpoint: 'x' })
+    // The crossing recomputes the factor, but the steps and upscaler are the
+    // block's own and stay.
+    expect(block).toContain('Hires steps: 12')
+    expect(block).not.toContain('Hires steps: 30')
+  })
+
+  it('adds an ADetailer face pass built from the face words in the prompt', () => {
+    const { block, notes } = migrateGeneration(SD_BLOCK, { architecture: 'xl', checkpoint: 'x' })
+    expect(block).toContain('ADetailer model: face_yolov8s.pt')
+    // Face vocabulary only: hair and gaze travel, the ass does not — the pass
+    // repaints a head crop and must not re-argue the body inside it.
+    expect(block).toMatch(/ADetailer prompt: "[^"]*blue hair[^"]*"/)
+    expect(block).not.toMatch(/ADetailer prompt: "[^"]*huge ass[^"]*"/)
+    expect(block).toMatch(/ADetailer negative prompt: "[^"]*worst quality[^"]*"/)
+    expect(notes.some((note) => note.includes('ADetailer'))).toBe(true)
+  })
+
+  it('leaves an ADetailer block that is already there alone', () => {
+    const withAd = SD_BLOCK.replace(
+      'Model: aniverse_v20',
+      'Model: aniverse_v20, ADetailer model: face_yolov8n.pt, ADetailer denoising strength: 0.3',
+    )
+    const { block } = migrateGeneration(withAd, { architecture: 'xl', checkpoint: 'x' })
+    expect(block).toContain('face_yolov8n.pt')
+    expect(block).not.toContain('face_yolov8s.pt')
+  })
+
+  it('vetoes fragments where a face word shares a line with a body word', () => {
+    // Straight out of a real migration: "smile" dragged "full body" in, and
+    // "hair" matched pubic hair — onto a head crop.
+    expect(
+      facePrompt('orange hair, Seductive Smile full body, (pubic hair:1.2), crimson eyes'),
+    ).toBe('masterpiece, best quality, detailed face, beautiful detailed eyes, orange hair, crimson eyes')
+    // Word-bounded: "glasses" is not "ass".
+    expect(facePrompt('glasses, blue eyes')).toContain('glasses')
+  })
+
+  it('extracts identity, not scenery, into the face prompt', () => {
+    expect(facePrompt('1girl, aqua (konosuba), blue hair, huge ass, ocean, blush')).toBe(
+      'masterpiece, best quality, detailed face, beautiful detailed eyes, aqua (konosuba), blue hair, blush',
+    )
+    // Nothing face-like means no face prompt — inheriting is better than noise.
+    expect(facePrompt('landscape, ocean, rocks')).toBe('')
+  })
+})
+
+describe('migrateGeneration, reframing', () => {
+  it('imposes the asked-for shot, weighted, and removes the rung it replaces', () => {
+    // Two rungs in one prompt fight; the reframe must not leave the old one.
+    // Wide rungs go in weighted — bare, they lose to every body tag pulling
+    // the camera in.
+    const { block, notes } = migrateGeneration(SD15, { ...TO_XL, shot: 'wide shot' })
+    expect(block.startsWith('(wide shot:1.3),')).toBe(true)
+    expect(block).not.toContain('full body')
+    expect(notes.join(' ')).toContain('Reframed to (wide shot:1.3), replacing full body')
+  })
+
+  it('adds the wide-shot backstop to the negative', () => {
+    const { block } = migrateGeneration(SD15, { ...TO_XL, shot: 'full body' })
+    const negative = block.split('\n').find((line) => line.startsWith('Negative prompt:'))!
+    expect(negative).toContain('close-up')
+    expect(negative).toContain('cropped')
+    expect(negative).toContain('portrait')
+    expect(negative).toContain('upper body')
+  })
+
+  it('does not double a backstop the negative already carries', () => {
+    const withBackstop = SD15.replace('censored', 'censored, close-up, cropped')
+    const { block } = migrateGeneration(withBackstop, { ...TO_XL, shot: 'full body' })
+    const negative = block.split('\n').find((line) => line.startsWith('Negative prompt:'))!
+    expect(negative.match(/close-up/g)).toHaveLength(1)
+    expect(negative.match(/cropped/g)).toHaveLength(1)
+  })
+
+  it('a tight reframe gets no backstop', () => {
+    const { block } = migrateGeneration(SD15, { ...TO_XL, shot: 'upper body' })
+    expect(block.startsWith('upper body,')).toBe(true)
+    expect(block).not.toContain('close-up')
+  })
+
+  it('applies on a same-architecture move too', () => {
+    const { block, notes } = migrateGeneration(SD15, {
+      architecture: 'sd',
+      checkpoint: 'revAnimated_v11',
+      shot: 'very wide shot',
+    })
+    expect(block.startsWith('(very wide shot:1.3),')).toBe(true)
+    expect(notes).toHaveLength(1)
+  })
+
+  it('leaves the framing alone when no shot is asked for', () => {
+    const { block } = migrateGeneration(SD15, TO_XL)
+    expect(block).toContain('full body')
+  })
+})
+
+describe('migrateGeneration, body overrides', () => {
+  it('imposes body tags and clears the rungs of the axes they mention', () => {
+    const { block, notes } = migrateGeneration(SD15, {
+      ...TO_XL,
+      body: '(gigantic ass:2), (wide hips:1.4)',
+    })
+    expect(block.startsWith('(gigantic ass:2), (wide hips:1.4),')).toBe(true)
+    // Thighs were not mentioned, so the prompt's own thick thighs survive.
+    expect(block).toContain('thick thighs')
+    expect(notes.some((note) => note.includes('Imposed the asked-for body'))).toBe(true)
+  })
+
+  it('the hips maximum combo replaces the thigh rung the prompt carried', () => {
+    const combo =
+      '(wide hips:2), (thick thighs:2), (curvy:2), (narrow waist:2), (hyper hips:2), hip focus'
+    const { block } = migrateGeneration(SD15, { ...TO_XL, body: combo })
+    expect(block.startsWith('(wide hips:2),')).toBe(true)
+    // One thick thighs — the combo's — not a tug of war with the original's.
+    const prompt = block.split('\n').filter((line) => !line.startsWith('Negative prompt:')).slice(0, -1).join('\n')
+    expect(prompt.match(/thick thighs/g)).toHaveLength(1)
+  })
+
+  it('a shot and a body compose, shot outermost', () => {
+    const { block } = migrateGeneration(SD15, {
+      ...TO_XL,
+      shot: 'full body',
+      body: '(gigantic breasts:2)',
+    })
+    expect(block.startsWith('(full body:1.3),\n(gigantic breasts:2),')).toBe(true)
   })
 })

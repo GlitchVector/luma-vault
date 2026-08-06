@@ -165,6 +165,68 @@ export function FilterBar({
         )
       })}
 
+      {/* Whether a stable diffusion prompt was recovered — not the AI pill's
+          axis: a re-saved JPEG can keep its generator marker in EXIF while the
+          parameter block did not survive, so "generated" and "has a prompt"
+          differ on real files. Same off → only → inverse cycle as the tags. */}
+      <Pill
+        active={query.hasPrompt !== null}
+        title={
+          query.hasPrompt === true
+            ? 'Showing only images with a recovered stable diffusion prompt'
+            : query.hasPrompt === false
+              ? 'Showing only files without a prompt — where the metadata did not survive'
+              : 'Images whose stable diffusion prompt was recovered from the file'
+        }
+        onClick={() =>
+          onChange({
+            hasPrompt: query.hasPrompt === null ? true : query.hasPrompt === true ? false : null,
+          })
+        }
+      >
+        {query.hasPrompt === false ? 'No Prompt' : 'Prompt'}
+      </Pill>
+
+      {/* Made from another image. The same claim the i2i badge and the
+          lightbox pill show, filterable — off → only → exclude. */}
+      <Pill
+        active={query.img2img !== null}
+        title={
+          query.img2img === true
+            ? 'Showing only images made from another image (img2img)'
+            : query.img2img === false
+              ? 'Hiding images made from another image'
+              : 'Images whose parameters say they were made from another image (img2img)'
+        }
+        onClick={() =>
+          onChange({
+            img2img: query.img2img === null ? true : query.img2img === true ? false : null,
+          })
+        }
+      >
+        {query.img2img === false ? 'No img2img' : 'img2img'}
+      </Pill>
+
+      {/* Out of the Extras tab: an upscale of an existing image, not a
+          generation. Same claim the "e" badge shows. */}
+      <Pill
+        active={query.extras !== null}
+        title={
+          query.extras === true
+            ? 'Showing only Extras-tab upscales'
+            : query.extras === false
+              ? 'Hiding Extras-tab upscales'
+              : 'Images whose parameters say they came out of the Extras tab'
+        }
+        onClick={() =>
+          onChange({
+            extras: query.extras === null ? true : query.extras === true ? false : null,
+          })
+        }
+      >
+        {query.extras === false ? 'No Extras' : 'Extras'}
+      </Pill>
+
       {/* Stars are a person's judgement, so the filter is "at least", not
           "exactly" — nobody looks for their 3-star pictures specifically.
 

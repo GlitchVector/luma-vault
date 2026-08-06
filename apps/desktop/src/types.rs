@@ -277,6 +277,18 @@ pub struct MediaQuery {
     /// *at least* comparison means "everything" and would quietly do nothing.
     #[serde(default)]
     pub unstarred: bool,
+    /// Only rows with (true) or without (false) a recovered prompt. Not the
+    /// `generated` tag's axis: a marker can survive a re-encode that the
+    /// parameter block did not.
+    #[serde(default)]
+    pub has_prompt: Option<bool>,
+    /// Only rows made from another image (true) or not (false) — the block's
+    /// own `needsSourceImage` claim.
+    #[serde(default)]
+    pub img2img: Option<bool>,
+    /// Only rows from (true) or not from (false) the Extras tab.
+    #[serde(default)]
+    pub extras: Option<bool>,
     /// Show only rows whose longest edge is at least this many pixels.
     ///
     /// A number rather than a `four_k_only` flag, because the rule is a number
@@ -312,6 +324,15 @@ pub struct MediaQuery {
 #[serde(rename_all = "camelCase")]
 pub struct TimelineBucket {
     pub start: i64,
+    pub count: i64,
+}
+
+/// One row of the character leaderboard: a danbooru-form name and how many
+/// pictures the grid holds of them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CharacterCount {
+    pub name: String,
     pub count: i64,
 }
 
@@ -399,4 +420,44 @@ pub struct DeviantArtSummary {
     pub published: i64,
     pub failed: i64,
     pub results: Vec<DeviantArtResult>,
+}
+
+// ---------------------------------------------------------------------------
+// Remote
+// ---------------------------------------------------------------------------
+
+/// Which library this window is showing, and how to get back to the last one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteStatus {
+    pub connected: bool,
+    /// `192.168.1.42:7870`, or empty when this is the machine's own library.
+    pub address: String,
+    /// The peer's hostname, so the badge can name a machine rather than a
+    /// number. Empty when it did not report one.
+    pub host: String,
+    /// What the peer holds, for the line under the address.
+    pub folders: i64,
+    pub items: i64,
+    /// Prefilled next time, so reconnecting is one click rather than a memory
+    /// test. Remembered after disconnecting, which is when it is needed.
+    pub last_address: String,
+    /// Whether a passphrase is remembered for that address. Never the
+    /// passphrase itself — it lives in the OS credential store.
+    pub has_passphrase: bool,
+}
+
+/// Whether this machine answers for others, and on what address.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareStatus {
+    pub sharing: bool,
+    pub port: u16,
+    /// What to type on the other machine. Usually one entry; empty when the
+    /// routing table could not be asked, in which case the panel says so
+    /// instead of showing a wrong number.
+    pub addresses: Vec<String>,
+    /// A passphrase is set, so sharing can be switched on without typing one
+    /// again. Never the passphrase itself.
+    pub has_passphrase: bool,
 }

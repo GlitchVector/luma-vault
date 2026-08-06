@@ -194,6 +194,51 @@ export function dragEdge(
 }
 
 /**
+ * The span's weeks, re-counted from a narrower result set.
+ *
+ * The timeline's axis is deliberately wider than its counts when a search is
+ * active: the span comes from the unsearched library — so the whole dataset
+ * stays reachable and a selection outside the matches can still be made —
+ * while the heights tell the search's story. Weeks the narrower set does not
+ * mention count zero; weeks it mentions outside the span are ignored, since
+ * the axis, not the search, decides what is drawable.
+ */
+export function overlayCounts(
+  spanWeeks: readonly TimelineBucket[],
+  counted: readonly TimelineBucket[],
+): TimelineBucket[] {
+  const byStart = new Map(counted.map((bucket) => [bucket.start, bucket.count]))
+  return spanWeeks.map((week) => ({ start: week.start, count: byStart.get(week.start) ?? 0 }))
+}
+
+/**
+ * The bars a stored `[after, before)` range covers, as a selection.
+ *
+ * The inverse of {@link selectionRange}, and the reason the panel can treat
+ * the query as the single source of truth: filters change, the bars re-bucket,
+ * and the selection re-derives from the range instead of being thrown away —
+ * which is what used to reset a carefully dragged fortnight the moment a
+ * search term arrived. Clamped to partial overlap; null only when the range
+ * and the bars are disjoint (the range then still filters the grid, it just
+ * has no bars to highlight).
+ */
+export function selectionFromRange(
+  bars: readonly TimelineBar[],
+  after: number,
+  before: number,
+): BarSelection | null {
+  let first = -1
+  let last = -1
+  for (let index = 0; index < bars.length; index += 1) {
+    const bar = bars[index]!
+    if (first === -1 && bar.end > after) first = index
+    if (bar.start < before) last = index
+  }
+  if (first === -1 || last === -1 || first > last) return null
+  return { first, last }
+}
+
+/**
  * Slide the whole selection by `delta` bars, keeping its width.
  *
  * Clamped so the selection never leaves the strip: a drag past the end parks

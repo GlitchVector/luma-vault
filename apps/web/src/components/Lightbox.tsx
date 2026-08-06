@@ -19,6 +19,7 @@ import { Button, cn } from '@luma/ui'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
   deleteItem,
+  extrasOriginal,
   fileUrl,
   forgeSelectCheckpoint,
   forgeUrl,
@@ -199,6 +200,23 @@ export function Lightbox({
   selected,
 }: LightboxProps) {
   const [fetched, setFetched] = useState<MediaItem | null>(null)
+  /**
+   * The picture an Extras upscale was made from, once resolved.
+   *
+   * The panel then shows *that* generation — the prompt someone wants from an
+   * upscale is the prompt of the thing that was upscaled — with the extras
+   * pass noted after it.
+   */
+  const [extrasSource, setExtrasSource] = useState<MediaItem | null>(null)
+  /**
+   * Showing the resolved original *in place of* the extras upscale.
+   *
+   * A display swap only: the lightbox stays on the extras row — its rating,
+   * its neighbours, its footer — and just draws the other file. Clicking the
+   * footer pill flips it, which is the fastest possible "what did this look
+   * like before the upscale".
+   */
+  const [showExtrasOriginal, setShowExtrasOriginal] = useState(false)
   const [frames, setFrames] = useState<MediaFrame[]>([])
   // The element the picture has to fit inside, measured rather than assumed.
   // Deriving it from the window would mean restating the header and footer
@@ -241,6 +259,11 @@ export function Lightbox({
     void mediaFrames(mediaId).then((next) => {
       if (!cancelled) setFrames(next)
     })
+    // Cleared before asking: a stale source under a new picture would caption
+    // the wrong prompt while the lookup runs. The display swap resets with
+    // it — stepping to the next picture must show that picture.
+    setExtrasSource(null)
+    setShowExtrasOriginal(false)
 
     return () => {
       cancelled = true
@@ -478,7 +501,29 @@ export function Lightbox({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose, onStep, item, zoom, confirmDelete, onToggleSelect, selected])
 
+  // Resolve the original behind an Extras upscale, once the row says it is
+  // one. Keyed on the id so stepping re-resolves; harmless when the panel is
+  // closed, since the row is already in hand either way.
+  const isExtras = item?.generation?.postprocessed === true
+  useEffect(() => {
+    if (!isExtras) return
+    let cancelled = false
+    void extrasOriginal(mediaId).then((found) => {
+      if (!cancelled) setExtrasSource(found)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [mediaId, isExtras])
+
   if (!item) return null
+
+  // The generation the panel talks about: for an Extras upscale whose source
+  // was found, the source's — the prompt someone opens the panel for is the
+  // prompt of the thing that was upscaled, not the postprocess line. After the
+  // null-guard, so the panel's uses need no chaining of their own.
+  const panelItem = extrasSource?.generation ? extrasSource : item
+  const panelGeneration = panelItem.generation
 
   const verdict = item.verdict
   // Shown rather than the stored path: the index keeps Windows' canonical
@@ -519,7 +564,16 @@ export function Lightbox({
   // step painting something and a step painting nothing. It is the *only*
   // stand-in worth having: the alternative, pointing at the original at a
   // smaller size, is the mistake `MediaTile` documents at length.
-  const poster = item.thumbPath ? fileUrl(item.thumbPath) : null
+  // What the stage actually draws: the extras row itself, or — when the
+  // footer pill is flipped — the original it was upscaled from. Only the
+  // pixels swap; everything else on screen keeps describing the open row.
+  const shownImage = showExtrasOriginal && extrasSource ? extrasSource : item
+
+  const poster = shownImage.thumbPath
+    ? fileUrl(shownImage.thumbPath)
+    : item.thumbPath
+      ? fileUrl(item.thumbPath)
+      : null
 
   // The exact rectangle the original will occupy, computed from dimensions the
   // index recorded at scan time rather than waiting to be told by the image.
@@ -708,7 +762,7 @@ export function Lightbox({
           <div className="flex size-full items-center justify-center">
           <video
             key={item.id}
-            src={showOriginal ? fileUrl(item.path) : undefined}
+            src={showOriginal ? fileUrl(shownImage.path) : undefined}
             poster={poster ?? undefined}
             controls
             autoPlay
@@ -816,7 +870,8 @@ export function Lightbox({
                 is a broken-image icon in the middle of the picture. */}
             {showOriginal ? (
               <img
-                src={fileUrl(item.path)}
+                key={shownImage.id}
+                src={fileUrl(shownImage.path)}
                 alt={item.name}
                 // Async decode keeps a large JPEG off the main thread, so the
                 // poster stays painted until the original is ready to replace it
@@ -908,15 +963,15 @@ export function Lightbox({
           compare against moved and changed size underneath you. Floating it
           keeps the image fixed; it covers a strip of the right-hand side, which
           is a far smaller cost than resizing the whole image. */}
-      {showGeneration && item.generation ? (
+      {showGeneration && item.generation && panelGeneration ? (
         <aside className="absolute inset-y-0 right-0 z-10 w-80 overflow-y-auto border-l border-white/10 bg-zinc-950/95 p-3 text-[11px] shadow-2xl backdrop-blur-sm">
           <div className="flex items-baseline justify-between gap-2">
-            <span className="font-medium text-zinc-300">{item.generation.tool}</span>
-            {item.generation.prompt ? (
+            <span className="font-medium text-zinc-300">{panelGeneration.tool}</span>
+            {panelGeneration.prompt ? (
               <button
                 type="button"
                 onClick={() => {
-                  void navigator.clipboard?.writeText(item.generation?.prompt ?? '')
+                  void navigator.clipboard?.writeText(panelGeneration?.prompt ?? '')
                 }}
                 className="shrink-0 text-zinc-500 underline decoration-dotted underline-offset-2 hover:text-zinc-300"
               >
@@ -935,14 +990,14 @@ export function Lightbox({
             size="sm"
             className="mt-2 w-full"
             onClick={() => {
-              if (!item.generation) return
+              if (!panelGeneration) return
               // The file's own text first. `toParameterBlock` rebuilds a block
               // from the seven fields the parser models, which drops schedule
               // type, clip skip, ControlNet and every ADetailer setting — so
               // the regenerated image came out different. It stays only as the
               // fallback for files whose block cannot be re-read.
-              const generation = item.generation
-              void generationParameters(item.id).then((raw) => {
+              const generation = panelGeneration
+              void generationParameters(panelItem.id).then((raw) => {
                 const block = raw ?? toParameterBlock(generation)
                 void navigator.clipboard?.writeText(block).catch(() => undefined)
                 // Select the checkpoint *first*, then open the tab. Forge reads
@@ -975,7 +1030,7 @@ export function Lightbox({
               the same description*, which looks like it worked. The button
               still opens Forge — the prompt and settings are worth having — it
               just does not pretend the image can come back. */}
-          {item.generation.needsSourceImage ? (
+          {panelGeneration.needsSourceImage ? (
             <p className="mt-1.5 rounded border border-amber-500/30 bg-amber-500/10 p-1.5 text-[10px] leading-snug text-amber-200/90">
               <span className="font-medium">Made from another image.</span> These
               parameters describe an img2img pass, so they cannot reproduce it —
@@ -990,11 +1045,11 @@ export function Lightbox({
             </p>
           )}
 
-          {item.generation.prompt ? (
+          {panelGeneration.prompt ? (
             // `select-text` because the whole point is getting these words back
             // out — into another tool, or into the same one again.
             <p className="mt-2 select-text whitespace-pre-wrap break-words text-zinc-200">
-              {item.generation.prompt}
+              {panelGeneration.prompt}
             </p>
           ) : (
             <p className="mt-2 text-zinc-600">
@@ -1003,11 +1058,11 @@ export function Lightbox({
             </p>
           )}
 
-          {item.generation.negativePrompt ? (
+          {panelGeneration.negativePrompt ? (
             <>
               <h3 className="mt-3 text-zinc-600">Negative</h3>
               <p className="mt-1 select-text whitespace-pre-wrap break-words text-zinc-400">
-                {item.generation.negativePrompt}
+                {panelGeneration.negativePrompt}
               </p>
             </>
           ) : null}
@@ -1015,11 +1070,11 @@ export function Lightbox({
           <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-t border-white/5 pt-2 text-zinc-500">
             {(
               [
-                ['Model', item.generation.model],
-                ['Seed', item.generation.seed],
-                ['Sampler', item.generation.sampler],
-                ['Steps', item.generation.steps],
-                ['CFG', item.generation.cfgScale],
+                ['Model', panelGeneration.model],
+                ['Seed', panelGeneration.seed],
+                ['Sampler', panelGeneration.sampler],
+                ['Steps', panelGeneration.steps],
+                ['CFG', panelGeneration.cfgScale],
               ] as const
             )
               .filter(([, value]) => value)
@@ -1037,10 +1092,39 @@ export function Lightbox({
               Written out rather than run from here: it belongs to a different
               tool, and the useful thing this window can do is give the exact
               string instead of making someone retype a filename of digits. */}
+          {item.generation?.postprocessed ? (
+            <>
+              <h3 className="mt-3 border-t border-white/5 pt-2 text-zinc-600">Extras pass</h3>
+              {/* Only a real postprocess line is worth printing. The old-era
+                  files carry a COPY of the original's whole block instead, and
+                  repeating that prompt under a heading that says "Extras"
+                  reads as the pass having had a prompt — it did not. The
+                  Extras tab runs no diffusion at all: no prompt, no seed, no
+                  denoise, just an upscaler and optional face-restore weights. */}
+              {item.generation.prompt?.includes('Postprocess') ? (
+                <p className="mt-1 select-text break-words text-zinc-400">
+                  {item.generation.prompt}
+                </p>
+              ) : (
+                <p className="mt-1 text-[10px] leading-snug text-zinc-600">
+                  Upscaled in the Extras tab, which records no settings of its own — no
+                  prompt, no denoise; it is a pure upscaler pass. This file carries a copy
+                  of its original&rsquo;s parameters, shown above.
+                </p>
+              )}
+              {extrasSource === null ? (
+                <p className="mt-1 text-[10px] leading-snug text-zinc-600">
+                  The original file itself was not found in the library. Run Find Duplicates
+                  to link upscales to their originals.
+                </p>
+              ) : null}
+            </>
+          ) : null}
+
           <h3 className="mt-3 border-t border-white/5 pt-2 text-zinc-600">
             SDXL Claude Command
           </h3>
-          <CopyLabel value={`/sdxl ${item.name}`} />
+          <CopyLabel value={`/sdxl ${panelItem.name}`} />
         </aside>
       ) : null}
       </div>
@@ -1064,6 +1148,38 @@ export function Lightbox({
             >
               {verdict.rating}
             </span>
+            {item.generation?.needsSourceImage ? (
+              <span
+                className="rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-amber-200/90"
+                title="Made from another image (img2img) — its parameters alone cannot reproduce it"
+              >
+                img2img
+              </span>
+            ) : null}
+            {item.generation?.postprocessed ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (extrasSource) setShowExtrasOriginal((previous) => !previous)
+                }}
+                title={
+                  extrasSource
+                    ? showExtrasOriginal
+                      ? 'Showing the original — click to show the Extras upscale again'
+                      : 'Upscaled in the Extras tab — click to show the original it was made from'
+                    : 'Upscaled in the Extras tab — the original was not found in the library'
+                }
+                className={cn(
+                  'rounded-full px-2 py-0.5 font-medium',
+                  showExtrasOriginal
+                    ? 'bg-emerald-500/15 text-emerald-200/90'
+                    : 'bg-sky-500/15 text-sky-200/90',
+                  extrasSource ? 'hover:bg-sky-500/25' : 'cursor-default',
+                )}
+              >
+                {showExtrasOriginal ? 'original' : 'extras'}
+              </button>
+            ) : null}
             {verdict.topLabelTitle ? (
               <span>
                 {verdict.topLabelTitle} · {Math.round(verdict.topScore * 100)}%

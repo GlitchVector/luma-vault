@@ -1,0 +1,29 @@
+[
+  {
+    "connected": false,
+    "address": "",
+    "host": "",
+    "folders": 0,
+    "items": 0,
+    "lastAddress": "192.168.1.42:7870",
+    "hasPassphrase": true
+  },
+  {
+    "connected": true,
+    "address": "192.168.1.42:7870",
+    "host": "DESKTOP-VAULT",
+    "folders": 3,
+    "items": 66412,
+    "lastAddress": "192.168.1.42:7870",
+    "hasPassphrase": true
+  },
+  {
+    "connected": true,
+    "address": "10.0.0.5:9000",
+    "host": "",
+    "folders": 1,
+    "items": 0,
+    "lastAddress": "10.0.0.5:9000",
+    "hasPassphrase": false
+  }
+]

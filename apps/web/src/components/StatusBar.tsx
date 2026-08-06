@@ -1,5 +1,11 @@
-import { basenameOf, type ScanProgress, type ThrottleLevel } from '@luma/core'
-import { ProgressBar, Spinner } from '@luma/ui'
+import {
+  basenameOf,
+  type RemoteStatus,
+  type ScanProgress,
+  type ShareStatus,
+  type ThrottleLevel,
+} from '@luma/core'
+import { cn, ProgressBar, Spinner } from '@luma/ui'
 import type { Environment } from '#/lib/native.ts'
 
 const PHASE_LABELS: Record<ScanProgress['phase'], string> = {
@@ -18,6 +24,9 @@ interface StatusBarProps {
   progress: ScanProgress
   environment: Environment | null
   onSetThrottle: (level: ThrottleLevel) => void
+  remote: RemoteStatus | null
+  share: ShareStatus | null
+  onOpenRemote: () => void
 }
 
 /** Ordered slowest-machine-impact last, so the list reads as a dial. */
@@ -41,7 +50,14 @@ const THROTTLES: Array<{ value: ThrottleLevel; label: string; title: string }> =
   },
 ]
 
-export function StatusBar({ progress, environment, onSetThrottle }: StatusBarProps) {
+export function StatusBar({
+  progress,
+  environment,
+  onSetThrottle,
+  remote,
+  share,
+  onOpenRemote,
+}: StatusBarProps) {
   const running = progress.phase !== 'idle' && progress.phase !== 'done'
   // Globbing has no meaningful total — the count IS the progress — so the bar
   // must not pretend to know how far along it is.
@@ -55,8 +71,18 @@ export function StatusBar({ progress, environment, onSetThrottle }: StatusBarPro
     warnings.push('ffmpeg not found — videos cannot be scanned.')
   }
 
+  const connected = remote?.connected === true
+
   return (
-    <footer className="border-t border-white/5 bg-zinc-950/70 px-4 py-1.5">
+    <footer
+      className={cn(
+        'border-t px-4 py-1.5',
+        // The whole bar changes colour while a session is live, not just the
+        // button. Delete means "delete on that machine" from here, and one badge
+        // among nine other pieces of text is not enough of a reminder.
+        connected ? 'border-indigo-400/30 bg-indigo-500/10' : 'border-white/5 bg-zinc-950/70',
+      )}
+    >
       <div className="flex items-center gap-3 text-[11px] text-zinc-500">
         {running ? <Spinner className="text-indigo-400" /> : null}
         <span className="text-zinc-400">{PHASE_LABELS[progress.phase]}</span>
@@ -101,6 +127,30 @@ export function StatusBar({ progress, environment, onSetThrottle }: StatusBarPro
             {progress.errors.length} skipped
           </span>
         ) : null}
+
+        {/* Always here, in both states. A button that only appears once you are
+            connected would be one you could not use to connect. */}
+        <button
+          type="button"
+          onClick={onOpenRemote}
+          title={
+            connected
+              ? `Showing ${remote?.host || remote?.address}. Everything you do here happens on that machine.`
+              : share?.sharing
+                ? `Sharing this library on ${share.addresses[0] ?? `port ${share.port}`}. Click to browse another machine, or to stop.`
+                : 'Browse another machine on this network, or share this one.'
+          }
+          className={cn(
+            'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium',
+            connected
+              ? 'bg-indigo-500/25 text-indigo-200 hover:bg-indigo-500/35'
+              : share?.sharing
+                ? 'bg-white/5 text-zinc-300 hover:bg-white/10'
+                : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300',
+          )}
+        >
+          {connected ? `Remote · ${remote?.host || remote?.address}` : share?.sharing ? 'Sharing' : 'Local'}
+        </button>
       </div>
 
       {running ? (

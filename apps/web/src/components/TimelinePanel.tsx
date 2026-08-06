@@ -5,6 +5,8 @@ import {
   fillWeeks,
   mergeWeeks,
   moveSelection,
+  overlayCounts,
+  selectionFromRange,
   selectionRange,
   trimIslands,
   type BarSelection,
@@ -45,8 +47,10 @@ function dayLabel(ms: number): string {
  * would imply a precision the bars do not have.
  */
 export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: TimelinePanelProps) {
-  const [buckets, setBuckets] = useState<TimelineBucket[] | null>(null)
-  const [selection, setSelection] = useState<BarSelection | null>(null)
+  /** The unsearched histogram: it owns the axis. */
+  const [spanBuckets, setSpanBuckets] = useState<TimelineBucket[] | null>(null)
+  /** The searched histogram, when a search is active: it owns the heights. */
+  const [countBuckets, setCountBuckets] = useState<TimelineBucket[] | null>(null)
   const stripRef = useRef<HTMLDivElement | null>(null)
   /**
    * The drag in flight: an edge being resized, or the whole selection being
@@ -80,17 +84,28 @@ export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: Tim
 
   useEffect(() => {
     let cancelled = false
-    void mediaTimeline(JSON.parse(inputs) as MediaQuery).then(
-      (next) => {
+    const asked = JSON.parse(inputs) as MediaQuery
+    const searching = asked.search.trim().length > 0
+    // Two histograms when a search is active. The axis comes from the
+    // unsearched library — so everything the user could see before typing
+    // stays reachable, and a range outside the matches can still be dragged —
+    // while the searched counts fill the bars. One fetch covers both when
+    // there is no search.
+    void Promise.all([
+      mediaTimeline({ ...asked, search: '' }),
+      searching ? mediaTimeline(asked) : null,
+    ]).then(
+      ([span, counted]) => {
         if (cancelled) return
         setFailure(null)
-        setBuckets(next)
-        // The old selection indexed into the old bars; carrying it onto a
-        // different set would silently select different weeks. Dropping it
-        // also matches what a filter change means: a new question, asked from
-        // the whole span.
-        setSelection(null)
-        onRange(null)
+        setSpanBuckets(span)
+        setCountBuckets(counted)
+        // Deliberately NOT clearing the selection here. The first version
+        // did, on the theory that a filter change asks a new question — and
+        // in practice it meant typing a search term wiped a dragged range
+        // mid-thought, and deleting the term wiped it again. The range lives
+        // in the query; the selection re-derives from it against whatever
+        // bars this fetch brings back.
       },
       (reason: unknown) => {
         if (cancelled) return
@@ -98,15 +113,13 @@ export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: Tim
         // date" over a working library sends someone auditing their files'
         // mtimes for a bug that lives in this panel.
         setFailure(String(reason))
-        setBuckets([])
+        setSpanBuckets([])
+        setCountBuckets(null)
       },
     )
     return () => {
       cancelled = true
     }
-    // `onRange` deliberately omitted: it is a state setter from the parent and
-    // this effect must run only when the *data* changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inputs])
 
   // Two defences against a stretched axis, in order. Islands of implausibly-
@@ -116,22 +129,34 @@ export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: Tim
   // axis then genuinely spans decades, and without the cap every bar divides
   // into a fraction of a pixel and the strip draws as nothing at all.
   const { bars, hidden, weeksPerBar } = useMemo(() => {
-    const all = buckets ?? []
+    const all = spanBuckets ?? []
+    // Trim and span from the UNSEARCHED buckets, so the axis holds still
+    // while a search comes and goes; then the searched counts overlay onto
+    // those same weeks, zeroing the ones the matches never touch.
     const kept = trimIslands(all)
-    const counted = (list: readonly { count: number }[]) =>
+    const total = (list: readonly { count: number }[]) =>
       list.reduce((sum, bucket) => sum + bucket.count, 0)
-    const weeks = fillWeeks(kept)
+    let weeks = fillWeeks(kept)
+    if (countBuckets !== null) weeks = overlayCounts(weeks, countBuckets)
     const merged = mergeWeeks(weeks)
     return {
       bars: merged,
-      hidden: counted(all) - counted(kept),
+      hidden: total(all) - total(kept),
       weeksPerBar: merged.length > 0 ? Math.ceil(weeks.length / merged.length) : 1,
     }
-  }, [buckets])
+  }, [spanBuckets, countBuckets])
   const heights = useMemo(() => barHeights(bars), [bars])
 
+  // Derived, never stored: the query's range is the single source of truth,
+  // and the bar indices are just where that range lands on the current bars.
+  // Filters re-bucket the bars; the range — the thing that was actually
+  // dragged — survives, clamped to whatever overlap remains.
+  const selection = useMemo(() => {
+    if (query.modifiedAfter === null || query.modifiedBefore === null) return null
+    return selectionFromRange(bars, query.modifiedAfter, query.modifiedBefore)
+  }, [bars, query.modifiedAfter, query.modifiedBefore])
+
   const apply = (next: BarSelection | null) => {
-    setSelection(next)
     onRange(next ? selectionRange(bars, next) : null)
   }
 
@@ -220,7 +245,7 @@ export const TimelinePanel = memo(function TimelinePanel({ query, onRange }: Tim
       </div>
     )
   }
-  if (buckets === null) {
+  if (spanBuckets === null) {
     return (
       <div className="border-b border-white/5 px-4 py-3 text-xs text-zinc-500">
         Reading the library&rsquo;s dates…

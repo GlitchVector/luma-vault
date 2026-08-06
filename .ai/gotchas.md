@@ -241,6 +241,47 @@ the single outcome that makes the feature pointless.
 failing for someone who connected once and forgot. The failure path says so
 rather than reporting a bare rejection.
 
+## Remote mode
+
+**`tiny_http::Server::unblock()` wakes exactly one waiter.** It pushes a single
+marker onto the request queue, so with eight worker threads a stop unblocks one
+and the other seven sit in `recv` forever — holding the listener, and hanging any
+join that waits for them. `Sharing::stop` calls it once per worker.
+
+**A wildcard-bound server does not shut down on Windows without a knock.**
+tiny_http's `Drop` wakes its accept thread by connecting to the listener's own
+local address, which for a `0.0.0.0` bind *is* `0.0.0.0` — an address Windows
+refuses to connect to. The thread stays parked in `accept()`, never sees the
+close flag, and keeps the port for the life of the process: sharing could be
+switched off but never on again. `stop` therefore connects to `127.0.0.1` on the
+same port after dropping the server. Pinned by
+`sharing_can_be_stopped_and_started_again_on_the_same_port`, which is the
+sequence somebody changing the passphrase performs.
+
+**`start` retries the bind for a second.** Even a clean shutdown hands the port
+back on the accept thread's schedule, so stop-then-start can arrive while it is
+still held. Failing there would report "something else may already have that
+port", which would be a lie and unactionable.
+
+**File URLs carry `&from=<peer>`.** Responses are cached as `immutable` and a
+thumbnail is addressed by a hash of its **absolute source path** — so two
+machines with the same folder layout produce the identical `luma://` URL for
+different pictures, and the grid would serve one machine's thumbnail for the
+other's file. The backend reads up to the first `&` and ignores the rest; only
+the cache key cares.
+
+**The progress poll must not mark the library dirty when nothing is running.**
+The subscription only fires during a scan, but the poll answers forever — and
+`dirty` is what the four-second reconcile timer watches, so marking it on an idle
+snapshot re-queries the grid every four seconds for the life of the app. It also
+keeps the previous `ScanProgress` object when nothing moved, or every idle poll
+re-renders the whole window.
+
+**Connecting and disconnecting reload the page.** Folders, the grid and its
+paging, the timeline buckets, the character leaderboard and the progress
+subscription all describe one library, and a session swaps every one of them at
+once. The reload cannot be half-done; reconciling each piece can.
+
 ## Tooling
 
 **The dev server is pinned to 4340, and the pin matters.** `dth-character-studio`
@@ -261,6 +302,37 @@ either.
 
 **Rust 1.88+ is required** by several transitive dependencies (`image`, `time`,
 `serde_with`). 1.87 fails with a `rustc is not supported` error listing them.
+The exact version is pinned in `rust-toolchain.toml`, which rustup reads without
+being asked — bumping it re-downloads a toolchain on every machine and costs one
+cold CI run.
+
+**Three things key the CI cache, and all three are pinned for the same reason.**
+`Swatinem/rust-cache` hashes the compiler's identity, its own version, and the
+lockfile; a change in any of them means no cache, and no cache means the whole
+graph is compiled twice — once to check, once for the codegen `cargo test`
+needs. That is fifteen minutes against two.
+
+- The toolchain is pinned, not `stable`, so a Rust release cannot do it.
+- The action is pinned **to a commit**, not to `@v2`. That tag moves: v2.9.2
+  landed on the morning of 2026-08-06 and re-keyed everything, orphaning five
+  gigabytes of caches with the compiler unchanged at 1.97.1. Both runs that
+  morning built from scratch, and the symptom — `No cache found.` — names
+  nothing that changed.
+- The lockfile is the one that *should* invalidate. A dependency change costs a
+  partial rebuild, which is the point.
+
+**The cache is saved on `main` only.** Each run writes over a gigabyte into a
+ten-gigabyte budget, and GitHub evicts least-recently-used — so a few
+pull-request runs push out the one cache every branch restores from. A branch
+that has not touched `Cargo.lock` gets a full hit from main regardless.
+
+**CI builds with `--profile ci`, not `dev`.** It is the dev profile minus the
+optimized dependencies (`[profile.dev.package."*"] opt-level = 3`), which exist
+so a *scan* is fast and do nothing for a test suite over fixtures a few hundred
+pixels wide. Locally the difference is 0.67s of test runtime against 1.24s; on a
+cold CI build it is most of the codegen time. Both CI steps use the same profile
+so they share one set of artifacts — running one under `dev` and the other under
+`ci` would compile the graph twice and cache both.
 
 **Python 3.12 is preferred over 3.13/3.14.** The setup script probes in that
 order because onnxruntime and opencv ship wheels for 3.12 everywhere; on 3.14
