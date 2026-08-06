@@ -1,0 +1,16 @@
+# The Rust this project is built and linted with, pinned rather than `stable`.
+#
+# Two reasons, and the second one is measured. A dev machine and CI should run
+# the same rustc, or a lint that fails in one passes in the other. And the CI
+# cache is keyed on the compiler's identity, so every Rust release silently
+# orphaned two gigabytes of dependency artifacts — which turns a two-minute run
+# into fifteen, because the whole graph is then compiled twice: once to check,
+# once for the codegen `cargo test` needs.
+#
+# Bump it deliberately, and expect one slow CI run afterwards while the cache
+# refills. `.ai/gotchas.md` records the floor: several transitive dependencies
+# need 1.88 or newer.
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"
+components = ["clippy"]

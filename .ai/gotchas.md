@@ -302,6 +302,37 @@ either.
 
 **Rust 1.88+ is required** by several transitive dependencies (`image`, `time`,
 `serde_with`). 1.87 fails with a `rustc is not supported` error listing them.
+The exact version is pinned in `rust-toolchain.toml`, which rustup reads without
+being asked — bumping it re-downloads a toolchain on every machine and costs one
+cold CI run.
+
+**Three things key the CI cache, and all three are pinned for the same reason.**
+`Swatinem/rust-cache` hashes the compiler's identity, its own version, and the
+lockfile; a change in any of them means no cache, and no cache means the whole
+graph is compiled twice — once to check, once for the codegen `cargo test`
+needs. That is fifteen minutes against two.
+
+- The toolchain is pinned, not `stable`, so a Rust release cannot do it.
+- The action is pinned **to a commit**, not to `@v2`. That tag moves: v2.9.2
+  landed on the morning of 2026-08-06 and re-keyed everything, orphaning five
+  gigabytes of caches with the compiler unchanged at 1.97.1. Both runs that
+  morning built from scratch, and the symptom — `No cache found.` — names
+  nothing that changed.
+- The lockfile is the one that *should* invalidate. A dependency change costs a
+  partial rebuild, which is the point.
+
+**The cache is saved on `main` only.** Each run writes over a gigabyte into a
+ten-gigabyte budget, and GitHub evicts least-recently-used — so a few
+pull-request runs push out the one cache every branch restores from. A branch
+that has not touched `Cargo.lock` gets a full hit from main regardless.
+
+**CI builds with `--profile ci`, not `dev`.** It is the dev profile minus the
+optimized dependencies (`[profile.dev.package."*"] opt-level = 3`), which exist
+so a *scan* is fast and do nothing for a test suite over fixtures a few hundred
+pixels wide. Locally the difference is 0.67s of test runtime against 1.24s; on a
+cold CI build it is most of the codegen time. Both CI steps use the same profile
+so they share one set of artifacts — running one under `dev` and the other under
+`ci` would compile the graph twice and cache both.
 
 **Python 3.12 is preferred over 3.13/3.14.** The setup script probes in that
 order because onnxruntime and opencv ship wheels for 3.12 everywhere; on 3.14
