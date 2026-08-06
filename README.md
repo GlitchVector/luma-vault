@@ -83,6 +83,45 @@ press ↙ yourself. Its source lives in `integrations/forge-prefill/` so a webui
 reinstall costs one command; see the README there for what it hooks and what to
 check if a future Forge renames it.
 
+## Configuration
+
+Settings live in two places, and which one you want depends on whether you are
+configuring the *app* or the *scripts*.
+
+**The app** keeps its settings in the index database, beside the library they
+belong to. They survive a reinstall, and they are per machine — a fresh clone
+starts from the defaults below rather than inheriting another machine's.
+
+| Setting | Default | What it is |
+|---|---|---|
+| `forge_url` | `http://127.0.0.1:7860` | Where **Open in Forge** sends a picture. Point it at another machine when the GPU is over there. |
+| `remote_last_address` | — | The peer most recently browsed over the LAN. Filled in by the status-bar dialog. |
+| `throttle_level` | `off` | How hard the pipeline is allowed to work. |
+
+There is no settings screen for `forge_url` yet, so until there is:
+
+```bash
+sqlite3 ~/Library/Application\ Support/net.glitchvector.luma-vault/index.db \
+  "insert into settings(key,value) values('forge_url','http://192.168.1.160:7860')
+   on conflict(key) do update set value=excluded.value;"
+```
+
+Close the app first. On Windows the database is under `%APPDATA%` instead.
+
+**The scripts** read environment variables, and load a gitignored `.env` in the
+repository root if one is there — `cp .env.example .env` and edit. Copying the
+example is optional; every variable has a working default.
+
+| Variable | Used by | What it is |
+|---|---|---|
+| `LUMA_FORGE_URL` | `open-in-forge`, `migrate-prompt`, `test:forge` | Where Forge answers. |
+| `LUMA_FORGE_DIR` | `setup:forge` | Where to install the prefill extension. Searched for when unset. |
+| `LUMA_PYTHON` | the desktop app | Which interpreter runs the classifier. |
+
+`LUMA_PYTHON` is deliberately absent from `.env.example`: the app reads it from
+the real environment, and a `.env` in the repository cannot reach an installed
+`.app`. Export it from your shell if you need it.
+
 ## How a folder becomes a grid
 
 Adding a folder starts a background pipeline. Each phase's work queue is a
