@@ -520,7 +520,10 @@ describe('a v-prediction target', () => {
   it('replaces a sampler that can diverge on it', () => {
     const { block, notes } = migrateGeneration(SD15, TO_VPRED)
     const settings = block.split('\n').at(-1)!
-    expect(settings).toContain('Sampler: Euler a')
+    // Euler, not Euler a: NoobAI's card names Euler and DDIM, and says
+    // v-prediction does not support the Karras schedule series — which is why
+    // the schedule is dropped with it.
+    expect(settings).toContain('Sampler: Euler')
     expect(settings).not.toContain('DPM++')
     // The schedule went with it — an ancestral sampler does its own.
     expect(settings).not.toContain('Schedule type')
@@ -550,7 +553,7 @@ describe('a v-prediction target', () => {
       'Steps: 28, Sampler: DPM++ 2M SDE, CFG scale: 5, Size: 832x1216, Model: someXL_v1',
     ].join('\n')
     const { block } = migrateGeneration(xlBlock, TO_VPRED)
-    expect(block.split('\n').at(-1)!).toContain('Sampler: Euler a')
+    expect(block.split('\n').at(-1)!).toContain('Sampler: Euler')
   })
 })
 
@@ -600,11 +603,13 @@ describe('the AniVerse family', () => {
     // different models.
     const { block, notes } = migrateGeneration(SD15, TO_ANIVERSE)
     const settings = block.split('\n').at(-1)!
-    expect(settings).toContain('CFG scale: 7')
-    expect(settings).toContain('Steps: 40')
-    expect(settings).toContain('Sampler: DPM++ SDE')
+    expect(settings).toContain('CFG scale: 5.5')
+    expect(settings).toContain('Steps: 30')
+    // 2M, not the SDE variant: the card names it as the one that gives the
+    // 2.5D result rather than the flatter Euler Max.
+    expect(settings).toContain('Sampler: DPM++ 2M')
     expect(settings).toContain('Schedule type: Karras')
-    expect(notes.join(' ')).toMatch(/your own\s+highest-rated AniVerse images/)
+    expect(notes.join(' ')).toMatch(/AniVerse XL's own\s+recommended settings/)
   })
 
   it('leaves every other target on the booru-XL tuning', () => {
@@ -613,10 +618,25 @@ describe('the AniVerse family', () => {
     expect(settings).toContain('Steps: 28')
   })
 
-  it('uses the quality prefix those images actually open with', () => {
+  it('adds the activation token, at the end where the card puts it', () => {
+    // The likeliest cause of one prompt producing several unrelated styles:
+    // without the trigger the trained aesthetic is never engaged.
     const { block } = migrateGeneration(SD15, TO_ANIVERSE)
-    expect(block).toContain('perfect face')
-    expect(block).toContain('highest detailed face')
+    const prompt = block.split('Negative prompt:')[0]!
+    expect(prompt).toContain('4n1v3rs3')
+    expect(prompt.trimEnd().endsWith('4n1v3rs3')).toBe(true)
+  })
+
+  it('does not repeat a trigger the prompt already carries', () => {
+    const already = SD15.replace('official art,', 'official art, 4n1v3rs3,')
+    const { block } = migrateGeneration(already, TO_ANIVERSE)
+    const prompt = block.split('Negative prompt:')[0]!
+    expect(prompt.match(/4n1v3rs3/g)).toHaveLength(1)
+  })
+
+  it('uses the quality tags the card asks for', () => {
+    const { block } = migrateGeneration(SD15, TO_ANIVERSE)
+    expect(block).toContain('hyperdetailed:1.15')
     // Not the booru set, and not NoobAI's.
     expect(block).not.toContain('very aesthetic')
     expect(block).not.toContain('newest')

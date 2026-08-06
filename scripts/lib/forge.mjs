@@ -80,20 +80,20 @@ export function familyOf(name) {
 }
 
 /**
- * The settings a family wants, where they differ from the booru-XL tuning.
+ * The settings and activation token a family wants, from its model card.
  *
- * AniVerse is the one that does. Measured over the 1,806 AniVerse images rated
- * four or better in this library: CFG 7 on 1,795 of them, 50 steps on 1,389,
- * `DPM++ SDE Karras` on 1,220 — against the CFG 5, 28 steps and `DPM++ 2M SDE`
- * that everything else here sends. That gap is why one prompt through this
- * family came back looking like several different models.
+ * AniVerse XL is the one that differs from the booru-XL default here. Its card
+ * asks for CFG 5.5, 30 steps and `DPM++ 2M` with the Karras scheduler — the
+ * SDE variant is a different sampler, and the creator names 2M specifically as
+ * the one that gives colour, detail and a 2.5D result.
  *
- * Steps trimmed to 40: the measurement is from SD1.5 generations and the gain
- * above 40 on XL is not visible, while the cost is linear.
+ * `trigger` matters more than any of the numbers: without `4n1v3rs3` the
+ * trained style is never engaged, and the same prompt comes back looking like
+ * base SDXL each time, which reads as the model being inconsistent.
  */
 export function settingsFor(family) {
   if (family === 'aniverse') {
-    return { cfg: 7, steps: 28 + 12, sampler: 'DPM++ SDE', schedule: 'Karras' }
+    return { cfg: 5.5, steps: 30, sampler: 'DPM++ 2M', schedule: 'Karras', trigger: '4n1v3rs3' }
   }
   return null
 }

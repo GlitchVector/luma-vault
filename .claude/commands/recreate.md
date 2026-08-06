@@ -172,35 +172,25 @@ to approximate. Those are the lines they will want to edit.
 
 ## AniVerse
 
-Pass `aniverse` and the commands switch to what **your own library** says this
-family wants, rather than the booru-XL defaults. Measured over the 1,806
-AniVerse images rated four or better here:
+Pass `aniverse` and both commands switch to **AniVerse XL's own recommended
+settings**, from its model card:
 
-| | AniVerse | everything else |
+| | AniVerse XL v4.0 | the booru-XL default |
 |---|---|---|
-| CFG | **7** (1,795 of 1,806) | 5 |
-| Steps | **40** (50 measured, trimmed for XL) | 28 |
-| Sampler | **DPM++ SDE Karras** (1,220) | DPM++ 2M SDE Karras |
+| CFG | **5.5** | 5 |
+| Steps | **30** | 28 |
+| Sampler | **DPM++ 2M** Karras | DPM++ 2M SDE Karras |
+| Trigger | **`4n1v3rs3`** | none |
 
-That gap is the whole reason a prompt through this family came back looking
-like several different models: it was being generated at another model's
-tuning.
+The trigger matters more than any of the numbers. Without it the trained style
+is never engaged and the same prompt comes back looking like base SDXL each
+time — which reads as the model being wildly inconsistent rather than as a
+missing token. It goes at the **end** of the prompt, where the card puts it,
+and is not added twice if the prompt already carries it.
 
-The quality prefix changes too, to the one 379 of those images open with:
-
-```
-(best quality, masterpiece, perfect face, beautiful and aesthetic:1.2, colorful, dynamic angle, highest detailed face)
-```
-
-It is asking for different things from the booru set — `perfect face` and
-`highest detailed face` are about rendering, `dynamic angle` is composition.
-
-The negative comes from the same images, minus two things. `EasyNegative` and
-`bad-hands-5` are SD1.5 **embeddings** and become literal words on SDXL.
-`(realistic:1.0)` is dropped less obviously: a tag's job depends on what the
-checkpoint renders by default, and negating it on a model that is already flat
-gives cel shading rather than the soft look it was reaching for. Add it by hand
-if the target turns out to render hard.
+`DPM++ 2M` rather than the SDE variant is deliberate: the creator names it as
+the one giving colour, detail and a **2.5D** result, against `Euler Max` which
+is flatter and closer to 2D.
 
 `--cfg` overrides the tuning when you want to explore.
 

@@ -256,30 +256,25 @@ const XL_NEGATIVE = [
 const NOOB_QUALITY = 'masterpiece, best quality, newest, absurdres, highres'
 
 /**
- * What the AniVerse family expects — taken from this library, not from a model
- * card.
+ * What AniVerse XL asks for, from its own model card.
  *
- * The exact prefix on 379 of the 1,806 AniVerse images rated four or better
- * here, and the most common by a wide margin. It is doing different work from
- * the booru quality tags: `perfect face` and `highest detailed face` are asks
- * about rendering, and `dynamic angle` is a composition instruction, which is
- * why a prompt written for a booru model comes out of this family looking
- * unlike anything in the folder next to it.
+ * An earlier version of this was measured from the AniVerse images in this
+ * library and was wrong: those are **SD1.5** generations, and the XL release is
+ * a different model with different numbers. Reading a library tells you what
+ * somebody did, not what a checkpoint wants.
  */
-const ANIVERSE_QUALITY =
-  '(best quality, masterpiece, perfect face, beautiful and aesthetic:1.2, colorful, dynamic angle, highest detailed face)'
+const ANIVERSE_QUALITY = 'masterpiece, best quality, more details, (hyperdetailed:1.15)'
 
 /**
- * The matching negative, from the same 1,806 — minus two things.
+ * AniVerse XL's activation token, which goes at the **end** of the prompt.
  *
- * `EasyNegative` and `bad-hands-5` appear in the original on 451 images and are
- * **SD1.5 embeddings**: on SDXL they are the literal words, which is the whole
- * reason `SD15_EMBEDDINGS` exists. `(realistic:1.0)` is left out too, and less
- * obviously — it is in the original, but a tag's job depends on what the
- * checkpoint renders by default, and negating it on a model that is already
- * flat produces cel shading rather than the soft look it was asking for. Add
- * it by hand if the target turns out to render hard.
+ * The card puts it last, after the description and the background. Its absence
+ * is the likeliest explanation for one prompt producing several unrelated
+ * styles: without it the trained aesthetic is simply not engaged, and what
+ * comes back is base SDXL wearing the prompt.
  */
+const ANIVERSE_TRIGGER = '4n1v3rs3'
+
 const ANIVERSE_NEGATIVE = [
   'worst quality',
   'low quality',
@@ -300,17 +295,14 @@ const ANIVERSE_NEGATIVE = [
 ]
 
 /**
- * What this library's own AniVerse work was generated at.
+ * AniVerse XL's own recommended sampling, from the card.
  *
- * Measured over the images rated four or better: CFG **7** on 1,795 of 1,806,
- * 50 steps on 1,389, and `DPM++ SDE Karras` on 1,220. The booru-XL tuning
- * (CFG 5, 28 steps) is a different model's answer, and imposing it is why the
- * same prompt through this family came back looking like a stranger's.
- *
- * 40 rather than 50 steps: the measurement is from SD1.5 generations, and the
- * gain above 40 on an XL model is not visible while the cost is linear.
+ * `DPM++ 2M` rather than the SDE variant on purpose — the creator names it as
+ * the one that gives colour, detail and a **2.5D** result, against `Euler Max`
+ * which is flatter and closer to 2D. Karras is the scheduler it asks for, and
+ * unlike a v-prediction target that is fine here: this is an epsilon model.
  */
-const ANIVERSE_SETTINGS = { cfg: '7', steps: '40', sampler: 'DPM++ SDE', schedule: 'Karras' }
+const ANIVERSE_SETTINGS = { cfg: '5.5', steps: '30', sampler: 'DPM++ 2M', schedule: 'Karras' }
 
 /** The matching baseline negative, with the recency terms that make it work. */
 const NOOB_NEGATIVE = [
@@ -335,13 +327,17 @@ const NOOB_NEGATIVE = [
 /**
  * What a v-prediction checkpoint is sampled with.
  *
- * v-prediction changes what the model outputs at every step, and the ancestral
- * and SDE samplers that suit epsilon models can diverge on it — the failure is
- * a burnt or washed-out image rather than an error. Euler a is the one the
- * NoobAI v-pred release documents, so it is what a migration onto one lands on
- * unless the block already names a sampler from the same family.
+ * v-prediction changes what the model outputs at every step, and the SDE and
+ * DPM++ samplers that suit epsilon models can diverge on it — the failure is a
+ * burnt or washed-out image rather than an error.
+ *
+ * **Euler, not Euler a.** NoobAI's own card names Euler and DDIM, and says
+ * plainly that v-prediction *does not support the Karras schedule series* —
+ * which is why the schedule is dropped along with the sampler rather than
+ * carried over. An ancestral variant already in the block is left alone, since
+ * it is in the same family and someone chose it.
  */
-const V_PRED_SAMPLER = 'Euler a'
+const V_PRED_SAMPLER = 'Euler'
 
 /** Samplers that are safe to leave alone on a v-prediction model. */
 const V_PRED_SAFE = /^euler/i
@@ -645,7 +641,7 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
         target.family === 'noob'
           ? "Added NoobAI's quality tags, which include the recency tag it was trained with."
           : target.family === 'aniverse'
-            ? 'Added the quality prefix your own highest-rated AniVerse images open with.'
+            ? "Added AniVerse XL's quality tags and its `4n1v3rs3` trigger — without the trigger the trained style is not engaged at all."
             : 'Added the danbooru quality tags these models are trained to expect.',
       )
     }
@@ -717,6 +713,16 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       }
     }
     notes.push(note + '.')
+  }
+
+  // AniVerse XL's activation token, at the end where its card puts it.
+  //
+  // Appended rather than prepended, unlike the quality block: the trained style
+  // is what it turns on, and the card's own prompt structure ends with it. Not
+  // added twice if the prompt already carries it — a token said twice is
+  // encoded at half the attention each, which is the opposite of the intent.
+  if (target.family === 'aniverse' && !nextPrompt.toLowerCase().includes(ANIVERSE_TRIGGER)) {
+    nextPrompt = `${nextPrompt.replace(/,\s*$/, '')}, ${ANIVERSE_TRIGGER}`
   }
 
   // What the picture shows and its prompt never said — see `MigrationTarget.add`.
@@ -867,8 +873,8 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       next.set('Clip skip', '2')
       notes.push(
         `CFG ${ANIVERSE_SETTINGS.cfg}, ${ANIVERSE_SETTINGS.steps} steps, ` +
-          `${ANIVERSE_SETTINGS.sampler} ${ANIVERSE_SETTINGS.schedule} — what your own ` +
-          'highest-rated AniVerse images were made at, not the booru-XL tuning.',
+          `${ANIVERSE_SETTINGS.sampler} ${ANIVERSE_SETTINGS.schedule} — AniVerse XL's own ` +
+          'recommended settings, not the booru-XL tuning.',
       )
     } else {
       next.set('CFG scale', '5')

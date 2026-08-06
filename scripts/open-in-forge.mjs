@@ -103,7 +103,7 @@ const quote = (value) => '"' + String(value).replaceAll('"', "'") + '"'
 // taste one.
 const tuned = settingsFor(familyOf(target.name))
 const sampler = vPred
-  ? ['Sampler: Euler a']
+  ? ['Sampler: Euler']
   : tuned
     ? [`Sampler: ${tuned.sampler}`, `Schedule type: ${tuned.schedule}`]
     : ['Sampler: DPM++ 2M SDE', 'Schedule type: Karras']
@@ -135,7 +135,14 @@ const settings = [
   'ADetailer denoising strength: 0.4',
 ].filter(Boolean).join(', ')
 
-const block = [args.prompt, args.negative ? `Negative prompt: ${args.negative}` : null, settings]
+// The family's activation token, at the end where its card puts it — the
+// trained style is simply not engaged without it.
+const prompt =
+  tuned?.trigger && !args.prompt.toLowerCase().includes(tuned.trigger)
+    ? `${args.prompt.replace(/,\s*$/, '')}, ${tuned.trigger}`
+    : args.prompt
+
+const block = [prompt, args.negative ? `Negative prompt: ${args.negative}` : null, settings]
   .filter(Boolean)
   .join('\n')
 
