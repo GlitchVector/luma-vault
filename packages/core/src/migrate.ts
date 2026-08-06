@@ -49,7 +49,16 @@ export interface MigrationTarget {
    * which are genuinely different words rather than a preference — see
    * {@link NOOB_QUALITY}. Anything else uses the common XL set.
    */
-  family?: 'noob' | 'aniverse'
+  family?: 'noob' | 'aniverse' | 'hassaku'
+  /**
+   * How the picture is rendered: flat anime, semi-real, or photoreal.
+   *
+   * The axis with the largest visible effect on a booru model and the one with
+   * the least obvious controls, because the tags that do it are ordinary words
+   * — so `glossy skin` reads like it should work and does nothing. See
+   * {@link STYLES}.
+   */
+  style?: '2d' | '2.5d' | '3d'
   /**
    * The emphasis mode the webui is *currently* set to.
    *
@@ -275,6 +284,54 @@ const ANIVERSE_QUALITY = 'masterpiece, best quality, more details, (hyperdetaile
  */
 const ANIVERSE_TRIGGER = '4n1v3rs3'
 
+/**
+ * What Hassaku XL and the Illustrious models generally ask for.
+ *
+ * `masterpiece, best quality, amazing quality` in front is the part the guides
+ * are emphatic about, with `very aesthetic` and `newest` after — so this is the
+ * common XL set plus `newest`, which Illustrious learned as a recency tag and
+ * the plain SDXL merges never saw.
+ */
+const HASSAKU_QUALITY =
+  'masterpiece, best quality, amazing quality, very aesthetic, newest, absurdres'
+
+/**
+ * The matching negative.
+ *
+ * `bad quality` beside `worst quality` on purpose: the Illustrious guidance
+ * names both, and they are separate learned tags rather than synonyms. These
+ * models are described as responding to the negative about as strongly as to
+ * the prompt, which is why it is worth stating fully rather than thinly.
+ */
+const HASSAKU_NEGATIVE = [
+  'worst quality',
+  'bad quality',
+  'low quality',
+  'lowres',
+  'bad anatomy',
+  'bad hands',
+  'missing fingers',
+  'extra digits',
+  'jpeg artifacts',
+  'signature',
+  'watermark',
+  'username',
+  'artist name',
+]
+
+/**
+ * Hassaku's own sampling, as far as the sources agree.
+ *
+ * `Euler a` is named repeatedly as the best sampler for Illustrious models, at
+ * around 28 steps. **CFG is where the sources disagree**: one Hassaku-specific
+ * page says 7, the Illustrious user guides call 4.5-5 the sweet spot within a
+ * usable 3-7. Neither is the creator — Civitai moved the model behind a host
+ * that cannot be read — so this takes 5, which is inside both claims and
+ * matches the other Illustrious checkpoint here. `--cfg 7` tries the other
+ * reading.
+ */
+const HASSAKU_SETTINGS = { cfg: '5', steps: '28', sampler: 'Euler a', schedule: 'Automatic' }
+
 const ANIVERSE_NEGATIVE = [
   'worst quality',
   'low quality',
@@ -408,6 +465,55 @@ const BODY_FAMILIES: ReadonlyArray<{ mentions: RegExp; rungs: string[] }> = [
 
 /** The upscaler the Hires default names — the one installed on this machine. */
 const HIRES_UPSCALER = '4xUltrasharp_4xUltrasharpV10'
+
+/**
+ * How far the Hires pass enlarges, when the block does not name its own.
+ *
+ * Only the default. A block that already carries a hires pass keeps whatever
+ * factor it named, and a migration that has to preserve an original's final
+ * resolution recomputes one — see the note about the hires factor further
+ * down. This is the number used when there was no pass at all.
+ */
+const HIRES_FACTOR = '1.5'
+
+/**
+ * The rendering axis, in tags the models were actually trained on.
+ *
+ * **Every term here was checked against `models/anime-tagger/selected_tags.csv`**,
+ * the same standard `TAG_ALIASES` is held to — because the obvious words for
+ * this are mostly not tags. `3d`, `cel shading`, `soft shading`, `glossy skin`
+ * and `detailed skin` are all absent from those 10,861 names, so a prompt
+ * asking for them is asking in a language the model never learned. `shiny
+ * skin` is the one that carries the gloss, `realistic` the semi-real
+ * rendering, `photorealistic` the rest of the way.
+ *
+ * 2.5D and 3D both assert `realistic` — the difference between them is
+ * `photorealistic`, negated in one and asserted in the other, which is what
+ * separates a soft anime-shaded figure from a rendered one.
+ */
+const STYLES = {
+  '2d': {
+    positive: 'anime coloring, flat color',
+    negative: ['realistic', 'photorealistic', 'shiny skin'],
+  },
+  '2.5d': {
+    positive: 'realistic, shiny skin',
+    negative: ['flat color', 'anime coloring', 'photorealistic'],
+  },
+  '3d': {
+    positive: 'photorealistic, realistic, shiny skin',
+    negative: ['anime coloring', 'flat color', 'lineart', 'sketch'],
+  },
+} as const
+
+/** Every rendering tag any style asserts, so a switch can clear the others. */
+const STYLE_VOCABULARY = [
+  'anime coloring',
+  'flat color',
+  'realistic',
+  'photorealistic',
+  'shiny skin',
+]
 
 /**
  * The words in a prompt that describe a face, for ADetailer's own pass.
@@ -587,6 +693,32 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
   let nextPrompt = prompt
   let nextNegative = negative
 
+  // How the picture is *rendered*, imposed before anything else so the quality
+  // block still lands in front of it. Applied on every move, not only a
+  // crossing one: this is the person choosing a look, not the migration
+  // translating anything.
+  if (target.style) {
+    const style = STYLES[target.style]
+    // Whatever the prompt already says about rendering is removed rather than
+    // argued with — `realistic` in front of `anime coloring` is two competing
+    // instructions and the result is neither, exactly like two framing rungs.
+    const cleared = dropTermsByLine(nextPrompt, [...STYLE_VOCABULARY])
+    nextPrompt = cleared.text ? `${style.positive},\n${cleared.text}` : style.positive
+    const already = nextNegative.toLowerCase()
+    const additions = style.negative.filter(
+      (term) => !new RegExp(`(^|[^a-z])${term}([^a-z]|$)`).test(already),
+    )
+    if (additions.length > 0) {
+      nextNegative = [nextNegative.trim().replace(/,$/, ''), ...additions].filter(Boolean).join(', ')
+    }
+    notes.push(
+      `Style set to ${target.style}: ${style.positive} in front, and ${style.negative.join(', ')} ` +
+        'in the negative. Every one is a real danbooru tag — checked against ' +
+        'models/anime-tagger/selected_tags.csv, where `3d`, `cel shading` and `glossy skin` are ' +
+        'not, and so carry no learned meaning at all.',
+    )
+  }
+
   if (crossing) {
     // 1. LoRAs. Architecture-specific, and silently ignored rather than an error.
     const loras = [...nextPrompt.matchAll(/<(?:lora|lyco):([^:>]+)[^>]*>/gi)].map((m) => m[1])
@@ -635,7 +767,9 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
           ? NOOB_QUALITY
           : target.family === 'aniverse'
             ? ANIVERSE_QUALITY
-            : XL_QUALITY
+            : target.family === 'hassaku'
+              ? HASSAKU_QUALITY
+              : XL_QUALITY
       nextPrompt = `${quality},\n${nextPrompt}`
       notes.push(
         target.family === 'noob'
@@ -662,7 +796,9 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
         ? NOOB_NEGATIVE
         : target.family === 'aniverse'
           ? ANIVERSE_NEGATIVE
-          : XL_NEGATIVE
+          : target.family === 'hassaku'
+            ? HASSAKU_NEGATIVE
+            : XL_NEGATIVE
     for (const term of baseline) {
       if (!new RegExp(`(^|[^a-z])${term}([^a-z]|$)`).test(already)) keptNegative.push(term)
     }
@@ -863,18 +999,22 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
     // Written by whichever webui made the original, and read by nothing here.
     next.delete('Version')
 
-    if (target.family === 'aniverse') {
-      // This family's own numbers, from the library rather than from a model
-      // card — see ANIVERSE_SETTINGS.
-      next.set('CFG scale', ANIVERSE_SETTINGS.cfg)
-      next.set('Steps', ANIVERSE_SETTINGS.steps)
-      next.set('Sampler', ANIVERSE_SETTINGS.sampler)
-      next.set('Schedule type', ANIVERSE_SETTINGS.schedule)
+    // A family's own numbers, where its card gives them — see the constants.
+    const tuned =
+      target.family === 'aniverse'
+        ? ANIVERSE_SETTINGS
+        : target.family === 'hassaku'
+          ? HASSAKU_SETTINGS
+          : null
+    if (tuned) {
+      next.set('CFG scale', tuned.cfg)
+      next.set('Steps', tuned.steps)
+      next.set('Sampler', tuned.sampler)
+      next.set('Schedule type', tuned.schedule)
       next.set('Clip skip', '2')
       notes.push(
-        `CFG ${ANIVERSE_SETTINGS.cfg}, ${ANIVERSE_SETTINGS.steps} steps, ` +
-          `${ANIVERSE_SETTINGS.sampler} ${ANIVERSE_SETTINGS.schedule} — AniVerse XL's own ` +
-          'recommended settings, not the booru-XL tuning.',
+        `CFG ${tuned.cfg}, ${tuned.steps} steps, ${tuned.sampler} ${tuned.schedule} — what this ` +
+          'checkpoint asks for, rather than the booru-XL tuning.',
       )
     } else {
       next.set('CFG scale', '5')
@@ -937,12 +1077,12 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
   // face pass knows better than a default.
   if (target.architecture === 'xl') {
     if (!next.has('Hires upscale') && !next.has('Hires upscaler')) {
-      next.set('Hires upscale', '1.65')
+      next.set('Hires upscale', HIRES_FACTOR)
       next.set('Hires steps', '30')
       next.set('Hires upscaler', HIRES_UPSCALER)
       if (!next.has('Denoising strength')) next.set('Denoising strength', '0.4')
       notes.push(
-        'Turned Hires fix on (1.65x, 30 steps, denoise 0.4) — the first pass alone stops at ' +
+        `Turned Hires fix on (${HIRES_FACTOR}x, 30 steps, denoise 0.4) — the first pass alone stops at ` +
           'the training resolution, and every keeper gets upscaled anyway.',
       )
     }

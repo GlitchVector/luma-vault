@@ -92,6 +92,38 @@ the four buttons — `close-up`, `portrait`, `upper body`, `lower body`,
 `very wide shot` — and any of them typed under Other is equally valid; pass
 it through as given.
 
+
+### The third question in that second call: the style
+
+Ask it every time, alongside the shot. It is the axis with the largest visible
+effect on the result and the least obvious controls:
+
+| Question | Options |
+|---|---|
+| Style | as seen · `2D` · `2.5D` · `3D` |
+
+Pass the answer as `--style 2d`, `--style 2.5d` or `--style 3d`; "as seen"
+passes nothing.
+
+- **2D** — flat anime. `anime coloring, flat color`, arguing against
+  `realistic, photorealistic, shiny skin`.
+- **2.5D** — soft semi-real anime, the glossy look. `realistic, shiny skin`,
+  arguing against `flat color, anime coloring, photorealistic`.
+- **3D** — rendered. `photorealistic, realistic, shiny skin`, arguing against
+  `anime coloring, flat color, lineart, sketch`.
+
+2.5D and 3D both assert `realistic`; the only difference between them is
+whether `photorealistic` is asked for or argued against. That single tag is
+what separates a soft anime-shaded figure from a rendered one.
+
+**Do not hand-write these tags.** The obvious words for this axis are mostly
+not danbooru tags at all — `3d`, `cel shading`, `soft shading`, `glossy skin`
+and `detailed skin` are all absent from the 10,861 names in
+`models/anime-tagger/selected_tags.csv`, so a prompt asking for them is asking
+in a language the model never learned. `shiny skin` is the one that carries the
+gloss. The flag applies the checked set and clears whatever competing rendering
+tag the prompt already had.
+
 ## 3. Run the script
 
 It does the whole thing; pass the arguments through untouched:
@@ -169,12 +201,38 @@ otherwise — Forge raises nothing and the picture simply comes out different.
 Sampler, upscaler and denoising the block already names are left alone — they
 are architecture-agnostic, and changing them would alter the picture for no
 reason. What the block *lacks* is topped up on every XL move: a Hires pass
-(1.65x, 30 steps, 4xUltrasharp, denoise 0.4) and an ADetailer face pass whose
+(1.5x, 30 steps, 4xUltrasharp, denoise 0.4) and an ADetailer face pass whose
 prompt is built from the face words already in the prompt — identity and
 expression, never body or setting. A block that carries its own hires or
 ADetailer settings keeps them untouched.
 
 Staying on the same architecture changes only the model and the seed.
+
+## Hassaku, and Illustrious checkpoints generally
+
+Pass `hassaku`. Both commands then send what the Illustrious guidance asks for:
+
+| | Hassaku / Illustrious | the plain XL default |
+|---|---|---|
+| Quality | `masterpiece, best quality, amazing quality, very aesthetic, **newest**, absurdres` | same without `newest` |
+| Negative | adds **`bad quality`** beside `worst quality` | `worst quality` only |
+| Sampler | **Euler a**, schedule Automatic | DPM++ 2M SDE Karras |
+| Steps | 28 | 28 |
+| CFG | 5 | 5 |
+
+`newest` is a recency tag Illustrious learned and the plain SDXL merges never
+saw. `bad quality` is a separate learned tag from `worst quality` rather than a
+synonym — these models are described as reading the negative about as strongly
+as the prompt, so it is worth stating fully.
+
+**CFG is the one thing the sources disagree on.** A Hassaku-specific page says
+7; the Illustrious user guides call 4.5-5 the sweet spot inside a usable 3-7.
+Neither is the creator — Civitai moved the model behind a host that cannot be
+read — so the commands send 5, which is inside both. Try `--cfg 7` for the
+other reading.
+
+`perfectdeliberate` is an Illustrious checkpoint too, and its own card asks for
+CFG 5-8, so `--cfg 6` is worth a try there when a render looks flat.
 
 ## AniVerse
 

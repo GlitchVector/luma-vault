@@ -261,7 +261,7 @@ describe('the always-on passes', () => {
 
   it('adds Hires fix when the block has none', () => {
     const { block, notes } = migrateGeneration(SD_BLOCK, { architecture: 'xl', checkpoint: 'x' })
-    expect(block).toContain('Hires upscale: 1.65')
+    expect(block).toContain('Hires upscale: 1.5')
     expect(block).toContain('Hires steps: 30')
     expect(block).toContain('Hires upscaler: 4xUltrasharp_4xUltrasharpV10')
     expect(notes.some((note) => note.includes('Hires fix'))).toBe(true)
@@ -609,7 +609,7 @@ describe('the AniVerse family', () => {
     // 2.5D result rather than the flatter Euler Max.
     expect(settings).toContain('Sampler: DPM++ 2M')
     expect(settings).toContain('Schedule type: Karras')
-    expect(notes.join(' ')).toMatch(/AniVerse XL's own\s+recommended settings/)
+    expect(notes.join(' ')).toMatch(/what this checkpoint asks for/)
   })
 
   it('leaves every other target on the booru-XL tuning', () => {
@@ -686,5 +686,94 @@ describe('facePrompt and brackets', () => {
     // The number was calibrated against the prompt it came from, not against
     // the much smaller face pass.
     expect(facePrompt('(smile, perfect face:1.4), blue eyes')).toContain('perfect face,')
+  })
+})
+
+describe('the Hassaku / Illustrious family', () => {
+  const TO_HASSAKU = {
+    architecture: 'xl',
+    checkpoint: 'hassakuXLIllustrious_v12Style',
+    family: 'hassaku',
+  } as const
+
+  it('uses Euler a at the settings Illustrious models ask for', () => {
+    const settings = migrateGeneration(SD15, TO_HASSAKU).block.split('\n').at(-1)!
+    expect(settings).toContain('Sampler: Euler a')
+    // 5 is inside both readings the sources give: a Hassaku page says 7, the
+    // Illustrious guides call 4.5-5 the sweet spot in a usable 3-7.
+    expect(settings).toContain('CFG scale: 5')
+    expect(settings).toContain('Steps: 28')
+  })
+
+  it('adds the recency tag Illustrious learned and plain SDXL never saw', () => {
+    const { block } = migrateGeneration(SD15, TO_HASSAKU)
+    expect(block).toContain('newest')
+    expect(block).toContain('amazing quality')
+  })
+
+  it('states bad quality as well as worst quality', () => {
+    // Separate learned tags rather than synonyms, and these models are
+    // described as reading the negative about as strongly as the prompt.
+    const { block } = migrateGeneration(SD15, TO_HASSAKU)
+    const negative = block.split('\n').find((line) => line.startsWith('Negative prompt:'))!
+    expect(negative).toContain('bad quality')
+    expect(negative).toContain('worst quality')
+  })
+
+  it('carries no AniVerse trigger, which belongs to another family', () => {
+    expect(migrateGeneration(SD15, TO_HASSAKU).block).not.toContain('4n1v3rs3')
+  })
+})
+
+describe('the rendering style axis', () => {
+  const BLOCK = 'a girl, blue hair\nNegative prompt: lowres\nSteps: 20, Size: 512x768, Model: x'
+  const at = (style: '2d' | '2.5d' | '3d') =>
+    migrateGeneration(BLOCK, { architecture: 'xl', checkpoint: 'y', style })
+
+  it('asserts only tags the models were actually trained on', () => {
+    // The point of the whole feature. `3d`, `cel shading`, `soft shading` and
+    // `glossy skin` all read like they should work and are absent from the
+    // 10,861 names in models/anime-tagger/selected_tags.csv, so they carry no
+    // learned meaning — `shiny skin` is the one that does.
+    const all = ['2d', '2.5d', '3d'].map((s) => at(s as '2d').block).join(' ')
+    expect(all).not.toMatch(/glossy skin|soft shading|cel shading/)
+    expect(at('2.5d').block).toContain('shiny skin')
+  })
+
+  it('separates 2.5D from 3D on photorealistic', () => {
+    // Both assert `realistic`; the difference is whether photorealism is asked
+    // for or argued against, which is what makes one soft and one rendered.
+    const soft = at('2.5d')
+    const rendered = at('3d')
+    expect(soft.block).toContain('realistic')
+    expect(rendered.block).toContain('realistic')
+    const softNegative = soft.block.split('\n').find((l) => l.startsWith('Negative prompt:'))!
+    expect(softNegative).toContain('photorealistic')
+    expect(rendered.block.split('\n')[1]).toContain('photorealistic')
+  })
+
+  it('argues against the look it is not asking for', () => {
+    const flat = at('2d')
+    expect(flat.block.split('\n')[1]).toContain('anime coloring')
+    const negative = flat.block.split('\n').find((l) => l.startsWith('Negative prompt:'))!
+    expect(negative).toContain('realistic')
+  })
+
+  it('clears a competing rendering tag rather than arguing with it', () => {
+    // Two rendering instructions in one prompt is the framing-rung problem
+    // again: the result is neither.
+    const { block } = migrateGeneration(
+      'a girl, realistic, blue hair\nSteps: 20, Size: 512x768',
+      { architecture: 'xl', checkpoint: 'y', style: '2d' },
+    )
+    const prompt = block.split('Negative prompt:')[0]!
+    expect(prompt).toContain('anime coloring')
+    expect(prompt).not.toMatch(/(^|[^a-z])realistic/)
+  })
+
+  it('leaves the prompt alone when no style was asked for', () => {
+    const { block } = migrateGeneration(BLOCK, { architecture: 'xl', checkpoint: 'y' })
+    expect(block).not.toContain('anime coloring')
+    expect(block).not.toContain('shiny skin')
   })
 })

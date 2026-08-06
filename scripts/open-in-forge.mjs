@@ -57,6 +57,10 @@ function parseArgs(argv) {
     // Booru-XL sits at 5, but NoobAI wants 4-6 and burns colour at the top of
     // that — a saturated, night-lit render from a daylight prompt is the tell.
     else if (flag === '--cfg') { args.cfg = Number(argv[++at]); args.cfgGiven = true }
+    // How the picture is rendered. See STYLES in @luma/core — the tags are
+    // checked against the tagger's vocabulary, unlike the obvious words for
+    // this, most of which are not tags at all.
+    else if (flag === '--style') args.style = String(argv[++at]).toLowerCase()
     else fail(`unknown argument: ${flag}`)
   }
   return args
@@ -101,7 +105,7 @@ const quote = (value) => '"' + String(value).replaceAll('"', "'") + '"'
 // booru-XL default — see `settingsFor`. A v-prediction target overrides the
 // sampler regardless, because that is a correctness question rather than a
 // taste one.
-const tuned = settingsFor(familyOf(target.name))
+const tuned = settingsFor(familyOf(target.name), architecture)
 const sampler = vPred
   ? ['Sampler: Euler']
   : tuned
@@ -112,9 +116,9 @@ if (tuned) {
   console.error(
     `note: using ${target.name}'s own tuning — CFG ${tuned.cfg}, ${tuned.steps} steps,
 ` +
-      `  ${tuned.sampler} ${tuned.schedule} — measured from your highest-rated images of this
+      `  ${tuned.sampler} ${tuned.schedule} — what this checkpoint's own card asks for,
 ` +
-      '  family rather than the booru-XL default. Override with --cfg.',
+      '  rather than the booru-XL default. Override with --cfg.',
   )
 }
 const settings = [
@@ -126,7 +130,7 @@ const settings = [
   `Model: ${target.name}`,
   'Clip skip: 2',
   'Denoising strength: 0.4',
-  'Hires upscale: 1.65',
+  'Hires upscale: 1.5',
   'Hires steps: 30',
   'Hires upscaler: 4xUltrasharp_4xUltrasharpV10',
   'ADetailer model: face_yolov8s.pt',
@@ -137,10 +141,26 @@ const settings = [
 
 // The family's activation token, at the end where its card puts it — the
 // trained style is simply not engaged without it.
+const STYLES = {
+  '2d': { positive: 'anime coloring, flat color', negative: 'realistic, photorealistic, shiny skin' },
+  '2.5d': { positive: 'realistic, shiny skin', negative: 'flat color, anime coloring, photorealistic' },
+  '3d': {
+    positive: 'photorealistic, realistic, shiny skin',
+    negative: 'anime coloring, flat color, lineart, sketch',
+  },
+}
+if (args.style && !STYLES[args.style]) {
+  fail(`--style takes 2d, 2.5d or 3d (got "${args.style}")`)
+}
+const style = args.style ? STYLES[args.style] : null
+const styled = style ? `${style.positive},
+${args.prompt}` : args.prompt
+if (style) args.negative = [args.negative, style.negative].filter(Boolean).join(', ')
+
 const prompt =
-  tuned?.trigger && !args.prompt.toLowerCase().includes(tuned.trigger)
-    ? `${args.prompt.replace(/,\s*$/, '')}, ${tuned.trigger}`
-    : args.prompt
+  tuned?.trigger && !styled.toLowerCase().includes(tuned.trigger)
+    ? `${styled.replace(/,\s*$/, '')}, ${tuned.trigger}`
+    : styled
 
 const block = [prompt, args.negative ? `Negative prompt: ${args.negative}` : null, settings]
   .filter(Boolean)

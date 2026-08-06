@@ -97,6 +97,38 @@ gigantic hips is to fill the frame with them. Four moves, all of them:
 "As seen" means: tag what the image shows, at whatever rung it actually shows
 it, unweighted.
 
+
+### The third question in that second call: the style
+
+Ask it every time, alongside the shot. It is the axis with the largest visible
+effect on the result and the least obvious controls:
+
+| Question | Options |
+|---|---|
+| Style | as seen · `2D` · `2.5D` · `3D` |
+
+Pass the answer as `--style 2d`, `--style 2.5d` or `--style 3d`; "as seen"
+passes nothing.
+
+- **2D** — flat anime. `anime coloring, flat color`, arguing against
+  `realistic, photorealistic, shiny skin`.
+- **2.5D** — soft semi-real anime, the glossy look. `realistic, shiny skin`,
+  arguing against `flat color, anime coloring, photorealistic`.
+- **3D** — rendered. `photorealistic, realistic, shiny skin`, arguing against
+  `anime coloring, flat color, lineart, sketch`.
+
+2.5D and 3D both assert `realistic`; the only difference between them is
+whether `photorealistic` is asked for or argued against. That single tag is
+what separates a soft anime-shaded figure from a rendered one.
+
+**Do not hand-write these tags.** The obvious words for this axis are mostly
+not danbooru tags at all — `3d`, `cel shading`, `soft shading`, `glossy skin`
+and `detailed skin` are all absent from the 10,861 names in
+`models/anime-tagger/selected_tags.csv`, so a prompt asking for them is asking
+in a language the model never learned. `shiny skin` is the one that carries the
+gloss. The flag applies the checked set and clears whatever competing rendering
+tag the prompt already had.
+
 ## 3. Compose
 
 Structure the prompt with `BREAK` between concept groups. CLIP encodes 75
@@ -153,7 +185,7 @@ Always pass `--adetailer-prompt`: a short face pass in ADetailer's own jargon �
 the *identity* tags you derived (character, hair, eyes, expression, headwear).
 Never body, pose or setting tags: the pass repaints a head crop, and a body tag
 inside it re-argues the body in a space where it cannot win. The script adds
-the rest — Hires fix (1.65x, 30 steps, 4xUltrasharp, denoise 0.4) and the
+the rest — Hires fix (1.5x, 30 steps, 4xUltrasharp, denoise 0.4) and the
 ADetailer model — to every block, and the extension turns both toggles on.
 
 - Canvas from the **attached image's aspect**: portrait → `832 1216`,
@@ -169,6 +201,32 @@ ADetailer model — to every block, and the extension turns both toggles on.
 Then show the user the prompt you composed, with one line on anything you
 were unsure of — a character you almost recognised, an outfit detail you had
 to approximate. Those are the lines they will want to edit.
+
+## Hassaku, and Illustrious checkpoints generally
+
+Pass `hassaku`. Both commands then send what the Illustrious guidance asks for:
+
+| | Hassaku / Illustrious | the plain XL default |
+|---|---|---|
+| Quality | `masterpiece, best quality, amazing quality, very aesthetic, **newest**, absurdres` | same without `newest` |
+| Negative | adds **`bad quality`** beside `worst quality` | `worst quality` only |
+| Sampler | **Euler a**, schedule Automatic | DPM++ 2M SDE Karras |
+| Steps | 28 | 28 |
+| CFG | 5 | 5 |
+
+`newest` is a recency tag Illustrious learned and the plain SDXL merges never
+saw. `bad quality` is a separate learned tag from `worst quality` rather than a
+synonym — these models are described as reading the negative about as strongly
+as the prompt, so it is worth stating fully.
+
+**CFG is the one thing the sources disagree on.** A Hassaku-specific page says
+7; the Illustrious user guides call 4.5-5 the sweet spot inside a usable 3-7.
+Neither is the creator — Civitai moved the model behind a host that cannot be
+read — so the commands send 5, which is inside both. Try `--cfg 7` for the
+other reading.
+
+`perfectdeliberate` is an Illustrious checkpoint too, and its own card asks for
+CFG 5-8, so `--cfg 6` is worth a try there when a render looks flat.
 
 ## AniVerse
 
