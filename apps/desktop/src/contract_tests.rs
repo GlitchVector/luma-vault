@@ -47,6 +47,13 @@ fn scan_progress_matches_the_shared_fixture() {
 }
 
 #[test]
+fn source_origin_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::SourceOrigin>>(include_str!(
+        "../../../contracts/source-origin.json"
+    ));
+}
+
+#[test]
 fn media_frame_matches_the_shared_fixture() {
     round_trip::<Vec<crate::types::MediaFrame>>(include_str!("../../../contracts/media-frame.json"));
 }
@@ -249,5 +256,78 @@ fn sampling_vectors_agree_with_the_typescript_core() {
                 );
             }
         }
+    }
+}
+
+const ORIGIN_VECTORS: &str = include_str!("../../../contracts/origin-vectors.json");
+
+/// The Rust half of the origin rule.
+///
+/// Its twin is `packages/core/src/origin.ts`, driven by this same file, because
+/// the app answers "what was this made from" through the index in Rust while the
+/// `migrate-prompt` script answers it in TypeScript with the app closed.
+#[test]
+fn origin_vectors_agree_with_the_typescript_core() {
+    use std::collections::HashMap;
+
+    let root: Value =
+        serde_json::from_str(ORIGIN_VECTORS).expect("origin-vectors.json is not valid JSON");
+    let cases = root["cases"].as_array().expect("cases is an array");
+    assert!(!cases.is_empty(), "the vector file must not be empty");
+
+    for case in cases {
+        let name = case["name"].as_str().unwrap_or("<unnamed>");
+        let raw = case["rows"].as_array().expect("rows is an array");
+
+        let rows: Vec<crate::origin::Candidate> = raw
+            .iter()
+            .map(|row| crate::origin::Candidate {
+                id: row["id"].as_i64().expect("id"),
+                phash: u64::from_str_radix(row["phash"].as_str().expect("phash"), 16)
+                    .expect("phash is 16 hex characters"),
+                modified_at: row["modifiedAt"].as_i64().expect("modifiedAt"),
+                img2img: row["img2img"].as_bool().expect("img2img"),
+            })
+            .collect();
+
+        // `grey` is a flat signature — all 192 bytes at that value — so two rows
+        // sit exactly |a - b| apart. See the fixture's own note.
+        let greys: HashMap<i64, u8> = raw
+            .iter()
+            .map(|row| {
+                (
+                    row["id"].as_i64().expect("id"),
+                    row["grey"].as_u64().expect("grey") as u8,
+                )
+            })
+            .collect();
+        let mut colour_of = |id: i64| greys.get(&id).map(|grey| vec![*grey; 192]);
+
+        let start = case["start"].as_i64().expect("start");
+        let got = crate::origin::walk(&rows, start, &mut colour_of);
+        let expected = &case["expect"];
+
+        if expected.is_null() {
+            assert!(got.is_none(), "expected no origin in: {name} (got {got:?})");
+            continue;
+        }
+
+        let got = got.unwrap_or_else(|| panic!("expected an origin in: {name}, got none"));
+        assert_eq!(got.id, expected["id"].as_i64().expect("id"), "id in: {name}");
+        assert_eq!(
+            u64::from(got.hops),
+            expected["hops"].as_u64().expect("hops"),
+            "hops in: {name}"
+        );
+        assert_eq!(
+            got.reached_root,
+            expected["reachedRoot"].as_bool().expect("reachedRoot"),
+            "reachedRoot in: {name}"
+        );
+        assert_eq!(
+            u64::from(got.weakest_hop),
+            expected["weakestHop"].as_u64().expect("weakestHop"),
+            "weakestHop in: {name}"
+        );
     }
 }

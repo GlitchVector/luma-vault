@@ -72,6 +72,40 @@ and a fast scroll showed a wall of empty placeholders.
 reorders on every query, so page 2 re-shows items from page 1 and silently skips
 others.
 
+## Finding what an img2img was made from
+
+**Two perceptual thresholds exist, and they are not the same question.**
+`dupes` asks "is this the same picture" at **3** bits. `origin` asks "was this
+made from that picture" at **8**, and *excludes* everything at 3 or under.
+Unifying them looks like an obvious simplification and breaks both: a re-encode
+would be offered as a picture's own source, and a genuine init image five bits
+away would be invisible. The exclusion is the point — a duplicate is not what
+anything was generated from.
+
+**The thresholds are measured, not chosen.** txt2img rows are the negative
+control: with no init image, any link found for one is wrong by construction.
+At 8 bits and colour 16, 65% of img2img rows link against 4% of the control.
+Widening to 12 bits and colour 25 buys five points of recall and multiplies the
+false rate by two and a half. `contracts/origin-vectors.json` pins the rule in
+both languages; changing a constant should fail two suites.
+
+**`reachedRoot` is not decoration.** 28% of img2img rows walk back to a real
+txt2img, 40% stop on another img2img with no findable source of its own, 33%
+have no link at all. The middle case is still worth showing — its prompt may
+name the character — but presenting it as the original is a claim the data does
+not support, and the UI keeps "still looking", "found nothing" and "found"
+visually distinct for the same reason.
+
+**An ancestor's prompt is evidence, never an input.** The whole point of an
+img2img chain is often to keep a composition and change the subject, so an
+ancestor can confidently name a character who is no longer in the picture.
+Nothing auto-merges it — not the panel, not `migrate-prompt`. Measured: one
+chain's parent describes Kiryu Coco where the child is Misty.
+
+**The walk cannot cycle, and there is no visited set.** Every hop is strictly
+older than the last, so time is the guard. `MAX_HOPS` is a backstop against a
+pathological chain, not a tuning knob — the median walk is two hops.
+
 ## The protocol
 
 **Percent-decoding must go through `percent_decode_str`.** viewer-net hand-rolled

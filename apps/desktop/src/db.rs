@@ -13,6 +13,7 @@
 //! and a visibly janky one, and SQLite cannot index into a JSON blob without
 //! `json_extract` on every row.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -2083,6 +2084,66 @@ impl Db {
     /// `None` when the row has no dupe group yet — Find Duplicates has not
     /// run since it was indexed — which the caller reports as "unlinked", not
     /// as an error.
+    /// What an img2img was made from, as far back as the trail leads.
+    ///
+    /// The rule, its thresholds and the measurements behind them live in
+    /// [`crate::origin`]. This is the I/O half: which rows are candidates, and
+    /// where their colour signatures come from.
+    pub fn source_origin(&self, id: i64) -> Result<Option<(MediaItem, crate::origin::Origin)>> {
+        let origin = {
+            let conn = self.conn.lock().expect("index mutex poisoned");
+
+            // Only what the walk compares on. The colour signatures stay out:
+            // 155,000 of them is 30MB of blob to answer a question about a
+            // handful of rows, and this runs every time a picture is opened.
+            let mut stmt = conn.prepare(
+                "SELECT id, phash, modified_at,
+                        COALESCE(json_extract(generation_json, '$.needsSourceImage'), 0)
+                 FROM media
+                 WHERE phash IS NOT NULL AND colour_sig IS NOT NULL AND error IS NULL",
+            )?;
+            let rows: Vec<crate::origin::Candidate> = stmt
+                .query_map([], |row| {
+                    Ok(crate::origin::Candidate {
+                        id: row.get(0)?,
+                        // Stored signed because SQLite has no unsigned integer.
+                        // The bits are the hash either way.
+                        phash: row.get::<_, i64>(1)? as u64,
+                        modified_at: row.get(2)?,
+                        img2img: row.get::<_, i64>(3)? == 1,
+                    })
+                })?
+                .collect::<rusqlite::Result<_>>()?;
+
+            let mut signature = conn.prepare("SELECT colour_sig FROM media WHERE id = ?1")?;
+            // Cached because a walk asks about the same row on consecutive
+            // hops, and because the row it is standing on is asked for twice.
+            let mut cache: HashMap<i64, Option<Vec<u8>>> = HashMap::new();
+            let mut colour_of = |want: i64| -> Option<Vec<u8>> {
+                if let Some(hit) = cache.get(&want) {
+                    return hit.clone();
+                }
+                let got = signature
+                    .query_row(params![want], |row| row.get::<_, Option<Vec<u8>>>(0))
+                    .optional()
+                    .ok()
+                    .flatten()
+                    .flatten();
+                cache.insert(want, got.clone());
+                got
+            };
+
+            crate::origin::walk(&rows, id, &mut colour_of)
+        };
+
+        let Some(origin) = origin else {
+            return Ok(None);
+        };
+        // The lock is released above: `media_by_id` takes it again, and the
+        // mutex is not reentrant.
+        Ok(self.media_by_id(origin.id)?.map(|item| (item, origin)))
+    }
+
     pub fn extras_original(&self, id: i64) -> Result<Option<MediaItem>> {
         let Some(row) = self.media_by_id(id)? else { return Ok(None) };
 

@@ -1,0 +1,84 @@
+[
+  {
+    "item": {
+      "id": 4021,
+      "folderId": 2,
+      "path": "/Volumes/vault/AI/txt2img-images/2023-11-04/00352-3427824797.png",
+      "name": "00352-3427824797.png",
+      "kind": "image",
+      "width": 512,
+      "height": 768,
+      "sizeBytes": 612344,
+      "modifiedAt": 1699084800000,
+      "addedAt": 1753900000000,
+      "thumbPath": "/Users/x/Library/Application Support/net.glitchvector.luma-vault/thumbs/aa/aa17c3.jpg",
+      "thumbWidth": 213,
+      "thumbHeight": 320,
+      "durationSec": null,
+      "verdict": {
+        "person": true,
+        "sexy": true,
+        "nude": false,
+        "rating": "suggestive",
+        "topLabel": "BUTTOCKS_EXPOSED",
+        "topLabelTitle": "exposed buttocks",
+        "topScore": 0.66,
+        "frameCount": 1,
+        "sexyFrameCount": 1,
+        "posterFrameIndex": 0
+      },
+      "classifiedAt": 1753900100000,
+      "stars": 4,
+      "generation": {
+        "tool": "Stable Diffusion",
+        "prompt": "1girl, kiryu coco, orange hair, crimson eyes, dragon girl, dragon horns, side braid, small china dress",
+        "negativePrompt": "bad hands, blurry",
+        "model": "someMix_v4",
+        "seed": "3427824797",
+        "sampler": "DPM++ 2M Karras",
+        "steps": "28",
+        "cfgScale": "7",
+        "needsSourceImage": false,
+        "postprocessed": false
+      },
+      "dupeGroup": null,
+      "upscaledFrom": null,
+      "upscaledTo": null
+    },
+    "hops": 6,
+    "reachedRoot": true,
+    "weakestHop": 6
+  },
+  {
+    "item": {
+      "id": 5533,
+      "folderId": 2,
+      "path": "/Volumes/vault/AI/img2img-images/2024-02-20/00301-1107467017.png",
+      "name": "00301-1107467017.png",
+      "kind": "image",
+      "width": 768,
+      "height": 768,
+      "sizeBytes": 901233,
+      "modifiedAt": 1708387200000,
+      "addedAt": 1753900000000,
+      "thumbPath": null,
+      "thumbWidth": null,
+      "thumbHeight": null,
+      "durationSec": null,
+      "verdict": null,
+      "classifiedAt": null,
+      "stars": null,
+      "generation": {
+        "tool": "Stable Diffusion",
+        "needsSourceImage": true,
+        "postprocessed": false
+      },
+      "dupeGroup": 5533,
+      "upscaledFrom": null,
+      "upscaledTo": null
+    },
+    "hops": 1,
+    "reachedRoot": false,
+    "weakestHop": 8
+  }
+]

@@ -13,6 +13,7 @@ import {
   zoomAbout,
   type MediaFrame,
   type MediaItem,
+  type SourceOrigin,
   type View,
 } from '@luma/core'
 import { Button, cn } from '@luma/ui'
@@ -30,6 +31,7 @@ import {
   openExternal,
   revealInFileManager,
   setStars,
+  sourceOrigin,
 } from '#/lib/native.ts'
 import { askConfirm, showMessage } from '#/lib/dialogs.ts'
 import { preloadImages } from '#/lib/preload.ts'
@@ -209,6 +211,17 @@ export function Lightbox({
    */
   const [extrasSource, setExtrasSource] = useState<MediaItem | null>(null)
   /**
+   * Whether the Extras lookup above has answered yet.
+   *
+   * Distinct from `extrasSource` being null, which also means "asked and found
+   * nothing". The origin walk needs the difference: it must ask about the row
+   * whose prompt the panel shows, and starting before this is known asks about
+   * the upscale, then asks again about the picture — one wasted scan of the
+   * whole library, and a panel that finds an ancestor and then goes back to
+   * looking for one.
+   */
+  const [extrasResolved, setExtrasResolved] = useState(false)
+  /**
    * Showing the resolved original *in place of* the extras upscale.
    *
    * A display swap only: the lightbox stays on the extras row — its rating,
@@ -217,6 +230,14 @@ export function Lightbox({
    * like before the upscale".
    */
   const [showExtrasOriginal, setShowExtrasOriginal] = useState(false)
+  /**
+   * What an img2img was made from, once the walk has answered.
+   *
+   * `undefined` while it is still looking, `null` once it has looked and found
+   * nothing — a third of the time. The two must not render the same, or a
+   * picture whose source is still being searched for reads as one that has none.
+   */
+  const [origin, setOrigin] = useState<SourceOrigin | null | undefined>(undefined)
   const [frames, setFrames] = useState<MediaFrame[]>([])
   // The element the picture has to fit inside, measured rather than assumed.
   // Deriving it from the window would mean restating the header and footer
@@ -263,6 +284,7 @@ export function Lightbox({
     // the wrong prompt while the lookup runs. The display swap resets with
     // it — stepping to the next picture must show that picture.
     setExtrasSource(null)
+    setExtrasResolved(false)
     setShowExtrasOriginal(false)
 
     return () => {
@@ -509,12 +531,48 @@ export function Lightbox({
     if (!isExtras) return
     let cancelled = false
     void extrasOriginal(mediaId).then((found) => {
-      if (!cancelled) setExtrasSource(found)
+      if (cancelled) return
+      setExtrasSource(found)
+      setExtrasResolved(true)
     })
     return () => {
       cancelled = true
     }
   }, [mediaId, isExtras])
+
+  /**
+   * The row the panel talks about — for an Extras upscale, the picture that was
+   * upscaled.
+   *
+   * Computed here rather than beside the panel because the origin lookup has to
+   * ask about *that* row. An extras variant of an img2img shows the img2img's
+   * generation, so it must show the img2img's source too; keying the lookup on
+   * the row on screen instead left that case saying "looking for it" forever,
+   * because the extras row is not itself an img2img and nothing was ever asked.
+   */
+  const panelSource = extrasSource?.generation ? extrasSource : item
+
+  // What this img2img was made from. Only while the panel is open, and only for
+  // a row that says it needs a source image: the walk scans every fingerprinted
+  // row in the library, and for anything else there is nothing to look for.
+  const isImg2img = panelSource?.generation?.needsSourceImage === true
+  const originId = panelSource?.id
+  // An extras row's own id is not the one to ask about, and which id is only
+  // becomes known when the lookup above answers.
+  const waitingForExtras = isExtras && !extrasResolved
+  useEffect(() => {
+    if (!isImg2img || !showGeneration || originId === undefined || waitingForExtras) return
+    let cancelled = false
+    // Back to "still looking" first, so stepping onto another picture cannot
+    // show the previous one's ancestor while this one is being searched for.
+    setOrigin(undefined)
+    void sourceOrigin(originId).then((found) => {
+      if (!cancelled) setOrigin(found)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [originId, isImg2img, showGeneration, waitingForExtras])
 
   if (!item) return null
 
@@ -522,7 +580,7 @@ export function Lightbox({
   // was found, the source's — the prompt someone opens the panel for is the
   // prompt of the thing that was upscaled, not the postprocess line. After the
   // null-guard, so the panel's uses need no chaining of their own.
-  const panelItem = extrasSource?.generation ? extrasSource : item
+  const panelItem = panelSource ?? item
   const panelGeneration = panelItem.generation
 
   const verdict = item.verdict
@@ -1031,13 +1089,68 @@ export function Lightbox({
               still opens Forge — the prompt and settings are worth having — it
               just does not pretend the image can come back. */}
           {panelGeneration.needsSourceImage ? (
-            <p className="mt-1.5 rounded border border-amber-500/30 bg-amber-500/10 p-1.5 text-[10px] leading-snug text-amber-200/90">
-              <span className="font-medium">Made from another image.</span> These
-              parameters describe an img2img pass, so they cannot reproduce it —
-              the source image is not recorded in any file, and Forge&rsquo;s own
-              PNG&nbsp;Info tab cannot recover it either. The prompt and settings
-              still load.
-            </p>
+            <div className="mt-1.5 rounded border border-amber-500/30 bg-amber-500/10 p-1.5 text-[10px] leading-snug text-amber-200/90">
+              <p>
+                <span className="font-medium">Made from another image.</span> These
+                parameters describe an img2img pass, so they cannot reproduce it —
+                no file records the source image, and Forge&rsquo;s own
+                PNG&nbsp;Info tab cannot recover it either. The prompt and
+                settings still load.
+              </p>
+              {/* Nothing records the source, but the library can often
+                  *recognise* it: a denoising pass keeps the composition it
+                  started from, which is what the perceptual hash measures. The
+                  three states are kept distinct on purpose — still looking,
+                  looked and found nothing, and found — because rendering the
+                  first as the second calls a picture sourceless while its
+                  source is still being searched for. */}
+              {origin === undefined ? (
+                <p className="mt-1 text-amber-200/60">Looking for it in your library…</p>
+              ) : origin === null ? (
+                <p className="mt-1 text-amber-200/60">
+                  Nothing here looks like its source — it was never in this
+                  library, or is no longer.
+                </p>
+              ) : (
+                <div className="mt-1.5 border-t border-amber-500/20 pt-1.5">
+                  <p>
+                    {origin.reachedRoot
+                      ? 'The picture this one starts from is '
+                      : 'An earlier picture in the same lineage is '}
+                    <button
+                      type="button"
+                      className="font-medium underline underline-offset-2 hover:text-amber-100"
+                      title={`Open ${displayPath(origin.item.path)}`}
+                      onClick={() => onOpenId(origin.item.id)}
+                    >
+                      {origin.item.name}
+                    </button>
+                    {`, ${origin.hops} img2img ${origin.hops === 1 ? 'pass' : 'passes'} back.`}
+                    {origin.reachedRoot
+                      ? null
+                      : ' It was made from something in turn, which is not here.'}
+                  </p>
+                  {origin.item.generation?.prompt ? (
+                    <>
+                      {/* The caveat matters more than the prompt does. A pass
+                          often keeps a composition and changes the subject, so
+                          an ancestor can name a character who is no longer in
+                          the picture — this is evidence to read against what is
+                          on screen, not a prompt to reuse unread. */}
+                      <p className="mt-1 text-amber-200/60">
+                        Its prompt, which may describe a subject this picture no
+                        longer has — read it against the image:
+                      </p>
+                      <p className="mt-1 select-text whitespace-pre-wrap break-words text-amber-100/85">
+                        {origin.item.generation.prompt}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-1 text-amber-200/60">No prompt recorded on it.</p>
+                  )}
+                </div>
+              )}
+            </div>
           ) : (
             <p className="mt-1 text-[10px] leading-snug text-zinc-600">
               Fills automatically with the prefill extension — otherwise paste and

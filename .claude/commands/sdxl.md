@@ -5,7 +5,57 @@ argument-hint: <image> [model — defaults to deliberate]
 
 # Migrating a generation to a newer model
 
-## 1. Ask about body shape and the shot — before running anything
+## 1. Look at the picture, not only at its prompt
+
+**Open the image before anything else.** `pnpm migrate-prompt <name> --show`
+prints the block and the file's path; read the file with it.
+
+The prompt is often not a description of the picture. This library is full of
+**img2img** generations — the giveaway is a `Denoising strength` with no hires
+pass — and an img2img keeps its subject in the *init image*, which a PNG
+parameter block does not carry. One real example ran to twelve words:
+
+```
+masterpiece, best quality, ultra-detailed, illustration, pink hair bangs,
+(beautiful green eyes:1.2), playful smirk, Pretty Face, Pretty Eyes, open mouth, blush, happy
+```
+
+…and the picture is a named character in a black dress with gold trim, garter
+straps, thighhighs, headphones round her neck and a demon tail. Migrated
+faithfully, that prompt produces a stranger in a green sweater, and the person
+who asked is right to say it looks nothing like theirs.
+
+So read the picture the way `/recreate` does — character, outfit garment by
+garment, pose, setting — and pass what the prompt does not already say as
+`--add`. Skip nothing on the grounds that it is obvious: the model cannot see
+the file either. What the prompt *does* say is left alone and stays in front,
+where its weight is; anything already there is dropped rather than repeated.
+
+### The second witness: what it was made from
+
+For an img2img, `--show` also prints the picture it was **made from**, and that
+one's prompt. Nothing in any file records the init image — but a denoising pass
+keeps the composition it started from, so the library can *recognise* it, and
+then walk back through the chain to whatever txt2img began it. It works about
+two times in three; when it does not, it says so rather than guessing.
+
+This is frequently where the words are. One real chain starts from a prompt
+reading `very detailed human left hand` — an inpaint repairing a hand — and six
+passes back names the character, her hair, her eyes and her dress.
+
+**Read it against the picture; never paste it through.** The point of an
+img2img pass is often to keep a composition and change the subject, so an
+ancestor can confidently name someone who is no longer there — the output says
+`the trail goes cold here` or `this is where the lineage starts` so you know how
+far back you are looking, and the weakest hop in bits so you know how much to
+trust it. Anything it names that you can *see* in the picture is worth putting
+in `--add`; anything you cannot see is not.
+
+Note the aspect too. A square source with a standing figure in it usually wants
+`--size 832x1216`, and the canvas is worth asking about whenever the two
+disagree.
+
+## 2. Ask about body shape and the shot — before running anything
 
 The same questions `/recreate` asks, with the same ladders. **First call,
 four questions**, single-select:
@@ -17,8 +67,9 @@ four questions**, single-select:
 | Thighs | as seen · `thick thighs` · `(thick thighs:1.4)` · `(thick thighs:2)` |
 | Hips | as seen · `wide hips` · `(wide hips:1.4)` · maximum |
 
-Here "as seen" means: keep whatever the original prompt says about that axis
-— pass nothing for it. Hips **maximum** is not a weight but this exact combo:
+Here "as seen" means: keep whatever the picture and its prompt already have for
+that axis — pass nothing for it. Hips **maximum** is not a weight but this exact
+combo:
 
 ```
 (wide hips:2), (thick thighs:2), (curvy:2), (narrow waist:2), (hyper hips:2), hip focus
@@ -41,7 +92,7 @@ the four buttons — `close-up`, `portrait`, `upper body`, `lower body`,
 `very wide shot` — and any of them typed under Other is equally valid; pass
 it through as given.
 
-## 2. Run the script
+## 3. Run the script
 
 It does the whole thing; pass the arguments through untouched:
 
@@ -49,13 +100,26 @@ It does the whole thing; pass the arguments through untouched:
 pnpm migrate-prompt $ARGUMENTS
 ```
 
-Append `--shot "<tag>"` when the shot answer was not as-is, and collect the
-body answers — rungs with their boosts applied, or the maximum combo — into
-one `--body "..."` argument, omitted entirely when every axis said as seen:
+Four flags carry the answers, and all of them are optional:
+
+| Flag | From |
+|---|---|
+| `--add "<tags>"` | step 1 — what the picture shows and the prompt never said |
+| `--size WxH` | step 1 — the canvas, when the source shape is wrong for it |
+| `--shot "<tag>"` | step 2, unless the answer was as-is |
+| `--body "<tags>"` | step 2 — the rungs with their boosts, or the maximum combo |
 
 ```bash
 pnpm migrate-prompt 00301 --shot "full body" --body "(gigantic ass:1.5), (wide hips:1.4)"
+pnpm migrate-prompt 00489 --size 832x1216 \
+  --add "mano aloe, black dress, gold trim, garter straps, black thighhighs, demon tail"
 ```
+
+`--add` goes at the *end* of the prompt, behind whatever the person originally
+wrote, and drops anything already there rather than saying it twice. `--size`
+wins over the bucket rule and is snapped to the nearest SDXL bucket, so the
+shape is what was asked for and the pixel count is what the model was trained
+at.
 
 The rewrite puts both at the front of the prompt where they carry the most
 weight, and clears what they replace: every framing rung the prompt already
@@ -81,11 +145,14 @@ otherwise — Forge raises nothing and the picture simply comes out different.
 2. Reads the parameter block **from the file**, not the index. The index keeps
    six display fields; a real block carries schedule type, clip skip, ControlNet
    and every ADetailer setting.
-3. Picks the newest installed checkpoint matching the target, by file date.
-4. Detects its architecture from the safetensors header — `sd`, `xl`, `flux`.
-5. Rewrites the block via `migrateGeneration` in `@luma/core` (tested there).
-6. Selects the checkpoint in Forge **before** opening the tab.
-7. Opens the tab; the prefill extension fills every field.
+3. For an img2img, finds what it was made from by perceptual hash and walks the
+   chain back — `origin.ts` in `@luma/core`, sharing its rule with the app
+   through `contracts/origin-vectors.json`. Reported, never merged.
+4. Picks the newest installed checkpoint matching the target, by file date.
+5. Detects its architecture from the safetensors header — `sd`, `xl`, `flux`.
+6. Rewrites the block via `migrateGeneration` in `@luma/core` (tested there).
+7. Selects the checkpoint in Forge **before** opening the tab.
+8. Opens the tab; the prefill extension fills every field.
 
 ## The rewrite, when crossing SD1.5 → SDXL
 

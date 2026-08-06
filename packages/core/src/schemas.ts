@@ -180,6 +180,43 @@ export const mediaItemSchema = z.object({
 })
 export type MediaItem = z.infer<typeof mediaItemSchema>
 
+/**
+ * What an img2img was made from.
+ *
+ * An img2img keeps its subject in an init image that no parameter block
+ * records — so a prompt of twelve words about a face can belong to a picture of
+ * a named character in a black dress, and the dress is nowhere in the text. In
+ * a library built by generating from its own output that init image is usually
+ * still here, and can be recognised by perceptual hash even though it can never
+ * be named. The rule lives in `origin.ts` and, mirrored, in
+ * `apps/desktop/src/origin.rs`.
+ */
+export const sourceOriginSchema = z.object({
+  /** The furthest ancestor the trail reached. */
+  item: mediaItemSchema,
+  /** How many img2img passes back it was found. Never zero. */
+  hops: z.number(),
+  /**
+   * Whether that ancestor is where the lineage started, or merely where the
+   * trail went cold.
+   *
+   * Measured on a real library: 28% of img2img rows walk to a genuine txt2img
+   * root, 40% stop on another img2img that has no findable source of its own.
+   * The second is still worth showing — its prompt may well name the character
+   * — but presenting it as the original would be a claim the data does not
+   * support.
+   */
+  reachedRoot: z.boolean(),
+  /**
+   * The widest hop in the chain, in bits.
+   *
+   * Confidence is set by the worst step, not the first: six tight hops and one
+   * loose one is only as trustworthy as the loose one.
+   */
+  weakestHop: z.number(),
+})
+export type SourceOrigin = z.infer<typeof sourceOriginSchema>
+
 /** A sampled video frame, kept so the detail view can show what was found where. */
 export const mediaFrameSchema = z.object({
   id: z.number(),

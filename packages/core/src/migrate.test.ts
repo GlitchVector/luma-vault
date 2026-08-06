@@ -400,3 +400,108 @@ describe('migrateGeneration, body overrides', () => {
     expect(block.startsWith('(full body:1.3),\n(gigantic breasts:2),')).toBe(true)
   })
 })
+
+/**
+ * The case this exists for: an **img2img** block, which is twelve words about a
+ * face and nothing else. The character, the outfit, the pose and the room were
+ * all in the init image, and a PNG parameter block does not carry that image —
+ * so migrating one faithfully reproduces a prompt describing almost nothing,
+ * and the model happily invents the rest. Reading the picture is the only way
+ * back, and this is where what was read goes.
+ */
+const IMG2IMG = [
+  'masterpiece, best quality, pink hair bangs, (beautiful green eyes:1.2), open mouth, blush, happy',
+  'Negative prompt: (worst quality, low quality:1.4), text, watermark',
+  'Steps: 30, Sampler: DPM++ SDE Karras, CFG scale: 7, Seed: 2824184793, Size: 1024x1024, ' +
+    'Model hash: 2839a9c268, Model: meinaunrealv41, Denoising strength: 0.43',
+].join('\n')
+
+describe('migrateGeneration, what the picture shows', () => {
+  it('appends the tags the prompt never said, behind what it did say', () => {
+    const { block, notes } = migrateGeneration(IMG2IMG, {
+      ...TO_XL,
+      add: 'black dress, garter straps, black thighhighs, demon horns',
+    })
+    const prompt = block.split('\nNegative prompt:')[0]!
+
+    // The person's own words stay in front, where their weight is.
+    expect(prompt.startsWith('masterpiece, best quality, pink hair bangs')).toBe(true)
+    expect(prompt).toContain('black dress, garter straps, black thighhighs, demon horns')
+    expect(notes.some((note) => note.includes('what the picture shows'))).toBe(true)
+  })
+
+  it('never says a tag the prompt already carries', () => {
+    const { block, notes } = migrateGeneration(IMG2IMG, {
+      ...TO_XL,
+      add: 'blush, black dress, happy',
+    })
+    const prompt = block.split('\nNegative prompt:')[0]!
+    // Duplicated concepts are encoded twice at half the attention each.
+    expect(prompt.match(/blush/g)).toHaveLength(1)
+    expect(prompt.match(/happy/g)).toHaveLength(1)
+    expect(prompt).toContain('black dress')
+    expect(notes.some((note) => note.includes('2 already there'))).toBe(true)
+  })
+
+  it('dedupes against the imposed body and shot too, not only the original', () => {
+    const { block } = migrateGeneration(IMG2IMG, {
+      ...TO_XL,
+      shot: 'cowboy shot',
+      body: '(large breasts:1.3)',
+      add: 'cowboy shot, black dress',
+    })
+    const prompt = block.split('\nNegative prompt:')[0]!
+    expect(prompt.match(/cowboy shot/g)).toHaveLength(1)
+  })
+})
+
+describe('migrateGeneration, an explicit canvas', () => {
+  it('takes the asked-for shape instead of the bucket rule, and says so once', () => {
+    const { block, notes } = migrateGeneration(IMG2IMG, { ...TO_XL, size: '832x1216' })
+    expect(block.split('\n').at(-1)).toContain('Size: 832x1216')
+    expect(notes.filter((note) => /Size|Canvas/.test(note))).toHaveLength(1)
+    expect(notes.some((note) => note.includes('Canvas set to 832x1216'))).toBe(true)
+  })
+
+  it('snaps an off-bucket canvas to the nearest one, keeping the shape', () => {
+    const { block, notes } = migrateGeneration(IMG2IMG, { ...TO_XL, size: '800x1200' })
+    expect(block.split('\n').at(-1)).toContain('Size: 832x1216')
+    expect(notes.some((note) => note.includes('nearest SDXL bucket'))).toBe(true)
+  })
+
+  it('applies on a same-architecture move, where no bucket rule runs at all', () => {
+    const { block } = migrateGeneration(IMG2IMG, {
+      architecture: 'sd',
+      checkpoint: 'anything_v5',
+      size: '512x768',
+    })
+    expect(block.split('\n').at(-1)).toContain('Size: 512x768')
+  })
+})
+
+describe('a negative that fights the imposed body', () => {
+  /** An SD1.5 negative written to fight that model's doughiness. */
+  const WITH_FAT = [
+    'masterpiece, best quality, pink hair bangs, open mouth, blush',
+    'Negative prompt: (worst quality, low quality:1.4), crease, fat, chubby, text',
+    'Steps: 30, Sampler: DPM++ SDE Karras, CFG scale: 7, Seed: 1, Size: 1024x1024, ' +
+      'Model hash: 2839a9c268, Model: meinaunrealv41, Denoising strength: 0.43',
+  ].join('\n')
+
+  it('is cleared by a body the command imposed, not only by one the prompt already had', () => {
+    const { block, notes } = migrateGeneration(WITH_FAT, {
+      ...TO_XL,
+      body: '(thick thighs:1.4), (wide hips:1.4)',
+    })
+    const negative = block.split('\n').find((line) => line.startsWith('Negative prompt:'))!
+
+    // The scan used to run before the override was applied, so the loudest ask
+    // in the whole block was the one thing it could not see — and the render
+    // came back slim with nothing in the notes saying why.
+    expect(negative).not.toContain('chubby')
+    expect(negative).not.toMatch(/(^|[^a-z])fat([^a-z]|$)/)
+    // Untouched: it is not one of the terms that cancels a body tag.
+    expect(negative).toContain('crease')
+    expect(notes.some((note) => note.includes('Removed'))).toBe(true)
+  })
+})

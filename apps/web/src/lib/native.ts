@@ -29,6 +29,7 @@ import {
   deviantArtSummarySchema,
   timelineBucketSchema,
   characterCountSchema,
+  sourceOriginSchema,
   type CharacterCount,
   type TimelineBucket,
   type DeviantArtAccount,
@@ -45,6 +46,7 @@ import {
   type RemoteStatus,
   type ScanProgress,
   type ShareStatus,
+  type SourceOrigin,
   type ThrottleLevel,
 } from '@luma/core'
 import { z } from 'zod'
@@ -441,6 +443,20 @@ export async function extrasOriginal(id: number): Promise<MediaItem | null> {
 export async function mediaById(id: number): Promise<MediaItem | null> {
   if (!isTauri()) return null
   return mediaItemSchema.nullable().parse(await invoke('media_by_id', { id }))
+}
+
+/**
+ * What an img2img was made from, walked back to the picture that started the
+ * lineage.
+ *
+ * Null is an ordinary answer rather than a failure: a third of img2img rows
+ * have no findable source, because it was never in this library or is no longer
+ * in it. Worth asking only when `generation.needsSourceImage` is set — for
+ * anything else the walk has nothing to look for.
+ */
+export async function sourceOrigin(id: number): Promise<SourceOrigin | null> {
+  if (!isTauri()) return null
+  return sourceOriginSchema.nullable().parse(await invoke('source_origin', { id }))
 }
 
 /**

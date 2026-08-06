@@ -23,6 +23,7 @@ mod deviantart;
 mod dupes;
 mod generated;
 pub mod imports;
+mod origin;
 mod paths;
 mod pipeline;
 mod protocol;
@@ -56,7 +57,7 @@ use crate::remote::RemoteState;
 use crate::types::{
     CharacterCount, DeviantArtAccount, DeviantArtDraft, DeviantArtSummary, Folder, LibraryStats,
     MediaFrame, MediaItem, MediaPage, MediaQuery, RemoteStatus, ScanProgress, ShareStatus,
-    TimelineBucket,
+    SourceOrigin, TimelineBucket,
 };
 use crate::watcher::FolderWatcher;
 
@@ -166,6 +167,14 @@ async fn extras_original(
     id: i64,
 ) -> Result<Option<MediaItem>, String> {
     api::extras_original(&state, id)
+}
+
+#[tauri::command(async)]
+async fn source_origin(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<Option<SourceOrigin>, String> {
+    api::source_origin(&state, id)
 }
 
 #[tauri::command(async)]
@@ -706,6 +715,7 @@ pub fn run() {
             media_timeline,
             top_characters,
             extras_original,
+            source_origin,
             recent_media,
             media_frames,
             media_by_id,
