@@ -21,6 +21,11 @@
 //! Combined with the strict CSP in `tauri.conf.json` — which forbids the page
 //! from talking to any remote origin — an allowlisted read cannot be exfiltrated
 //! even if a page were somehow compromised.
+//!
+//! `serve` is the check and the read, split out from the response so remote
+//! mode's HTTP route can share it (`remote.rs`). A shared library therefore
+//! hands out exactly the files the webview beside it could see — the allowlist
+//! is written once, and adding a route cannot forget it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -173,21 +178,76 @@ fn read_span(path: &Path, start: u64, end: u64) -> std::io::Result<Vec<u8>> {
     Ok(buffer)
 }
 
-fn error(status: u16, message: &str) -> Response<Vec<u8>> {
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "text/plain; charset=utf-8")
-        .body(message.as_bytes().to_vec())
-        .expect("static response always builds")
+/// One answer to a file request, before it is written down as either an IPC
+/// response or an HTTP one.
+///
+/// The decision — which bytes, which status, which range — is the same for a
+/// tile in this window and for a tile in a window on another machine. Only the
+/// envelope differs, so the envelope is the only thing the two callers write.
+pub struct FileReply {
+    pub status: u16,
+    pub mime: String,
+    pub bytes: Vec<u8>,
+    /// `bytes 0-4194303/20000000`, when this is a partial answer.
+    pub content_range: Option<String>,
+}
+
+impl FileReply {
+    pub fn failure(status: u16, message: &str) -> Self {
+        FileReply {
+            status,
+            mime: "text/plain; charset=utf-8".to_string(),
+            bytes: message.as_bytes().to_vec(),
+            content_range: None,
+        }
+    }
+
+    pub fn into_response(self) -> Response<Vec<u8>> {
+        let builder = Response::builder()
+            .status(self.status)
+            .header("Content-Type", &self.mime)
+            // Advertised unconditionally: it is what tells a <video> it may
+            // seek, and without it the element re-requests from zero to scrub.
+            .header("Accept-Ranges", "bytes")
+            .header("Content-Length", self.bytes.len().to_string())
+            // Derived files are content-addressed and originals are immutable
+            // for as long as the row exists — the watcher deletes the row when
+            // the file changes, so a long cache is safe and keeps scrolling
+            // back through a large grid free.
+            .header("Cache-Control", "public, max-age=31536000, immutable")
+            .header("Access-Control-Allow-Origin", "*");
+
+        let builder = match &self.content_range {
+            Some(range) => builder.header("Content-Range", range),
+            None => builder,
+        };
+
+        builder.body(self.bytes).unwrap_or_else(|_| {
+            Response::builder()
+                .status(500)
+                .body(b"cannot build response".to_vec())
+                .expect("static response always builds")
+        })
+    }
 }
 
 pub fn handle(roots: &ProtocolRoots, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     let uri = request.uri().to_string();
 
     let Some(path_str) = extract_path(&uri) else {
-        return error(400, "missing ?path= parameter");
+        return FileReply::failure(400, "missing ?path= parameter").into_response();
     };
-    let path = PathBuf::from(&path_str);
+    let range = request
+        .headers()
+        .get("range")
+        .and_then(|value| value.to_str().ok());
+
+    serve(roots, &path_str, range).into_response()
+}
+
+/// Read a file the allowlist permits, honouring a `Range` header if there is one.
+pub fn serve(roots: &ProtocolRoots, path_str: &str, range: Option<&str>) -> FileReply {
+    let path = PathBuf::from(path_str);
 
     let mut allowed: Vec<PathBuf> = roots.db.folder_paths().unwrap_or_default();
     allowed.push(roots.thumb_root.clone());
@@ -196,25 +256,21 @@ pub fn handle(roots: &ProtocolRoots, request: &Request<Vec<u8>>) -> Response<Vec
     if !is_allowed(&path, &allowed) {
         // Deliberately terse: a 403 that echoes the path back would make this
         // endpoint a filesystem-existence oracle.
-        return error(403, "path is not inside a watched folder");
+        return FileReply::failure(403, "path is not inside a watched folder");
     }
 
     let len = match std::fs::metadata(&path) {
         Ok(meta) => meta.len(),
         Err(meta_error) => {
             return if meta_error.kind() == std::io::ErrorKind::NotFound {
-                error(404, "not found")
+                FileReply::failure(404, "not found")
             } else {
-                error(500, "cannot read file")
+                FileReply::failure(500, "cannot read file")
             };
         }
     };
 
-    let requested = request
-        .headers()
-        .get("range")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| parse_range(value, len));
+    let requested = range.and_then(|value| parse_range(value, len));
 
     // Whole-file replies only for things small enough to hold twice over.
     let whole_file = requested.is_none() && len <= MAX_WHOLE_FILE;
@@ -229,37 +285,20 @@ pub fn handle(roots: &ProtocolRoots, request: &Request<Vec<u8>>) -> Response<Vec
         Ok(bytes) => bytes,
         Err(read_error) => {
             return if read_error.kind() == std::io::ErrorKind::NotFound {
-                error(404, "not found")
+                FileReply::failure(404, "not found")
             } else {
-                error(500, "cannot read file")
+                FileReply::failure(500, "cannot read file")
             };
         }
     };
 
-    let builder = Response::builder()
-        .header("Content-Type", mime_for(&path))
-        // Advertised unconditionally: it is what tells a <video> it may seek,
-        // and without it the element re-requests from zero to scrub.
-        .header("Accept-Ranges", "bytes")
-        .header("Content-Length", bytes.len().to_string())
-        // Derived files are content-addressed and originals are immutable
-        // for as long as the row exists — the watcher deletes the row when
-        // the file changes, so a long cache is safe and keeps scrolling
-        // back through a large grid free.
-        .header("Cache-Control", "public, max-age=31536000, immutable")
-        .header("Access-Control-Allow-Origin", "*");
-
-    let builder = if len == 0 || whole_file {
-        builder.status(200)
-    } else {
-        builder
-            .status(206)
-            .header("Content-Range", format!("bytes {start}-{end}/{len}"))
-    };
-
-    builder
-        .body(bytes)
-        .unwrap_or_else(|_| error(500, "cannot build response"))
+    let partial = !(len == 0 || whole_file);
+    FileReply {
+        status: if partial { 206 } else { 200 },
+        mime: mime_for(&path).to_string(),
+        bytes,
+        content_range: partial.then(|| format!("bytes {start}-{end}/{len}")),
+    }
 }
 
 #[cfg(test)]
@@ -375,6 +414,43 @@ mod tests {
         assert!(
             !is_allowed(&traversal, &[root]),
             "canonicalization must collapse .. before the prefix check"
+        );
+    }
+
+    #[test]
+    fn serving_applies_the_allowlist_and_the_range_in_one_place() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let watched = dir.path().join("watched");
+        std::fs::create_dir_all(&watched).unwrap();
+        let inside = watched.join("a.bin");
+        std::fs::write(&inside, (0..=255_u8).cycle().take(4_000).collect::<Vec<u8>>()).unwrap();
+        let outside = dir.path().join("secret.txt");
+        std::fs::write(&outside, b"x").unwrap();
+
+        let db = std::sync::Arc::new(crate::db::Db::open(&dir.path().join("index.db")).unwrap());
+        db.add_folder(&watched.canonicalize().unwrap().to_string_lossy(), 0)
+            .unwrap();
+        let roots = ProtocolRoots {
+            db,
+            thumb_root: dir.path().join("thumbs"),
+            frame_root: dir.path().join("frames"),
+        };
+
+        let whole = serve(&roots, &inside.to_string_lossy(), None);
+        assert_eq!(whole.status, 200);
+        assert_eq!(whole.bytes.len(), 4_000);
+        assert!(whole.content_range.is_none(), "a whole file is not partial");
+
+        let ranged = serve(&roots, &inside.to_string_lossy(), Some("bytes=100-199"));
+        assert_eq!(ranged.status, 206);
+        assert_eq!(ranged.bytes.len(), 100);
+        assert_eq!(ranged.content_range.as_deref(), Some("bytes 100-199/4000"));
+
+        let refused = serve(&roots, &outside.to_string_lossy(), None);
+        assert_eq!(refused.status, 403);
+        assert!(
+            !String::from_utf8_lossy(&refused.bytes).contains("secret"),
+            "the refusal must not echo the path back — that makes it an existence oracle"
         );
     }
 

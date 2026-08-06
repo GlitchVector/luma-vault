@@ -3,6 +3,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDialogs } from '#/lib/dialogs.ts'
 import { resetToasts, toast } from '#/lib/toasts.ts'
+
+/** What extrasOriginal resolves to. Null unless a case sets it. */
+let extrasOriginalState: import('@luma/core').MediaItem | null = null
 import { ToastHost } from '#/components/ToastHost.tsx'
 import { resetPreloads } from '#/lib/preload.ts'
 import { DialogHost } from './DialogHost.tsx'
@@ -69,6 +72,7 @@ vi.mock('#/lib/native.ts', () => ({
     Promise.resolve(backend.find((row) => row.path === path) ?? null),
   mediaFrames: () => Promise.resolve([]),
   setStars: () => Promise.resolve(),
+  extrasOriginal: () => Promise.resolve(extrasOriginalState),
   deleteItem: () => Promise.resolve(),
   revealInFileManager: () => Promise.resolve(),
   generationParameters: () => Promise.resolve(null),
@@ -144,6 +148,7 @@ afterEach(() => {
   // Toasts hold a timer each; leaving them queued would let one raised by a
   // case fire into the next.
   resetToasts()
+  extrasOriginalState = null
   vi.unstubAllGlobals()
 })
 
@@ -742,7 +747,7 @@ describe('the /sdxl hand-off', () => {
   const generated = (name: string) => ({
     ...makeItem(7),
     name,
-    generation: { tool: 'Stable Diffusion', prompt: '1girl, silver hair', needsSourceImage: false },
+    generation: { tool: 'Stable Diffusion', prompt: '1girl, silver hair', needsSourceImage: false, postprocessed: false },
   })
 
   it('offers the exact command for this picture', () => {
@@ -810,7 +815,7 @@ describe('where the /sdxl command sits', () => {
           tool: 'Stable Diffusion',
           prompt: '1girl, silver hair',
           model: 'waiNSFW.safetensors',
-          needsSourceImage: false,
+          needsSourceImage: false, postprocessed: false,
         },
       },
       showGeneration: true,
@@ -826,5 +831,121 @@ describe('where the /sdxl command sits', () => {
 
     expect(at('SDXL Claude Command')).toBeGreaterThan(at('1girl, silver hair'))
     expect(at('/sdxl a.png')).toBeGreaterThan(at('SDXL Claude Command'))
+  })
+})
+
+describe('an Extras upscale in the lightbox', () => {
+  const extras = () => ({
+    ...makeItem(7),
+    name: '00042-upscaled.png',
+    generation: {
+      tool: 'Stable Diffusion',
+      prompt: 'Postprocess upscale by: 2, Postprocess upscaler: 4x-UltraSharp',
+      needsSourceImage: false, postprocessed: true,
+    },
+  })
+
+  it('shows the ORIGINAL prompt in the panel, with the extras pass after it', async () => {
+    // The prompt someone opens the panel for is the prompt of the thing that
+    // was upscaled — the extras block itself has no prompt, only the
+    // postprocess line, which appears after as its own section.
+    extrasOriginalState = {
+      ...makeItem(3),
+      name: 'original.png',
+      generation: {
+        tool: 'Stable Diffusion',
+        prompt: 'aqua (konosuba), ocean, huge ass',
+        needsSourceImage: false, postprocessed: false,
+      },
+    }
+    renderLightbox({ seed: extras(), showGeneration: true })
+
+    expect(await screen.findByText('aqua (konosuba), ocean, huge ass')).toBeTruthy()
+    expect(screen.getByText('Extras pass')).toBeTruthy()
+    expect(screen.getByText(/Postprocess upscale by: 2/)).toBeTruthy()
+    // The /sdxl hand-off migrates the original, not the upscale.
+    expect(screen.getByText('/sdxl original.png')).toBeTruthy()
+  })
+
+  it('falls back to its own metadata when no original is linked, and says so', async () => {
+    renderLightbox({ seed: extras(), showGeneration: true })
+
+    expect(await screen.findByText('Extras pass')).toBeTruthy()
+    expect(screen.getByText(/Run Find Duplicates to link/)).toBeTruthy()
+  })
+
+  it('wears the extras pill in the footer', async () => {
+    renderLightbox({
+      seed: {
+        ...extras(),
+        verdict: {
+          person: true, sexy: false, nude: false, rating: 'sfw',
+          topLabel: null, topLabelTitle: null, topScore: 0,
+          frameCount: 1, sexyFrameCount: 0, posterFrameIndex: null,
+        },
+      },
+    })
+    expect(await screen.findByText('extras')).toBeTruthy()
+  })
+})
+
+describe('the extras pill swaps the image', () => {
+  const extrasSeed = () => ({
+    ...makeItem(7),
+    name: '00000.png',
+    thumbPath: '/thumbs/aa/bb/extras-upscale.png',
+    generation: {
+      tool: 'Stable Diffusion', prompt: 'copied original block',
+      needsSourceImage: false, postprocessed: true,
+    },
+    verdict: {
+      person: true, sexy: false, nude: false, rating: 'sfw' as const,
+      topLabel: null, topLabelTitle: null, topScore: 0,
+      frameCount: 1, sexyFrameCount: 0, posterFrameIndex: null,
+    },
+  })
+
+  it('flips to the original and back, swapping only the drawn file', async () => {
+    extrasOriginalState = {
+      ...makeItem(3),
+      name: 'source.png',
+      thumbPath: '/thumbs/cc/dd/the-original.png',
+      generation: {
+        tool: 'Stable Diffusion', prompt: '1girl',
+        needsSourceImage: false, postprocessed: false,
+      },
+    }
+    renderLightbox({ seed: extrasSeed() })
+
+    const pill = await screen.findByText('extras')
+    // The poster is painted as a CSS background and the full file mounts as
+    // an <img> after the dwell — the swap must show in whichever is present.
+    const drawn = () => [
+      ...[...document.querySelectorAll('img')].map((img) => img.getAttribute('src') ?? ''),
+      ...[...document.querySelectorAll('div')].map((div) => div.style.backgroundImage ?? ''),
+    ]
+
+    await waitFor(() => expect(drawn().some((src) => src.includes('extras-upscale'))).toBe(true))
+    pill.click()
+    // Label flips, and the stage now draws the original's file.
+    expect(await screen.findByText('original')).toBeTruthy()
+    await waitFor(() =>
+      expect(drawn().some((src) => src.includes('the-original'))).toBe(true),
+    )
+
+    screen.getByText('original').click()
+    expect(await screen.findByText('extras')).toBeTruthy()
+    await waitFor(() =>
+      expect(drawn().some((src) => src.includes('extras-upscale'))).toBe(true),
+    )
+  })
+
+  it('stays inert when no original was found, and says why', async () => {
+    renderLightbox({ seed: extrasSeed() })
+    const pill = await screen.findByText('extras')
+    pill.click()
+    // No flip — there is nothing to flip to — and the title explains.
+    expect(screen.queryByText('original')).toBeNull()
+    expect(pill.closest('button')?.title).toMatch(/was not found/)
   })
 })

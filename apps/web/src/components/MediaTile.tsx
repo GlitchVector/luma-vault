@@ -148,7 +148,7 @@ export const MediaTile = memo(function MediaTile({
             : null}
 
           {/* One row, so a 4K video does not stack two badges on one corner. */}
-          {isVideo || fourK ? (
+          {isVideo || fourK || item.generation?.needsSourceImage || item.generation?.postprocessed ? (
             <span className="pointer-events-none absolute left-1.5 top-1.5 flex gap-1">
               {isVideo ? (
                 <span className="rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-zinc-100">
@@ -161,6 +161,22 @@ export const MediaTile = memo(function MediaTile({
                   title={`${item.width}×${item.height}`}
                 >
                   4K
+                </span>
+              ) : null}
+              {item.generation?.needsSourceImage ? (
+                <span
+                  className="rounded bg-black/70 px-1 py-0.5 text-[10px] font-semibold tracking-wide text-amber-200/90"
+                  title="Made from another image — its parameters alone cannot reproduce it"
+                >
+                  i2i
+                </span>
+              ) : null}
+              {item.generation?.postprocessed ? (
+                <span
+                  className="rounded bg-black/70 px-1 py-0.5 text-[10px] font-semibold tracking-wide text-sky-200/90"
+                  title="Upscaled in the Extras tab — an existing image, resized"
+                >
+                  e
                 </span>
               ) : null}
             </span>

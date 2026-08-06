@@ -118,6 +118,8 @@ export const generationSchema = z.object({
    * same description — which looks like success, so the UI has to say so.
    */
   needsSourceImage: z.boolean().default(false),
+  /** Ran through the Extras tab — an upscale of an existing image. */
+  postprocessed: z.boolean().default(false),
 })
 export type Generation = z.infer<typeof generationSchema>
 
@@ -329,6 +331,28 @@ export const mediaQuerySchema = z.object({
    */
   unstarred: z.boolean().default(false),
   /**
+   * Filter by whether a stable diffusion prompt was recovered from the file.
+   *
+   * Three-valued: null is no filter, true is only-with, false is only-without.
+   * Not the same axis as the `generated` tag — a re-saved JPEG can carry a
+   * generator marker in EXIF while its parameter block did not survive, so
+   * "generated" and "has a prompt" genuinely differ on real files.
+   */
+  hasPrompt: z.boolean().nullable().default(null),
+  /**
+   * Filter by whether the image was made from another image (img2img).
+   *
+   * Three-valued like `hasPrompt`. Derived from the parameter block at scan
+   * time — see `needsSourceImage` on the generation — so it is a claim the
+   * file makes about itself, not a guess.
+   */
+  img2img: z.boolean().nullable().default(null),
+  /**
+   * Filter by whether the image came out of the Extras tab. Three-valued like
+   * `img2img`; the claim is the block's own `Postprocess` keys.
+   */
+  extras: z.boolean().nullable().default(null),
+  /**
    * Show only items whose longest edge is at least this many pixels.
    *
    * A number rather than a `fourKOnly` flag because the rule *is* a number —
@@ -379,6 +403,19 @@ export const timelineBucketSchema = z.object({
   count: z.number(),
 })
 export type TimelineBucket = z.infer<typeof timelineBucketSchema>
+
+/**
+ * One row of the character leaderboard.
+ *
+ * `name` is danbooru's `name (series)` form, lowercase — which doubles as a
+ * ready-made search term, because the prompt it was detected in contains it
+ * verbatim and search runs over prompts.
+ */
+export const characterCountSchema = z.object({
+  name: z.string(),
+  count: z.number(),
+})
+export type CharacterCount = z.infer<typeof characterCountSchema>
 
 export const mediaPageSchema = z.object({
   items: z.array(mediaItemSchema),
@@ -459,3 +496,31 @@ export const deviantArtSummarySchema = z.object({
   results: z.array(deviantArtResultSchema),
 })
 export type DeviantArtSummary = z.infer<typeof deviantArtSummarySchema>
+
+// ---------------------------------------------------------------------------
+// Remote
+// ---------------------------------------------------------------------------
+
+export const remoteStatusSchema = z.object({
+  connected: z.boolean(),
+  /** `192.168.1.42:7870`, or empty when this is the machine's own library. */
+  address: z.string(),
+  /** The peer's hostname, empty when it did not report one. */
+  host: z.string(),
+  folders: z.number(),
+  items: z.number(),
+  /** Prefilled next time, so reconnecting is one click and not a memory test. */
+  lastAddress: z.string(),
+  /** A passphrase is remembered. Never the passphrase itself. */
+  hasPassphrase: z.boolean(),
+})
+export type RemoteStatus = z.infer<typeof remoteStatusSchema>
+
+export const shareStatusSchema = z.object({
+  sharing: z.boolean(),
+  port: z.number(),
+  /** What to type on the other machine. Empty when it could not be worked out. */
+  addresses: z.array(z.string()),
+  hasPassphrase: z.boolean(),
+})
+export type ShareStatus = z.infer<typeof shareStatusSchema>

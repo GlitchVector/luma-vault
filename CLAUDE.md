@@ -18,7 +18,8 @@ belongs here; if it is needed only when working *in an area*, it belongs in
 A Tauri 2 desktop app. `packages/core` is a pure TypeScript domain with no I/O
 and no DOM. `apps/desktop` is Rust: the SQLite index, the folder scanner, the
 thumbnail and ffmpeg pipelines, a pool of persistent Python NudeNet workers, the
-`luma://` protocol handler and the filesystem watcher. `apps/web` is a React SPA
+`luma://` protocol handler, the filesystem watcher and the LAN server another
+machine browses this library through. `apps/web` is a React SPA
 whose only native access is `src/lib/native.ts`. `contracts/` holds golden JSON
 fixtures that *are* the wire format, checked from both languages.
 
@@ -35,7 +36,8 @@ fixtures that *are* the wire format, checked from both languages.
    load undoes it.
 4. **The `luma://` allowlist.** A file is served only from inside a watched
    folder or the app's own derived-data directories. Do not add a bypass, and do
-   not grant the `fs` plugin to the webview.
+   not grant the `fs` plugin to the webview. Remote mode's file route goes
+   through the same `protocol::serve` — keep it that way.
 5. **Per-item failures are rows, not exceptions.** One corrupt file must never
    abort a scan.
 

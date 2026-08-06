@@ -44,9 +44,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      # rustup reads `rust-toolchain.toml`, so the version lives in one place and
+      # CI cannot drift from a dev machine. Not `stable`: the cache below is
+      # keyed on the compiler's identity, and a Rust release would otherwise
+      # throw the whole thing away on whatever morning it happened to land.
+      - name: Install the pinned toolchain
+        run: |
+          version=$(sed -ne 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          test -n "$version" || { echo "no channel in rust-toolchain.toml"; exit 1; }
+          rustup toolchain install "$version" --profile minimal --component clippy
 
       # Tauri's Linux build needs the webkit stack even for `cargo check`,
       # because tauri-build resolves the system webview at compile time.
@@ -62,9 +68,20 @@ jobs:
             libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev
 
-      - uses: Swatinem/rust-cache@v2
+      # Pinned to a commit, not to `@v2`. That tag moves: v2.9.2 landed on the
+      # morning of 2026-08-06 and changed the key it computes, which orphaned
+      # every cache in the repository at once — five gigabytes of them — and
+      # every run that day rebuilt the graph from scratch.
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2.9.2
         with:
           workspaces: apps/desktop
+          # Restore on every branch, save only on main. Each run writes over a
+          # gigabyte, the repository's budget is ten, and GitHub evicts
+          # least-recently-used — so a handful of pull-request runs push out the
+          # one cache every branch restores from, and then everything is cold.
+          # A branch that has not touched Cargo.lock gets a full hit from main
+          # anyway, so this costs those runs nothing.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # tauri-build refuses to run when frontendDist is missing, and the Rust
       # job deliberately does not install Node just to satisfy that check.
@@ -73,11 +90,15 @@ jobs:
           mkdir -p apps/web/dist
           echo '<!doctype html><title>ci</title>' > apps/web/dist/index.html
 
+      # `--profile ci` is the dev profile without the optimized dependencies —
+      # see the profile's comment in Cargo.toml. Both steps use it so they share
+      # one set of artifacts; running one under `dev` and the other under `ci`
+      # would compile the graph twice over and cache both.
       - name: Clippy
-        run: cargo clippy --locked --manifest-path apps/desktop/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --locked --profile ci --manifest-path apps/desktop/Cargo.toml --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --locked --manifest-path apps/desktop/Cargo.toml
+        run: cargo test --locked --profile ci --manifest-path apps/desktop/Cargo.toml
 
   classifier:
     runs-on: ubuntu-latest

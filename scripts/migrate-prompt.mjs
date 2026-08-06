@@ -26,19 +26,20 @@
  * happened.
  */
 
-import { spawn } from 'node:child_process'
-import { openSync, readSync, closeSync, statSync, readdirSync, existsSync } from 'node:fs'
+import { openSync, readSync, closeSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { migrateGeneration } from '../packages/core/src/migrate.ts'
-
-const FORGE = process.env.LUMA_FORGE_URL ?? 'http://127.0.0.1:7860'
-
-function fail(...lines) {
-  for (const line of lines) console.error(line)
-  process.exit(1)
-}
+import {
+  DEFAULT_MODEL,
+  architectureOf,
+  fail,
+  forge,
+  openWithBlock,
+  resolveModel,
+  selectCheckpoint,
+} from './lib/forge.mjs'
 
 // --- the index --------------------------------------------------------------
 
@@ -120,74 +121,26 @@ function parameterBlock(path) {
   }
 }
 
-// --- the target model -------------------------------------------------------
-
-async function forge(path, options) {
-  const response = await fetch(FORGE + path, options)
-  if (!response.ok) throw new Error(`${path} returned ${response.status}`)
-  return response.json()
-}
-
-/** `sd` or `xl`, from the tensor names in the safetensors header. */
-function architectureOf(file) {
-  const fd = openSync(file, 'r')
-  try {
-    const head = Buffer.alloc(8)
-    readSync(fd, head, 0, 8, 0)
-    const length = Number(head.readBigUInt64LE(0))
-    if (length <= 0 || length > 64 * 1024 * 1024) return 'sd'
-    const json = Buffer.alloc(length)
-    readSync(fd, json, 0, length, 8)
-    const keys = Object.keys(JSON.parse(json.toString('utf8')))
-    if (keys.some((key) => key.includes('double_blocks.'))) return 'flux'
-    // SDXL is the one with a second text encoder.
-    return keys.some((key) => key.startsWith('conditioner.embedders.1.')) ? 'xl' : 'sd'
-  } catch {
-    return 'sd'
-  } finally {
-    closeSync(fd)
-  }
-}
-
-/** The newest installed checkpoint whose name contains `wanted`. */
-async function resolveModel(wanted) {
-  const installed = await forge('/luma/v1/checkpoints')
-  const matches = installed.filter((entry) =>
-    entry.name.toLowerCase().includes(wanted.toLowerCase()),
-  )
-  if (matches.length === 0) {
-    fail(
-      `No installed checkpoint matches "${wanted}". Installed:`,
-      ...installed.map((entry) => '  ' + entry.name),
-    )
-  }
-  // Newest by file date — "the latest one I have" is a question about the
-  // filesystem, not about version numbers in names, which are not comparable
-  // across authors.
-  matches.sort((a, b) => statSync(b.filename).mtimeMs - statSync(a.filename).mtimeMs)
-  return matches[0]
-}
-
 // --- putting it together ----------------------------------------------------
 
-/**
- * The model to migrate onto when none is named.
- *
- * Naming the model is the part of this you almost never want to think about —
- * there is usually one checkpoint you are moving everything onto, and typing it
- * every time is friction on the common case. Overridable by the argument, and
- * still a substring, so `deliberate` keeps picking the newest installed
- * checkpoint whose filename contains it rather than pinning a version.
- */
-const DEFAULT_MODEL = 'deliberate'
-
-const [imageName, targetName = DEFAULT_MODEL] = process.argv.slice(2)
+const argv = process.argv.slice(2)
+function flag(name) {
+  const at = argv.indexOf(name)
+  if (at < 0) return undefined
+  const value = argv.splice(at, 2)[1]
+  if (!value) fail(`${name} needs a value, e.g. ${name} "full body"`)
+  return value
+}
+const shot = flag('--shot')
+const body = flag('--body')
+const [imageName, targetName = DEFAULT_MODEL] = argv
 if (!imageName) {
   fail(
-    'usage: pnpm migrate-prompt <image-name> [target-model]',
+    'usage: pnpm migrate-prompt <image-name> [target-model] [--shot "full body"] [--body "(gigantic ass:2)"]',
     '',
     `  pnpm migrate-prompt 00166-3997412987            # onto ${DEFAULT_MODEL}`,
     '  pnpm migrate-prompt 00166-3997412987 illustrious',
+    '  pnpm migrate-prompt 00166-3997412987 --shot "wide shot" --body "(huge breasts:1.5)"',
   )
 }
 
@@ -206,6 +159,8 @@ const { block: migrated, notes } = migrateGeneration(block, {
   architecture,
   checkpoint: target.name,
   emphasis: options.emphasis,
+  shot,
+  body,
 })
 
 console.log(`from  ${row.name}`)
@@ -216,18 +171,6 @@ if (notes.length === 0) console.log('  - Same architecture: model and seed chang
 
 // Selecting first is the difference between a dropdown that shows the model and
 // one that renders empty over a correctly loaded model.
-await forge('/luma/v1/checkpoint', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ name: target.name }),
-})
-
-const url = `${FORGE}/#luma_params=${encodeURIComponent(migrated)}`
-const opener =
-  process.platform === 'win32'
-    ? ['cmd', ['/c', 'start', '', url]]
-    : process.platform === 'darwin'
-      ? ['open', [url]]
-      : ['xdg-open', [url]]
-spawn(opener[0], opener[1], { detached: true, stdio: 'ignore' }).unref()
+await selectCheckpoint(target.name)
+openWithBlock(migrated)
 console.log('\nopened Forge with the migrated parameters.')

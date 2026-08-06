@@ -110,6 +110,18 @@ impl Db {
                 PRIMARY KEY (media_id, tag)
             );
 
+            -- Characters a generated image depicts, detected from its prompt.
+            -- Its own table rather than rows in media_tags: those are
+            -- structural ("document", "generated") and feed the hide filters,
+            -- and a character in that pipeline would become hideable-by-tag in
+            -- ways nothing intends.
+            CREATE TABLE IF NOT EXISTS media_characters (
+                media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                name     TEXT    NOT NULL,
+                PRIMARY KEY (media_id, name)
+            );
+            CREATE INDEX IF NOT EXISTS characters_by_name ON media_characters(name, media_id);
+
             CREATE INDEX IF NOT EXISTS tags_by_tag       ON media_tags(tag, media_id);
             CREATE INDEX IF NOT EXISTS media_folder      ON media(folder_id);
             CREATE INDEX IF NOT EXISTS media_recent      ON media(modified_at DESC);
@@ -430,15 +442,115 @@ impl Db {
                         classified_at = COALESCE(
                             m.classified_at,
                             (SELECT o.classified_at FROM media o WHERE o.path = m.upscaled_from)
+                        ),
+                        generation_json = COALESCE(
+                            m.generation_json,
+                            (SELECT o.generation_json FROM media o WHERE o.path = m.upscaled_from)
+                        ),
+                        prompt = COALESCE(
+                            m.prompt,
+                            (SELECT o.prompt FROM media o WHERE o.path = m.upscaled_from)
                         )
                   WHERE m.upscaled_from IS NOT NULL
                     AND EXISTS (SELECT 1 FROM media o WHERE o.path = m.upscaled_from)",
                 [],
             )?;
             conn.execute(
+                "INSERT OR IGNORE INTO media_characters (media_id, name)
+                 SELECT m.id, c.name FROM media m
+                 JOIN media o ON o.path = m.upscaled_from
+                 JOIN media_characters c ON c.media_id = o.id
+                 WHERE m.upscaled_from IS NOT NULL",
+                [],
+            )?;
+            conn.execute(
                 "INSERT INTO settings (key, value) VALUES ('variant_inheritance', ?1)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 params![VARIANT_INHERITANCE_VERSION],
+            )?;
+        }
+
+        // Characters for rows labelled before detection existed. New prompts
+        // get theirs in `set_generation`; the library already scanned would
+        // otherwise stay uncounted forever, since a rescan deliberately leaves
+        // existing rows alone. Versioned so a rule change (a new exclusion, a
+        // fixed parser) can re-run it once — bump the version to invalidate.
+        let detected: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'character_detection'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if detected.as_deref() != Some(CHARACTER_DETECTION_VERSION) {
+            conn.execute("DELETE FROM media_characters", [])?;
+            {
+                let mut read = conn.prepare(
+                    "SELECT id, prompt FROM media WHERE prompt IS NOT NULL AND prompt != ''",
+                )?;
+                let mut write = conn.prepare(
+                    "INSERT OR IGNORE INTO media_characters (media_id, name) VALUES (?1, ?2)",
+                )?;
+                let rows: Vec<(i64, String)> = read
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<rusqlite::Result<_>>()?;
+                for (id, prompt) in rows {
+                    for name in crate::generated::characters_of(&prompt) {
+                        write.execute(params![id, name])?;
+                    }
+                }
+            }
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('character_detection', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![CHARACTER_DETECTION_VERSION],
+            )?;
+        }
+
+        // The `postprocessed` flag for rows labelled before it existed. A
+        // rescan deliberately leaves existing rows alone, so without this the
+        // extras filter finds nothing in a library scanned last week — which
+        // is exactly what happened. Pure SQL, because the old parser stored
+        // the postprocess line AS the prompt (an extras block has no settings
+        // line to anchor on), so the prompt itself carries the evidence the
+        // parser would otherwise re-read from the file.
+        let extras_done: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'extras_detection'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if extras_done.as_deref() != Some(EXTRAS_DETECTION_VERSION) {
+            conn.execute(
+                "UPDATE media
+                 SET generation_json =
+                     json_set(generation_json, '$.postprocessed', json('true'))
+                 WHERE generation_json IS NOT NULL
+                   AND (prompt LIKE '%Postprocess upscale%'
+                        OR prompt LIKE '%Postprocess upscaler%')",
+                [],
+            )?;
+            // The metadata-less era: the folder is the signal, and a file
+            // with no block at all gets a minimal one to hang the flag on.
+            // LIKE is case-insensitive for ASCII, which suits Windows paths.
+            for segment in ["\\extras\\", "/extras/", "\\extras-images\\", "/extras-images/"] {
+                let pattern = format!("%{segment}%");
+                conn.execute(
+                    "UPDATE media
+                     SET generation_json = CASE
+                         WHEN generation_json IS NULL
+                             THEN '{\"tool\":\"Stable Diffusion\",\"postprocessed\":true}'
+                         ELSE json_set(generation_json, '$.postprocessed', json('true'))
+                     END
+                     WHERE path LIKE ?1",
+                    params![pattern],
+                )?;
+            }
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('extras_detection', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![EXTRAS_DETECTION_VERSION],
             )?;
         }
 
@@ -629,13 +741,27 @@ impl Db {
                     added_at = (SELECT o.added_at FROM media o WHERE o.path = m.upscaled_from),
                     stars = (SELECT o.stars FROM media o WHERE o.path = m.upscaled_from),
                     verdict_json = (SELECT o.verdict_json FROM media o WHERE o.path = m.upscaled_from),
-                    classified_at = (SELECT o.classified_at FROM media o WHERE o.path = m.upscaled_from)
+                    classified_at = (SELECT o.classified_at FROM media o WHERE o.path = m.upscaled_from),
+                    generation_json = (SELECT o.generation_json FROM media o WHERE o.path = m.upscaled_from),
+                    prompt = (SELECT o.prompt FROM media o WHERE o.path = m.upscaled_from)
               WHERE m.upscaled_from IS NOT NULL
                 AND m.thumb_path IS NULL
                 AND EXISTS (
                     SELECT 1 FROM media o
                      WHERE o.path = m.upscaled_from AND o.thumb_path IS NOT NULL
                 )",
+            [],
+        )?;
+
+        // The characters ride with the prompt: the variant stands in for its
+        // original in the grid, so it has to answer the same leaderboard and
+        // the same click-through search the original answered.
+        tx.execute(
+            "INSERT OR IGNORE INTO media_characters (media_id, name)
+             SELECT m.id, c.name FROM media m
+             JOIN media o ON o.path = m.upscaled_from
+             JOIN media_characters c ON c.media_id = o.id
+             WHERE m.upscaled_from IS NOT NULL",
             [],
         )?;
 
@@ -1098,6 +1224,34 @@ impl Db {
     /// seed that happens to contain the same digits.
     pub fn set_generation(&self, id: i64, generation: Option<&Generation>) -> Result<()> {
         let conn = self.conn.lock().expect("index mutex poisoned");
+
+        // The Extras era wrote no distinguishing metadata — old A1111 copied
+        // the ORIGINAL's block into the upscale — so the path is the signal.
+        // Applied here, at the one funnel, so scans and rescans agree with
+        // the backfill; a file in an extras folder is postprocessed whatever
+        // its copied block claims, and one with no block at all still gets a
+        // minimal generation to hang the flag on.
+        let path: String =
+            conn.query_row("SELECT path FROM media WHERE id = ?1", params![id], |row| row.get(0))?;
+        let from_extras = crate::generated::extras_path(&path);
+        let mut owned;
+        let generation = match (generation, from_extras) {
+            (Some(found), true) if !found.postprocessed => {
+                owned = found.clone();
+                owned.postprocessed = true;
+                Some(&owned)
+            }
+            (None, true) => {
+                owned = Generation {
+                    tool: "Stable Diffusion".to_string(),
+                    postprocessed: true,
+                    ..Default::default()
+                };
+                Some(&owned)
+            }
+            (found, _) => found,
+        };
+
         let json = match generation {
             Some(generation) => Some(serde_json::to_string(generation)?),
             None => None,
@@ -1106,7 +1260,54 @@ impl Db {
             "UPDATE media SET generation_json = ?2, prompt = ?3 WHERE id = ?1",
             params![id, json, generation.and_then(|g| g.prompt.clone())],
         )?;
+
+        // Characters ride along with the prompt: this is the one funnel every
+        // prompt passes through, so detection can live nowhere else and still
+        // cover scans, rescans and retries alike. Replace-then-insert, so a
+        // relabel of a file whose prompt changed does not accumulate the old
+        // cast.
+        conn.execute("DELETE FROM media_characters WHERE media_id = ?1", params![id])?;
+        if let Some(prompt) = generation.and_then(|g| g.prompt.as_deref()) {
+            let mut stmt = conn.prepare(
+                "INSERT OR IGNORE INTO media_characters (media_id, name) VALUES (?1, ?2)",
+            )?;
+            for name in crate::generated::characters_of(prompt) {
+                stmt.execute(params![id, name])?;
+            }
+        }
         Ok(())
+    }
+
+    /// The most-depicted characters across the current library, biggest first.
+    ///
+    /// Grid semantics, not raw rows: a picture hidden behind its upscaled
+    /// variant must not count twice, or every upscaled character doubles.
+    pub fn top_characters(
+        &self,
+        query: &MediaQuery,
+        limit: i64,
+    ) -> Result<Vec<crate::types::CharacterCount>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        // The same predicates the grid runs, range included -- the leaderboard
+        // describes what is on screen, and a filter added to one and not the
+        // other breaks that silently. Same argument as the timeline, except
+        // this one *does* honour the date range: narrowing to a fortnight
+        // should rank that fortnight's cast.
+        let (where_parts, binds) = Self::media_filter(query, true);
+        let sql = format!(
+            "SELECT c.name, COUNT(*) AS n FROM media_characters c
+             JOIN media ON media.id = c.media_id
+             WHERE {} GROUP BY c.name ORDER BY n DESC, c.name ASC LIMIT ?{}",
+            where_parts.join(" AND "),
+            binds.len() + 1
+        );
+        let mut refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+        refs.push(&limit);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(refs.as_slice(), |row| {
+            Ok(crate::types::CharacterCount { name: row.get(0)?, count: row.get(1)? })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Attach an imported star rating to a row, if one was recorded for it.
@@ -1691,6 +1892,37 @@ impl Db {
             // everything nobody has judged yet.
             where_parts.push("stars IS NULL".to_string());
         }
+        match query.has_prompt {
+            // Empty counts as absent: `set_generation` writes the prompt
+            // column from an Option, but an A1111 block with a blank prompt
+            // stores an empty string, and "has a prompt" promises words.
+            Some(true) => where_parts.push("(prompt IS NOT NULL AND prompt != '')".to_string()),
+            Some(false) => where_parts.push("(prompt IS NULL OR prompt = '')".to_string()),
+            None => {}
+        }
+        match query.extras {
+            Some(true) => where_parts.push(
+                "json_extract(generation_json, '$.postprocessed') = 1".to_string(),
+            ),
+            Some(false) => where_parts.push(
+                "(generation_json IS NULL OR json_extract(generation_json, '$.postprocessed') IS NOT 1)"
+                    .to_string(),
+            ),
+            None => {}
+        }
+        match query.img2img {
+            // Through JSON1 rather than a LIKE over the blob: the field name
+            // could legitimately appear inside a prompt's text, and
+            // `json_extract` reads the claim where it actually lives.
+            Some(true) => where_parts.push(
+                "json_extract(generation_json, '$.needsSourceImage') = 1".to_string(),
+            ),
+            Some(false) => where_parts.push(
+                "(generation_json IS NULL OR json_extract(generation_json, '$.needsSourceImage') IS NOT 1)"
+                    .to_string(),
+            ),
+            None => {}
+        }
         if let Some(min) = query.min_longest_edge {
             // A row the measure phase has not reached yet has no dimensions, so
             // `MAX` is NULL and the comparison excludes it — which is right.
@@ -1839,6 +2071,71 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// The picture an Extras-tab upscale was made from, when it can be found.
+    ///
+    /// The Extras block names no source file, so the link is *perceptual*:
+    /// an upscale and its original are the same picture at two sizes, which
+    /// is exactly what the duplicate grouping already detects. Within the
+    /// group, the original is the member that is not itself postprocessed —
+    /// preferring one whose prompt survived, then the smallest, since the
+    /// source of an upscale is by definition the smaller file.
+    ///
+    /// `None` when the row has no dupe group yet — Find Duplicates has not
+    /// run since it was indexed — which the caller reports as "unlinked", not
+    /// as an error.
+    pub fn extras_original(&self, id: i64) -> Result<Option<MediaItem>> {
+        let Some(row) = self.media_by_id(id)? else { return Ok(None) };
+
+        // Filename first: A1111's extras output commonly keeps the original's
+        // filename, sometimes behind a `00000-` counter prefix — so the link
+        // is often sitting in the name, needing no duplicate scan at all.
+        let mut candidates: Vec<String> = vec![row.name.clone()];
+        if let Some((prefix, rest)) = row.name.split_once('-') {
+            if !rest.is_empty() && prefix.chars().all(|c| c.is_ascii_digit()) {
+                candidates.push(rest.to_string());
+            }
+        }
+        {
+            let conn = self.conn.lock().expect("index mutex poisoned");
+            for name in &candidates {
+                let sql = format!(
+                    "SELECT {MEDIA_COLUMNS} FROM media
+                     WHERE name = ?1 AND id != ?2
+                       AND (generation_json IS NULL
+                            OR json_extract(generation_json, '$.postprocessed') IS NOT 1)
+                     ORDER BY (prompt IS NOT NULL AND prompt != '') DESC, width * height ASC
+                     LIMIT 1"
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let found = stmt
+                    .query_map(params![name, id], map_media_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                if let Some(item) = found.into_iter().next() {
+                    return Ok(Some(item));
+                }
+            }
+        }
+
+        // Perceptual fallback: an upscale and its original are the same
+        // picture at two sizes, which the duplicate grouping detects — for
+        // extras whose filename kept nothing of the source.
+        let Some(group) = row.dupe_group else { return Ok(None) };
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let sql = format!(
+            "SELECT {MEDIA_COLUMNS} FROM media
+             WHERE dupe_group = ?1 AND id != ?2
+               AND (generation_json IS NULL
+                    OR json_extract(generation_json, '$.postprocessed') IS NOT 1)
+             ORDER BY (prompt IS NOT NULL AND prompt != '') DESC, width * height ASC
+             LIMIT 1"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let found = stmt
+            .query_map(params![group, id], map_media_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(found.into_iter().next())
+    }
+
     /// Newest files across every folder — the strip pinned above the grid once
     /// a scan finishes.
     pub fn recent_media(&self, limit: i64) -> Result<Vec<MediaItem>> {
@@ -1913,7 +2210,13 @@ const FTS_VERSION: &str = "1-trigram-name-prompt";
 /// Rows indexed under an older rule are repaired once on the next launch.
 /// Without it, only variants created *after* the change behave correctly and the
 /// grid is inconsistent in a way nothing on screen explains.
-const VARIANT_INHERITANCE_VERSION: &str = "2-judgements";
+const VARIANT_INHERITANCE_VERSION: &str = "3-searchable-identity";
+
+/// Bump to re-run character detection over every stored prompt on next open.
+const CHARACTER_DETECTION_VERSION: &str = "4-dictionary";
+
+/// Bump to re-mark Extras-tab upscales across every stored row on next open.
+const EXTRAS_DETECTION_VERSION: &str = "2-by-path";
 
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
@@ -2104,6 +2407,9 @@ mod tests {
             tag: None,
             min_stars: None,
             unstarred: false,
+            has_prompt: None,
+            img2img: None,
+            extras: None,
             min_longest_edge: None,
             modified_after: None,
             modified_before: None,
@@ -2217,6 +2523,329 @@ mod tests {
         let buckets = db.media_timeline(&query()).expect("timeline");
         assert_eq!(buckets.len(), 1);
         assert_eq!(buckets[0].start, A_MONDAY_MS);
+    }
+
+    #[test]
+    fn the_prompt_filter_separates_recovered_from_stripped() {
+        let (db, _) = seeded();
+        let ids: Vec<i64> =
+            db.query_media(&query()).expect("query").items.iter().map(|i| i.id).collect();
+        db.set_generation(
+            ids[0],
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".to_string(),
+                prompt: Some("1girl, ocean".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("set");
+        // Generated, but the block did not survive: a marker with no prompt.
+        // This is the row that keeps "has a prompt" a different question from
+        // the AI tag.
+        db.set_generation(
+            ids[1],
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".to_string(),
+                prompt: None,
+                ..Default::default()
+            }),
+        )
+        .expect("set");
+
+        let with = db
+            .query_media(&MediaQuery { has_prompt: Some(true), ..query() })
+            .expect("query");
+        assert_eq!(with.total, 1);
+        assert_eq!(with.items[0].id, ids[0]);
+
+        let without = db
+            .query_media(&MediaQuery { has_prompt: Some(false), ..query() })
+            .expect("query");
+        assert_eq!(without.total, 2, "the markered-but-promptless row counts as without");
+    }
+
+    #[test]
+    fn an_upscaled_variant_still_answers_the_search_its_original_matched() {
+        // The reported failure: filters plus a search term, upscale three,
+        // close the results — gone. The original is hidden unconditionally
+        // once its variant stands in, but the variant was a fresh file with
+        // no prompt, so the search rejected it and the picture vanished from
+        // the filtered grid entirely. Same class as the stars case the
+        // insert-time comment documents; the searchable identity has to
+        // travel too.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("folder");
+        db.insert_media_batch(
+            folder,
+            &[super::tests::file("/media/00042-girl.png", MediaKind::Image, 100)],
+            1,
+        )
+        .expect("insert original");
+        let original = db.query_media(&query()).expect("q").items[0].id;
+        db.set_generation(
+            original,
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".to_string(),
+                prompt: Some("aqua (konosuba), ocean, huge ass".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("set");
+        // The original needs a thumbnail for the variant to inherit — that is
+        // the stand-in gate.
+        db.update_thumbnail(
+            original,
+            &ThumbnailUpdate {
+                thumb_path: "/thumbs/aa/bb.jpg".to_string(),
+                thumb_width: 512,
+                thumb_height: 512,
+                width: 1024,
+                height: 1024,
+                duration_sec: None,
+            },
+        )
+        .expect("thumb");
+
+        // The upscaled variant lands, exactly as the upscale command inserts it.
+        db.insert_media_batch(
+            folder,
+            &[super::tests::file("/media/00042-girl_upscaled_4k.png", MediaKind::Image, 100)],
+            1,
+        )
+        .expect("insert variant");
+
+        let searched = MediaQuery { search: "aqua".to_string(), ..query() };
+        let found = db.query_media(&searched).expect("q");
+        assert_eq!(found.total, 1, "the picture must not vanish from the search");
+        assert!(
+            found.items[0].upscaled_from.is_some(),
+            "and the one shown is the variant standing in"
+        );
+        // The leaderboard link survives too.
+        let top = db.top_characters(&query(), 10).expect("top");
+        assert_eq!(top[0].count, 1, "one picture, not two, and not zero");
+    }
+
+    #[test]
+    fn an_extras_upscale_links_to_its_original_by_filename_first() {
+        // A1111's extras output keeps the original's filename, sometimes
+        // behind a counter prefix — no duplicate scan needed for those.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                super::tests::file("/media/txt2img/00042-girl.png", MediaKind::Image, 100),
+                super::tests::file("/media/extras/00001-00042-girl.png", MediaKind::Image, 200),
+            ],
+            1,
+        )
+        .expect("insert");
+        let rows = db.query_media(&query()).expect("q").items;
+        let (original, upscale) = (rows[1].id, rows[0].id);
+        db.set_generation(
+            original,
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".to_string(),
+                prompt: Some("1girl, ocean".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("set");
+        db.set_generation(
+            upscale,
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".to_string(),
+                postprocessed: true,
+                ..Default::default()
+            }),
+        )
+        .expect("set");
+
+        // No dupe groups anywhere — the counter-stripped filename is the link.
+        let found = db.extras_original(upscale).expect("q").expect("linked");
+        assert_eq!(found.id, original);
+    }
+
+    #[test]
+    fn rows_labelled_before_extras_detection_are_marked_on_open() {
+        // The reported failure: a fully scanned library, the new filter, zero
+        // results — because a rescan leaves labelled rows alone. The old
+        // parser stored the postprocess line as the prompt, which is evidence
+        // enough to repair in SQL.
+        let file = tempfile::NamedTempFile::new().expect("temp");
+        let path = file.path().to_path_buf();
+        drop(file);
+        {
+            let db = Db::open(&path).expect("open");
+            let folder = db.add_folder("/media", 1).expect("folder");
+            db.insert_media_batch(
+                folder,
+                &[super::tests::file("/media/up.png", MediaKind::Image, 100)],
+                1,
+            )
+            .expect("insert");
+            let id = db.query_media(&query()).expect("q").items[0].id;
+            // What the old parser wrote: the postprocess line as prompt, no
+            // postprocessed flag.
+            db.set_generation(
+                id,
+                Some(&crate::generated::Generation {
+                    tool: "Stable Diffusion".to_string(),
+                    prompt: Some(
+                        "Postprocess upscale by: 2, Postprocess upscaler: 4x-UltraSharp"
+                            .to_string(),
+                    ),
+                    ..Default::default()
+                }),
+            )
+            .expect("set");
+            let conn = rusqlite::Connection::open(&path).expect("raw");
+            conn.execute("DELETE FROM settings WHERE key = 'extras_detection'", [])
+                .expect("unmark");
+        }
+
+        let db = Db::open(&path).expect("reopen");
+        let found = db.query_media(&MediaQuery { extras: Some(true), ..query() }).expect("q");
+        assert_eq!(found.total, 1, "the repaired row answers the extras filter");
+        assert!(found.items[0].generation.as_ref().expect("gen").postprocessed);
+    }
+
+    #[test]
+    fn the_extras_filter_and_original_link_through_the_dupe_group() {
+        let (db, _) = seeded();
+        let ids: Vec<i64> =
+            db.query_media(&query()).expect("query").items.iter().map(|i| i.id).collect();
+        // ids[0]: the original, with a prompt. ids[1]: its Extras upscale.
+        db.set_generation(
+            ids[0],
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".to_string(),
+                prompt: Some("aqua (konosuba), ocean".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("set");
+        db.set_generation(
+            ids[1],
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".to_string(),
+                postprocessed: true,
+                ..Default::default()
+            }),
+        )
+        .expect("set");
+
+        let only = db.query_media(&MediaQuery { extras: Some(true), ..query() }).expect("q");
+        assert_eq!(only.total, 1);
+        assert_eq!(only.items[0].id, ids[1]);
+        let none = db.query_media(&MediaQuery { extras: Some(false), ..query() }).expect("q");
+        assert_eq!(none.total, 2, "originals and never-generated both count as not-extras");
+
+        // Unlinked until Find Duplicates has grouped them — reported as None,
+        // never an error. (The seeded names share nothing, so the filename
+        // path finds nothing either.)
+        assert!(db.extras_original(ids[1]).expect("q").is_none());
+
+        db.set_duplicate_groups(&[(1, ids[0]), (1, ids[1])]).expect("group");
+        let original = db.extras_original(ids[1]).expect("q").expect("linked");
+        assert_eq!(original.id, ids[0], "the non-extras, prompt-bearing member");
+    }
+
+    #[test]
+    fn the_img2img_filter_reads_the_blocks_own_claim() {
+        let (db, _) = seeded();
+        let ids: Vec<i64> =
+            db.query_media(&query()).expect("query").items.iter().map(|i| i.id).collect();
+        let gen = |from_image: bool| crate::generated::Generation {
+            tool: "Stable Diffusion".to_string(),
+            needs_source_image: from_image,
+            ..Default::default()
+        };
+        db.set_generation(ids[0], Some(&gen(true))).expect("set");
+        db.set_generation(ids[1], Some(&gen(false))).expect("set");
+        // ids[2] has no generation at all — it must count as not-img2img.
+
+        let only = db.query_media(&MediaQuery { img2img: Some(true), ..query() }).expect("q");
+        assert_eq!(only.total, 1);
+        assert_eq!(only.items[0].id, ids[0]);
+
+        let none = db.query_media(&MediaQuery { img2img: Some(false), ..query() }).expect("q");
+        assert_eq!(none.total, 2, "txt2img and never-generated both count as not-img2img");
+    }
+
+    #[test]
+    fn characters_rank_by_how_many_pictures_carry_them() {
+        let (db, _) = seeded();
+        let ids: Vec<i64> = db.query_media(&query()).expect("query").items.iter().map(|i| i.id).collect();
+        let gen = |prompt: &str| crate::generated::Generation {
+            tool: "Stable Diffusion".to_string(),
+            prompt: Some(prompt.to_string()),
+            ..Default::default()
+        };
+        // Two of aqua, one of megumin — and detection happens on the same call
+        // that stores the prompt, which is the whole design.
+        db.set_generation(ids[0], Some(&gen("aqua (konosuba), ocean"))).expect("set");
+        db.set_generation(ids[1], Some(&gen("Aqua (Konosuba), beach"))).expect("set");
+        db.set_generation(ids[2], Some(&gen("megumin (konosuba), staff"))).expect("set");
+
+        let top = db.top_characters(&query(), 10).expect("top");
+        assert_eq!(top[0].name, "aqua (konosuba)");
+        // The leaderboard follows the grid: narrowed to videos, only the
+        // video's aqua remains — the image copies leave the ranking with the
+        // filter, which is the whole point of it following.
+        let narrowed = MediaQuery { kind: Some(MediaKind::Video), ..query() };
+        let ranked = db.top_characters(&narrowed, 10).expect("top");
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].count, 1, "one of aqua's two is a video");
+        assert_eq!(top[0].count, 2);
+        assert_eq!(top[1].count, 1);
+
+        // A prompt that changes loses its old cast rather than accumulating.
+        db.set_generation(ids[2], Some(&gen("landscape, no one"))).expect("set");
+        let top = db.top_characters(&query(), 10).expect("top");
+        assert_eq!(top.len(), 1, "megumin left with the prompt that named her");
+    }
+
+    #[test]
+    fn a_library_that_predates_detection_is_backfilled_on_open() {
+        // A rescan deliberately leaves existing rows alone, so without this the
+        // whole already-scanned library would stay uncounted forever.
+        let file = tempfile::NamedTempFile::new().expect("temp");
+        let path = file.path().to_path_buf();
+        drop(file);
+
+        {
+            let db = Db::open(&path).expect("open");
+            let folder = db.add_folder("/media", 1).expect("folder");
+            db.insert_media_batch(
+                folder,
+                &[super::tests::file("/media/a.png", MediaKind::Image, 100)],
+                1,
+            )
+            .expect("insert");
+            let id = db.query_media(&query()).expect("q").items[0].id;
+            db.set_generation(
+                id,
+                Some(&crate::generated::Generation {
+                    tool: "Stable Diffusion".to_string(),
+                    prompt: Some("aqua (konosuba), ocean".to_string()),
+                    ..Default::default()
+                }),
+            )
+            .expect("set");
+            // Put the file in the state a pre-detection library is in: prompt
+            // stored, characters absent, no marker saying they were looked for.
+            let conn = rusqlite::Connection::open(&path).expect("raw");
+            conn.execute("DELETE FROM media_characters", []).expect("clear");
+            conn.execute("DELETE FROM settings WHERE key = 'character_detection'", [])
+                .expect("unmark");
+        }
+
+        let db = Db::open(&path).expect("reopen");
+        let top = db.top_characters(&query(), 10).expect("top");
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].name, "aqua (konosuba)");
     }
 
     #[test]

@@ -1,10 +1,20 @@
-import { basenameOf, displayPath, type Folder, type LibraryStats } from '@luma/core'
+import {
+  basenameOf,
+  displayPath,
+  type CharacterCount,
+  type Folder,
+  type LibraryStats,
+} from '@luma/core'
 import { Button, cn } from '@luma/ui'
 import { MAX_TILE_SIZE, MIN_TILE_SIZE } from './MediaTile.tsx'
 
 interface FolderSidebarProps {
   folders: Folder[]
   stats: LibraryStats | null
+  /** The most-depicted characters, biggest first. Empty until detection ran. */
+  characters: CharacterCount[]
+  /** A name was clicked: filter the grid to it. */
+  onCharacter: (name: string) => void
   /** Longest edge of a grid tile, in CSS pixels. */
   tileSize: number
   onTileSize: (size: number) => void
@@ -22,6 +32,8 @@ interface FolderSidebarProps {
 export function FolderSidebar({
   folders,
   stats,
+  characters,
+  onCharacter,
   tileSize,
   onTileSize,
   selectedFolderId,
@@ -114,7 +126,51 @@ export function FolderSidebar({
           however many folders are in the list above. The slider is grouped with
           them rather than with the buttons because it is the same kind of
           thing: a property of the view, not an action on the library. */}
-      <div className="mt-auto flex flex-col gap-2 border-t border-white/5 pt-3">
+      {/* Who the library is of. Above the stats, because it answers the same
+          kind of question they do — what is in here — and clicking through to
+          the grid is the point: the name becomes the search term, which works
+          because detection found it verbatim in the prompts search runs over. */}
+      {characters.length > 0 ? (
+        // `min-h-0` + an inner scroll: the list takes whatever height sits
+        // between the folders and the stats, so a tall window shows all
+        // thirty and a short one shows what fits and scrolls for the rest —
+        // CSS adapts, nothing measures.
+        <div className="mt-auto flex min-h-0 shrink flex-col border-t border-white/5 pt-3">
+          <h3 className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-zinc-600">
+            Characters
+          </h3>
+          <ul className="flex min-h-0 flex-col overflow-y-auto">
+            {characters.map((entry, index) => (
+              <li key={entry.name}>
+                <button
+                  type="button"
+                  onClick={() => onCharacter(entry.name)}
+                  title={`Show only ${entry.name}`}
+                  className="flex w-full items-baseline gap-2 rounded px-1 py-0.5 text-left text-[11px] text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
+                >
+                  {/* The rank, fixed-width so the names align in a column —
+                      two digits is enough for a top 30. */}
+                  <span className="w-5 shrink-0 text-right tabular-nums text-zinc-600">
+                    {index + 1}.
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                  <span className="shrink-0 tabular-nums text-zinc-600">
+                    {entry.count.toLocaleString()}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div
+        className={
+          characters.length > 0
+            ? 'flex flex-col gap-2 border-t border-white/5 pt-3'
+            : 'mt-auto flex flex-col gap-2 border-t border-white/5 pt-3'
+        }
+      >
       {stats ? (
         <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-zinc-500">
           <dt>Images</dt>
