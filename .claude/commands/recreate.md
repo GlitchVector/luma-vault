@@ -170,6 +170,32 @@ Then show the user the prompt you composed, with one line on anything you
 were unsure of — a character you almost recognised, an outfit detail you had
 to approximate. Those are the lines they will want to edit.
 
+## Hassaku, and Illustrious checkpoints generally
+
+Pass `hassaku`. Both commands then send what the Illustrious guidance asks for:
+
+| | Hassaku / Illustrious | the plain XL default |
+|---|---|---|
+| Quality | `masterpiece, best quality, amazing quality, very aesthetic, **newest**, absurdres` | same without `newest` |
+| Negative | adds **`bad quality`** beside `worst quality` | `worst quality` only |
+| Sampler | **Euler a**, schedule Automatic | DPM++ 2M SDE Karras |
+| Steps | 28 | 28 |
+| CFG | 5 | 5 |
+
+`newest` is a recency tag Illustrious learned and the plain SDXL merges never
+saw. `bad quality` is a separate learned tag from `worst quality` rather than a
+synonym — these models are described as reading the negative about as strongly
+as the prompt, so it is worth stating fully.
+
+**CFG is the one thing the sources disagree on.** A Hassaku-specific page says
+7; the Illustrious user guides call 4.5-5 the sweet spot inside a usable 3-7.
+Neither is the creator — Civitai moved the model behind a host that cannot be
+read — so the commands send 5, which is inside both. Try `--cfg 7` for the
+other reading.
+
+`perfectdeliberate` is an Illustrious checkpoint too, and its own card asks for
+CFG 5-8, so `--cfg 6` is worth a try there when a render looks flat.
+
 ## AniVerse
 
 Pass `aniverse` and both commands switch to **AniVerse XL's own recommended

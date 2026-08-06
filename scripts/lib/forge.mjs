@@ -75,6 +75,7 @@ export function architectureOf(file) {
  */
 export function familyOf(name) {
   if (/noob/i.test(name)) return 'noob'
+  if (/hassaku/i.test(name)) return 'hassaku'
   if (/aniverse/i.test(name)) return 'aniverse'
   return undefined
 }
@@ -91,9 +92,21 @@ export function familyOf(name) {
  * trained style is never engaged, and the same prompt comes back looking like
  * base SDXL each time, which reads as the model being inconsistent.
  */
-export function settingsFor(family) {
+export function settingsFor(family, architecture) {
+  // Gated on the architecture, not only the name. `aniverse` matches several
+  // installed checkpoints here and the newest by date is an **SD1.5** one —
+  // which would otherwise be handed the XL card's CFG and sampler, a tuning
+  // for a model it is not. The name says which family; the file says whether
+  // the card applies.
+  if (architecture !== 'xl') return null
   if (family === 'aniverse') {
     return { cfg: 5.5, steps: 30, sampler: 'DPM++ 2M', schedule: 'Karras', trigger: '4n1v3rs3' }
+  }
+  if (family === 'hassaku') {
+    // CFG is the one the sources disagree about — 7 on a Hassaku-specific
+    // page, 4.5-5 in the Illustrious guides, usable range 3-7. 5 is inside
+    // both, and `--cfg 7` tries the other reading.
+    return { cfg: 5, steps: 28, sampler: 'Euler a', schedule: 'Automatic' }
   }
   return null
 }

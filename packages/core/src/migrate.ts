@@ -49,7 +49,7 @@ export interface MigrationTarget {
    * which are genuinely different words rather than a preference — see
    * {@link NOOB_QUALITY}. Anything else uses the common XL set.
    */
-  family?: 'noob' | 'aniverse'
+  family?: 'noob' | 'aniverse' | 'hassaku'
   /**
    * The emphasis mode the webui is *currently* set to.
    *
@@ -274,6 +274,54 @@ const ANIVERSE_QUALITY = 'masterpiece, best quality, more details, (hyperdetaile
  * comes back is base SDXL wearing the prompt.
  */
 const ANIVERSE_TRIGGER = '4n1v3rs3'
+
+/**
+ * What Hassaku XL and the Illustrious models generally ask for.
+ *
+ * `masterpiece, best quality, amazing quality` in front is the part the guides
+ * are emphatic about, with `very aesthetic` and `newest` after — so this is the
+ * common XL set plus `newest`, which Illustrious learned as a recency tag and
+ * the plain SDXL merges never saw.
+ */
+const HASSAKU_QUALITY =
+  'masterpiece, best quality, amazing quality, very aesthetic, newest, absurdres'
+
+/**
+ * The matching negative.
+ *
+ * `bad quality` beside `worst quality` on purpose: the Illustrious guidance
+ * names both, and they are separate learned tags rather than synonyms. These
+ * models are described as responding to the negative about as strongly as to
+ * the prompt, which is why it is worth stating fully rather than thinly.
+ */
+const HASSAKU_NEGATIVE = [
+  'worst quality',
+  'bad quality',
+  'low quality',
+  'lowres',
+  'bad anatomy',
+  'bad hands',
+  'missing fingers',
+  'extra digits',
+  'jpeg artifacts',
+  'signature',
+  'watermark',
+  'username',
+  'artist name',
+]
+
+/**
+ * Hassaku's own sampling, as far as the sources agree.
+ *
+ * `Euler a` is named repeatedly as the best sampler for Illustrious models, at
+ * around 28 steps. **CFG is where the sources disagree**: one Hassaku-specific
+ * page says 7, the Illustrious user guides call 4.5-5 the sweet spot within a
+ * usable 3-7. Neither is the creator — Civitai moved the model behind a host
+ * that cannot be read — so this takes 5, which is inside both claims and
+ * matches the other Illustrious checkpoint here. `--cfg 7` tries the other
+ * reading.
+ */
+const HASSAKU_SETTINGS = { cfg: '5', steps: '28', sampler: 'Euler a', schedule: 'Automatic' }
 
 const ANIVERSE_NEGATIVE = [
   'worst quality',
@@ -635,7 +683,9 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
           ? NOOB_QUALITY
           : target.family === 'aniverse'
             ? ANIVERSE_QUALITY
-            : XL_QUALITY
+            : target.family === 'hassaku'
+              ? HASSAKU_QUALITY
+              : XL_QUALITY
       nextPrompt = `${quality},\n${nextPrompt}`
       notes.push(
         target.family === 'noob'
@@ -662,7 +712,9 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
         ? NOOB_NEGATIVE
         : target.family === 'aniverse'
           ? ANIVERSE_NEGATIVE
-          : XL_NEGATIVE
+          : target.family === 'hassaku'
+            ? HASSAKU_NEGATIVE
+            : XL_NEGATIVE
     for (const term of baseline) {
       if (!new RegExp(`(^|[^a-z])${term}([^a-z]|$)`).test(already)) keptNegative.push(term)
     }
@@ -863,18 +915,22 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
     // Written by whichever webui made the original, and read by nothing here.
     next.delete('Version')
 
-    if (target.family === 'aniverse') {
-      // This family's own numbers, from the library rather than from a model
-      // card — see ANIVERSE_SETTINGS.
-      next.set('CFG scale', ANIVERSE_SETTINGS.cfg)
-      next.set('Steps', ANIVERSE_SETTINGS.steps)
-      next.set('Sampler', ANIVERSE_SETTINGS.sampler)
-      next.set('Schedule type', ANIVERSE_SETTINGS.schedule)
+    // A family's own numbers, where its card gives them — see the constants.
+    const tuned =
+      target.family === 'aniverse'
+        ? ANIVERSE_SETTINGS
+        : target.family === 'hassaku'
+          ? HASSAKU_SETTINGS
+          : null
+    if (tuned) {
+      next.set('CFG scale', tuned.cfg)
+      next.set('Steps', tuned.steps)
+      next.set('Sampler', tuned.sampler)
+      next.set('Schedule type', tuned.schedule)
       next.set('Clip skip', '2')
       notes.push(
-        `CFG ${ANIVERSE_SETTINGS.cfg}, ${ANIVERSE_SETTINGS.steps} steps, ` +
-          `${ANIVERSE_SETTINGS.sampler} ${ANIVERSE_SETTINGS.schedule} — AniVerse XL's own ` +
-          'recommended settings, not the booru-XL tuning.',
+        `CFG ${tuned.cfg}, ${tuned.steps} steps, ${tuned.sampler} ${tuned.schedule} — what this ` +
+          'checkpoint asks for, rather than the booru-XL tuning.',
       )
     } else {
       next.set('CFG scale', '5')

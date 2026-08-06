@@ -101,7 +101,7 @@ const quote = (value) => '"' + String(value).replaceAll('"', "'") + '"'
 // booru-XL default — see `settingsFor`. A v-prediction target overrides the
 // sampler regardless, because that is a correctness question rather than a
 // taste one.
-const tuned = settingsFor(familyOf(target.name))
+const tuned = settingsFor(familyOf(target.name), architecture)
 const sampler = vPred
   ? ['Sampler: Euler']
   : tuned
