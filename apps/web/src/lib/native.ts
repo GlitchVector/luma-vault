@@ -81,6 +81,17 @@ async function tauri<T>(command: string, args?: Record<string, unknown>): Promis
  * a screen: a browser tab belongs on the machine somebody is sitting at, and a
  * file-manager window opened on the machine they are not is worse than being
  * told where the file actually is, which is what `reveal_item` does instead.
+ *
+ * `forge_url` for the same reason as `open_external`, and it has to be for the
+ * same reason or the two disagree. The address is only ever used to build a
+ * tab that opens *here*, so it has to mean something here. Routed, the peer
+ * answered with its own setting — an unconfigured peer returning its
+ * `127.0.0.1:7860` default, which then opened on this machine and pointed at
+ * this machine, where there is no Forge at all.
+ *
+ * `forge_select_checkpoint` is deliberately *not* here: it is an HTTP call
+ * rather than an address, and letting the peer make it means the peer reaching
+ * its own loopback, which no firewall is going to argue with.
  */
 const LOCAL_ONLY = new Set([
   'remote_status',
@@ -91,6 +102,8 @@ const LOCAL_ONLY = new Set([
   'set_share',
   'open_external',
   'reveal_item',
+  'forge_url',
+  'set_forge_url',
 ])
 
 /** `null` until the backend has been asked, which happens on the first call. */
