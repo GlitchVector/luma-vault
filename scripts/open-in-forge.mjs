@@ -20,6 +20,7 @@
 import {
   DEFAULT_MODEL,
   familyOf,
+  settingsFor,
   warnAboutVPrediction,
   inspectCheckpoint,
   fail,
@@ -55,7 +56,7 @@ function parseArgs(argv) {
     else if (flag === '--height') args.height = Number(argv[++at])
     // Booru-XL sits at 5, but NoobAI wants 4-6 and burns colour at the top of
     // that — a saturated, night-lit render from a daylight prompt is the tell.
-    else if (flag === '--cfg') args.cfg = Number(argv[++at])
+    else if (flag === '--cfg') { args.cfg = Number(argv[++at]); args.cfgGiven = true }
     else fail(`unknown argument: ${flag}`)
   }
   return args
@@ -96,14 +97,30 @@ const quote = (value) => '"' + String(value).replaceAll('"', "'") + '"'
 // A v-prediction checkpoint predicts v rather than noise. The sampler is the
 // half a parameter block can carry — the *mode* is the webui's job, and not
 // every build does it. See the warning below.
+// What this family was actually generated at, where it differs from the
+// booru-XL default — see `settingsFor`. A v-prediction target overrides the
+// sampler regardless, because that is a correctness question rather than a
+// taste one.
+const tuned = settingsFor(familyOf(target.name))
 const sampler = vPred
   ? ['Sampler: Euler a']
-  : ['Sampler: DPM++ 2M SDE', 'Schedule type: Karras']
+  : tuned
+    ? [`Sampler: ${tuned.sampler}`, `Schedule type: ${tuned.schedule}`]
+    : ['Sampler: DPM++ 2M SDE', 'Schedule type: Karras']
 if (vPred) warnAboutVPrediction(target.name)
+if (tuned) {
+  console.error(
+    `note: using ${target.name}'s own tuning — CFG ${tuned.cfg}, ${tuned.steps} steps,
+` +
+      `  ${tuned.sampler} ${tuned.schedule} — measured from your highest-rated images of this
+` +
+      '  family rather than the booru-XL default. Override with --cfg.',
+  )
+}
 const settings = [
-  'Steps: 28',
+  `Steps: ${tuned ? tuned.steps : 28}`,
   ...sampler,
-  `CFG scale: ${args.cfg}`,
+  `CFG scale: ${args.cfgGiven ? args.cfg : (tuned ? tuned.cfg : args.cfg)}`,
   'Seed: -1',
   `Size: ${args.width}x${args.height}`,
   `Model: ${target.name}`,

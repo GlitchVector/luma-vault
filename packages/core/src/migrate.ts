@@ -49,7 +49,7 @@ export interface MigrationTarget {
    * which are genuinely different words rather than a preference — see
    * {@link NOOB_QUALITY}. Anything else uses the common XL set.
    */
-  family?: 'noob'
+  family?: 'noob' | 'aniverse'
   /**
    * The emphasis mode the webui is *currently* set to.
    *
@@ -255,6 +255,63 @@ const XL_NEGATIVE = [
  */
 const NOOB_QUALITY = 'masterpiece, best quality, newest, absurdres, highres'
 
+/**
+ * What the AniVerse family expects — taken from this library, not from a model
+ * card.
+ *
+ * The exact prefix on 379 of the 1,806 AniVerse images rated four or better
+ * here, and the most common by a wide margin. It is doing different work from
+ * the booru quality tags: `perfect face` and `highest detailed face` are asks
+ * about rendering, and `dynamic angle` is a composition instruction, which is
+ * why a prompt written for a booru model comes out of this family looking
+ * unlike anything in the folder next to it.
+ */
+const ANIVERSE_QUALITY =
+  '(best quality, masterpiece, perfect face, beautiful and aesthetic:1.2, colorful, dynamic angle, highest detailed face)'
+
+/**
+ * The matching negative, from the same 1,806 — minus two things.
+ *
+ * `EasyNegative` and `bad-hands-5` appear in the original on 451 images and are
+ * **SD1.5 embeddings**: on SDXL they are the literal words, which is the whole
+ * reason `SD15_EMBEDDINGS` exists. `(realistic:1.0)` is left out too, and less
+ * obviously — it is in the original, but a tag's job depends on what the
+ * checkpoint renders by default, and negating it on a model that is already
+ * flat produces cel shading rather than the soft look it was asking for. Add
+ * it by hand if the target turns out to render hard.
+ */
+const ANIVERSE_NEGATIVE = [
+  'worst quality',
+  'low quality',
+  'abs',
+  'muscular',
+  'rib',
+  'greyscale',
+  'monochrome',
+  'text',
+  'title',
+  'logo',
+  'signature',
+  'watermark',
+  'censored',
+  'crease',
+  'fat',
+  'chubby',
+]
+
+/**
+ * What this library's own AniVerse work was generated at.
+ *
+ * Measured over the images rated four or better: CFG **7** on 1,795 of 1,806,
+ * 50 steps on 1,389, and `DPM++ SDE Karras` on 1,220. The booru-XL tuning
+ * (CFG 5, 28 steps) is a different model's answer, and imposing it is why the
+ * same prompt through this family came back looking like a stranger's.
+ *
+ * 40 rather than 50 steps: the measurement is from SD1.5 generations, and the
+ * gain above 40 on an XL model is not visible while the cost is linear.
+ */
+const ANIVERSE_SETTINGS = { cfg: '7', steps: '40', sampler: 'DPM++ SDE', schedule: 'Karras' }
+
 /** The matching baseline negative, with the recency terms that make it work. */
 const NOOB_NEGATIVE = [
   'worst quality',
@@ -382,11 +439,31 @@ const NOT_FACE_WORDS =
 export function facePrompt(prompt: string): string {
   const kept = prompt
     .split(/[,\n]/)
-    .map((part) => part.trim())
+    .map((part) => balanced(part.trim()))
     .filter((part) => part.length > 0 && FACE_WORDS.test(part) && !NOT_FACE_WORDS.test(part))
     .slice(0, 12)
   if (kept.length === 0) return ''
   return `masterpiece, best quality, detailed face, beautiful detailed eyes, ${kept.join(', ')}`
+}
+
+/**
+ * Drop brackets a tag lost its partner for when the prompt was split on commas.
+ *
+ * A weighted group spans commas — `(best quality, perfect face:1.2)` is one
+ * group holding two tags — so splitting it hands back `perfect face:1.2)` with
+ * a closing bracket and nothing to match it. Pasted into ADetailer that is not
+ * a cosmetic problem: the attention parser reads brackets across the whole
+ * field, so one stray closer re-weights everything after it or fails outright.
+ *
+ * Trailing weights go with them. `:1.2` is an instruction about the *prompt*
+ * this tag came from, and the face pass is a different, smaller prompt where
+ * the number was never calibrated.
+ */
+function balanced(part: string): string {
+  let text = part
+  while (/^[([{]/.test(text) && !/[)\]}]/.test(text)) text = text.slice(1).trim()
+  while (/[)\]}]$/.test(text) && !/[([{]/.test(text)) text = text.slice(0, -1).trim()
+  return text.replace(/:\s*\d+(\.\d+)?$/, '').trim()
 }
 
 /** A settings line split into ordered pairs, quote-aware. */
@@ -557,11 +634,19 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
 
     // 5. Quality tags, which booru-trained SDXL models were trained to expect.
     if (!/masterpiece|best quality/i.test(nextPrompt)) {
-      nextPrompt = `${target.family === 'noob' ? NOOB_QUALITY : XL_QUALITY},\n${nextPrompt}`
+      const quality =
+        target.family === 'noob'
+          ? NOOB_QUALITY
+          : target.family === 'aniverse'
+            ? ANIVERSE_QUALITY
+            : XL_QUALITY
+      nextPrompt = `${quality},\n${nextPrompt}`
       notes.push(
         target.family === 'noob'
           ? "Added NoobAI's quality tags, which include the recency tag it was trained with."
-          : 'Added the danbooru quality tags these models are trained to expect.',
+          : target.family === 'aniverse'
+            ? 'Added the quality prefix your own highest-rated AniVerse images open with.'
+            : 'Added the danbooru quality tags these models are trained to expect.',
       )
     }
 
@@ -576,7 +661,13 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
     // comparison misses both and appends them again. Duplicates dilute — the
     // encoder sees the concept twice at half the attention each.
     const already = fromNegative.text.toLowerCase()
-    for (const term of target.family === 'noob' ? NOOB_NEGATIVE : XL_NEGATIVE) {
+    const baseline =
+      target.family === 'noob'
+        ? NOOB_NEGATIVE
+        : target.family === 'aniverse'
+          ? ANIVERSE_NEGATIVE
+          : XL_NEGATIVE
+    for (const term of baseline) {
       if (!new RegExp(`(^|[^a-z])${term}([^a-z]|$)`).test(already)) keptNegative.push(term)
     }
     nextNegative = keptNegative.join(', ')
@@ -766,13 +857,28 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
     // Written by whichever webui made the original, and read by nothing here.
     next.delete('Version')
 
-    next.set('CFG scale', '5')
-    next.set('Steps', '28')
-    next.set('Clip skip', '2')
-    notes.push(
-      'CFG 5, 28 steps, clip skip 2 — what booru-trained SDXL models are tuned for. Higher CFG ' +
-        'burns contrast and steps past ~30 stop changing the image.',
-    )
+    if (target.family === 'aniverse') {
+      // This family's own numbers, from the library rather than from a model
+      // card — see ANIVERSE_SETTINGS.
+      next.set('CFG scale', ANIVERSE_SETTINGS.cfg)
+      next.set('Steps', ANIVERSE_SETTINGS.steps)
+      next.set('Sampler', ANIVERSE_SETTINGS.sampler)
+      next.set('Schedule type', ANIVERSE_SETTINGS.schedule)
+      next.set('Clip skip', '2')
+      notes.push(
+        `CFG ${ANIVERSE_SETTINGS.cfg}, ${ANIVERSE_SETTINGS.steps} steps, ` +
+          `${ANIVERSE_SETTINGS.sampler} ${ANIVERSE_SETTINGS.schedule} — what your own ` +
+          'highest-rated AniVerse images were made at, not the booru-XL tuning.',
+      )
+    } else {
+      next.set('CFG scale', '5')
+      next.set('Steps', '28')
+      next.set('Clip skip', '2')
+      notes.push(
+        'CFG 5, 28 steps, clip skip 2 — what booru-trained SDXL models are tuned for. Higher CFG ' +
+          'burns contrast and steps past ~30 stop changing the image.',
+      )
+    }
   }
 
   // The sampler, on a v-prediction target. Outside the `crossing` branch: an

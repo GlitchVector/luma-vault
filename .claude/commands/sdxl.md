@@ -176,6 +176,40 @@ ADetailer settings keeps them untouched.
 
 Staying on the same architecture changes only the model and the seed.
 
+## AniVerse
+
+Pass `aniverse` and the commands switch to what **your own library** says this
+family wants, rather than the booru-XL defaults. Measured over the 1,806
+AniVerse images rated four or better here:
+
+| | AniVerse | everything else |
+|---|---|---|
+| CFG | **7** (1,795 of 1,806) | 5 |
+| Steps | **40** (50 measured, trimmed for XL) | 28 |
+| Sampler | **DPM++ SDE Karras** (1,220) | DPM++ 2M SDE Karras |
+
+That gap is the whole reason a prompt through this family came back looking
+like several different models: it was being generated at another model's
+tuning.
+
+The quality prefix changes too, to the one 379 of those images open with:
+
+```
+(best quality, masterpiece, perfect face, beautiful and aesthetic:1.2, colorful, dynamic angle, highest detailed face)
+```
+
+It is asking for different things from the booru set — `perfect face` and
+`highest detailed face` are about rendering, `dynamic angle` is composition.
+
+The negative comes from the same images, minus two things. `EasyNegative` and
+`bad-hands-5` are SD1.5 **embeddings** and become literal words on SDXL.
+`(realistic:1.0)` is dropped less obviously: a tag's job depends on what the
+checkpoint renders by default, and negating it on a model that is already flat
+gives cel shading rather than the soft look it was reaching for. Add it by hand
+if the target turns out to render hard.
+
+`--cfg` overrides the tuning when you want to explore.
+
 ## NoobAI, and v-prediction checkpoints generally
 
 Pass `noob` as the model — `pnpm migrate-prompt 00489 noob` — and the usual

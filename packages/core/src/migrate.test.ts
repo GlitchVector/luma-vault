@@ -584,3 +584,87 @@ describe('the NoobAI vocabulary', () => {
     expect(block).not.toContain('newest')
   })
 })
+
+describe('the AniVerse family', () => {
+  // Everything here comes from this library's own 1,806 AniVerse images rated
+  // four or better, not from a model card — see ANIVERSE_SETTINGS.
+  const TO_ANIVERSE = {
+    architecture: 'xl',
+    checkpoint: 'aniverseXL_v40',
+    family: 'aniverse',
+  } as const
+
+  it('uses the settings the highest-rated images were made at', () => {
+    // CFG 7 on 1,795 of 1,806, and DPM++ SDE Karras on 1,220. Sending the
+    // booru-XL tuning instead is why one prompt came back looking like several
+    // different models.
+    const { block, notes } = migrateGeneration(SD15, TO_ANIVERSE)
+    const settings = block.split('\n').at(-1)!
+    expect(settings).toContain('CFG scale: 7')
+    expect(settings).toContain('Steps: 40')
+    expect(settings).toContain('Sampler: DPM++ SDE')
+    expect(settings).toContain('Schedule type: Karras')
+    expect(notes.join(' ')).toMatch(/your own\s+highest-rated AniVerse images/)
+  })
+
+  it('leaves every other target on the booru-XL tuning', () => {
+    const settings = migrateGeneration(SD15, TO_XL).block.split('\n').at(-1)!
+    expect(settings).toContain('CFG scale: 5')
+    expect(settings).toContain('Steps: 28')
+  })
+
+  it('uses the quality prefix those images actually open with', () => {
+    const { block } = migrateGeneration(SD15, TO_ANIVERSE)
+    expect(block).toContain('perfect face')
+    expect(block).toContain('highest detailed face')
+    // Not the booru set, and not NoobAI's.
+    expect(block).not.toContain('very aesthetic')
+    expect(block).not.toContain('newest')
+  })
+
+  it('keeps the SD1.5 embeddings out of the negative it inherits', () => {
+    // The measured negative carries EasyNegative and bad-hands-5 on 451 of
+    // those images. On SDXL they are the literal words, which is the whole
+    // reason the embedding strip exists — the family baseline must not put
+    // them back.
+    const { block } = migrateGeneration(SD15, TO_ANIVERSE)
+    const negative = block.split('\n').find((line) => line.startsWith('Negative prompt:'))!
+    expect(negative.toLowerCase()).not.toContain('easynegative')
+    expect(negative.toLowerCase()).not.toContain('bad-hands-5')
+    expect(negative).toContain('greyscale')
+  })
+
+  it('does not negate realistic, whatever the original did', () => {
+    // The measured negative has `(realistic:1.0)`. Left out on purpose: a
+    // tag's job depends on what the checkpoint renders by default, and
+    // negating it on a model that is already flat produces cel shading rather
+    // than the soft look it was reaching for.
+    const { block } = migrateGeneration(SD15, TO_ANIVERSE)
+    const negative = block.split('\n').find((line) => line.startsWith('Negative prompt:'))!
+    expect(negative).not.toMatch(/(^|[^a-z])realistic/)
+  })
+})
+
+describe('facePrompt and brackets', () => {
+  it('drops a closing bracket its partner was split away from', () => {
+    // A weighted group spans commas, so splitting on them hands back
+    // `highest detailed face)` with nothing to match it. Pasted into
+    // ADetailer that re-weights everything after it, or fails outright —
+    // and the AniVerse quality prefix is exactly such a group.
+    const face = facePrompt('(best quality, perfect face, highest detailed face), pink eyes')
+    expect(face).toContain('highest detailed face')
+    expect((face.match(/\(/g) ?? []).length).toBe((face.match(/\)/g) ?? []).length)
+  })
+
+  it('leaves a group that is already balanced alone', () => {
+    // `(perfect face:1.2)` arrives whole; it is not a casualty of the split
+    // and its weight is the person's own.
+    expect(facePrompt('(perfect face:1.2), blue eyes')).toContain('(perfect face:1.2)')
+  })
+
+  it('drops a weight left stranded on a tag', () => {
+    // The number was calibrated against the prompt it came from, not against
+    // the much smaller face pass.
+    expect(facePrompt('(smile, perfect face:1.4), blue eyes')).toContain('perfect face,')
+  })
+})
