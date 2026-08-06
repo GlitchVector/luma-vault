@@ -130,6 +130,14 @@ interface LightboxProps {
    * upscaled variant.
    */
   onOpenId: (id: number) => void
+  /**
+   * Ask for this picture at 4K, in the background.
+   *
+   * Queued rather than run: the app decides when the GPU is free. Refusing a
+   * picture that is already 4K is the app's job too — this component knows the
+   * row but not what else is in flight.
+   */
+  onUpscale: (item: MediaItem) => void
 }
 
 /**
@@ -198,6 +206,7 @@ export function Lightbox({
   onToggleGeneration,
   onDeleted,
   onOpenId,
+  onUpscale,
   onToggleSelect,
   selected,
 }: LightboxProps) {
@@ -452,6 +461,12 @@ export function Lightbox({
           toast(`Unpicked ${item.name}`, 'muted')
           onToggleSelect(item.id)
         }
+        // Shift says "and it is worth the pixels": same verdict, same step, and
+        // a 4K upscale queued behind it. On the same key rather than its own
+        // because it is the same judgement with one more consequence — you
+        // decide a picture is good and that it deserves the resolution in one
+        // motion, without stopping the pass to go and find a button.
+        if (event.shiftKey) onUpscale(item)
         // On to the next, like the pick below it. Both keys mean "I have decided
         // about this one", and the decision is nearly always followed by moving
         // on — so the pass stays a single repeated key whichever you press.
@@ -521,7 +536,7 @@ export function Lightbox({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, onStep, item, zoom, confirmDelete, onToggleSelect, selected])
+  }, [onClose, onStep, item, zoom, confirmDelete, onToggleSelect, onUpscale, selected])
 
   // Resolve the original behind an Extras upscale, once the row says it is
   // one. Keyed on the id so stepping re-resolves; harmless when the panel is

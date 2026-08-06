@@ -187,6 +187,7 @@ function renderLightbox(props: Partial<React.ComponentProps<typeof Lightbox>> = 
       onToggleGeneration={() => {}}
       onDeleted={() => {}}
       onOpenId={() => {}}
+      onUpscale={() => {}}
       onToggleSelect={() => {}}
       selected={false}
       {...props}
@@ -263,6 +264,7 @@ describe('the dwell before the original is fetched', () => {
         onToggleGeneration={() => {}}
         onDeleted={() => {}}
       onOpenId={() => {}}
+      onUpscale={() => {}}
       onToggleSelect={() => {}}
       selected={false}
       />
@@ -563,6 +565,7 @@ describe('zooming and panning', () => {
         onToggleGeneration={() => {}}
         onDeleted={() => {}}
       onOpenId={() => {}}
+      onUpscale={() => {}}
       onToggleSelect={() => {}}
       selected={false}
       />,
@@ -608,6 +611,7 @@ describe('warming the neighbours', () => {
           onToggleGeneration={() => {}}
           onDeleted={() => {}}
       onOpenId={() => {}}
+      onUpscale={() => {}}
       onToggleSelect={() => {}}
       selected={false}
         />,

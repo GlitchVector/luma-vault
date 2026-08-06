@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDialogs } from '#/lib/dialogs.ts'
 import { resetInViewRegistry } from '#/lib/useInView.ts'
-import { App, DOUBLE_TAP_MS } from './App.tsx'
+import { App, DOUBLE_TAP_MS, FORGE_RETRY_MS } from './App.tsx'
 
 /**
  * Deleting a file, end to end, against a fake backend.
@@ -547,9 +547,11 @@ describe('the lightbox shortcuts a review pass leans on', () => {
   // dispatches in a row never let React re-render between them, so every one
   // would be handled by the closure the first render made — and three presses
   // meant for three pictures would all land on the first.
-  function press(key: string) {
+  function press(key: string, init: KeyboardEventInit = {}) {
     act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }),
+      )
     })
   }
 
@@ -575,6 +577,85 @@ describe('the lightbox shortcuts a review pass leans on', () => {
         { id: LIBRARY_SIZE - 2, stars: 4 },
       ]),
     )
+  })
+
+  it('shift-up rates, moves on, and queues a 4K upscale', async () => {
+    // The same verdict as a plain arrow-up with one more consequence: this one
+    // is worth the pixels. One motion, without leaving the pass to find a
+    // button.
+    await openFirst()
+    press('ArrowUp', { shiftKey: true })
+
+    await waitFor(() => expect(starCalls).toEqual([{ id: LIBRARY_SIZE, stars: 4 }]))
+    await waitFor(() => expect(upscaleCalls).toEqual([[LIBRARY_SIZE]]))
+  })
+
+  it('leaves plain arrow-up spending no GPU at all', async () => {
+    // The shift is the whole difference. A pass through a folder rating things
+    // four must not quietly start upscaling every one of them.
+    await openFirst()
+    press('ArrowUp')
+
+    await waitFor(() => expect(starCalls).toEqual([{ id: LIBRARY_SIZE, stars: 4 }]))
+    expect(upscaleCalls).toEqual([])
+  })
+
+  it('does not upscale a picture that is already 4K', async () => {
+    // Minutes of GPU to produce a file that exists. Still rates it and still
+    // moves on — the verdict half of the key is unconditional.
+    library[0] = { ...library[0]!, width: 3840, height: 2160 }
+    await openFirst()
+    press('ArrowUp', { shiftKey: true })
+
+    await waitFor(() => expect(starCalls).toEqual([{ id: LIBRARY_SIZE, stars: 4 }]))
+    expect(await screen.findByText(/already 4K/)).toBeTruthy()
+    expect(upscaleCalls).toEqual([])
+  })
+
+  it('does not upscale one that already has a 4K version', async () => {
+    library[0] = { ...library[0]!, upscaledTo: '/media/image-320_upscaled_4k.png' }
+    await openFirst()
+    press('ArrowUp', { shiftKey: true })
+
+    await waitFor(() => expect(starCalls).toEqual([{ id: LIBRARY_SIZE, stars: 4 }]))
+    expect(upscaleCalls).toEqual([])
+  })
+
+  it('holds a queued upscale back until Forge has finished generating', async () => {
+    // Both want the whole card. The keypress still means something — the
+    // picture is remembered and started once the GPU is free, so a review pass
+    // never has to care what Forge is doing.
+    forgeState = { reachable: true, busy: true, job: 'Batch 3 out of 3', progress: 0.85 }
+    await openFirst()
+
+    vi.useFakeTimers()
+    try {
+      press('ArrowUp', { shiftKey: true })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(FORGE_RETRY_MS * 2)
+      })
+      expect(upscaleCalls).toEqual([])
+
+      forgeState = { reachable: true, busy: false, job: null, progress: 0 }
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(FORGE_RETRY_MS + 100)
+      })
+      expect(upscaleCalls).toEqual([[LIBRARY_SIZE]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('runs a burst one picture at a time rather than all at once', async () => {
+    // The upscaler wants the whole card, so three shift-ups are three runs in
+    // turn — never one call carrying three, and never three at once.
+    await openFirst()
+    press('ArrowUp', { shiftKey: true })
+    press('ArrowUp', { shiftKey: true })
+    press('ArrowUp', { shiftKey: true })
+
+    await waitFor(() => expect(upscaleCalls.length).toBe(3))
+    expect(upscaleCalls).toEqual([[LIBRARY_SIZE], [LIBRARY_SIZE - 1], [LIBRARY_SIZE - 2]])
   })
 
   it('shows the rating it just applied before moving on', async () => {

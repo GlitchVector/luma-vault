@@ -1,6 +1,7 @@
 import { Button, EmptyState } from '@luma/ui'
 import {
   hasRecycleBin,
+  isFourK,
   rangeBetween,
   retainVisible,
   toggleSelected,
@@ -19,6 +20,7 @@ import { RemoteDialog } from '#/components/RemoteDialog.tsx'
 import { StatusBar } from '#/components/StatusBar.tsx'
 import { TimelinePanel } from '#/components/TimelinePanel.tsx'
 import { ToastHost } from '#/components/ToastHost.tsx'
+import { toast } from '#/lib/toasts.ts'
 import { UpscaleResults } from '#/components/UpscaleResults.tsx'
 import { askConfirm, showMessage } from '#/lib/dialogs.ts'
 import {
@@ -46,6 +48,16 @@ const TILE_SIZE_KEY = 'luma.tileSize'
  * presses a moment apart are not mistaken for one gesture.
  */
 export const DOUBLE_TAP_MS = 500
+
+/**
+ * How often the background upscale queue asks Forge whether it has finished.
+ *
+ * A generation ending is not something this app is told about, so the only way
+ * to know is to keep asking. Three seconds is slow enough to be nothing next to
+ * a generation and fast enough that a queued picture starts while you are still
+ * in the folder you asked from.
+ */
+export const FORGE_RETRY_MS = 3000
 
 /**
  * The tile size to open with.
@@ -88,11 +100,39 @@ export function App() {
   useEffect(() => {
     selectingRef.current = selecting
   })
+  // The latest `openId`, for the background upscale queue: it is read inside a
+  // promise that outlives the render which started it, to decide whether a
+  // reload can land now or has to wait for the lightbox to close.
+  const openIdRef = useRef(openId)
+  useEffect(() => {
+    openIdRef.current = openId
+  })
   // The batch in flight, and what it produced. Two pieces of state rather
   // than one: the progress has to keep updating while the run is going, and
   // the summary only exists once it has finished.
   const [upscaling, setUpscaling] = useState<UpscaleProgress | null>(null)
   const [upscaleResults, setUpscaleResults] = useState<UpscaleSummary | null>(null)
+  /**
+   * Pictures asked for at 4K from the lightbox, waiting their turn.
+   *
+   * Separate from the selection's batch button and deliberately quieter: this
+   * is fired one key at a time in the middle of a review pass, so it must never
+   * take the screen or the GPU away from what is being done. A queue rather
+   * than a call per keypress because the upscaler wants the whole card — twenty
+   * shift-ups through a folder would otherwise be twenty runs at once.
+   */
+  const [upscaleQueue, setUpscaleQueue] = useState<readonly number[]>([])
+  /** The one background upscale in flight, if any. */
+  const [backgroundUpscale, setBackgroundUpscale] = useState<number | null>(null)
+  /**
+   * A finished background upscale the grid has not been told about yet.
+   *
+   * Reloading puts the variant in the grid and hides what it was made from —
+   * which reorders the list the lightbox is stepping through. Doing that under
+   * somebody mid-pass moves the next picture out from under the arrow key, so
+   * it waits until the lightbox is closed.
+   */
+  const pendingReload = useRef(false)
   // The pictures being reviewed for DeviantArt. A snapshot taken when the panel
   // opens rather than a live read of `selected`: the panel holds edited drafts,
   // and a filter change underneath it must not silently drop a row someone has
@@ -300,6 +340,95 @@ export function App() {
       ),
     )
   }, [selected, library])
+
+  /**
+   * Ask for one picture at 4K, from the lightbox, without interrupting anything.
+   *
+   * Refused for a picture that is already there, and for one that already has a
+   * variant — both would spend minutes of GPU to produce a file that exists.
+   * The backend refuses the first as well (`already_large`), but a queue that
+   * fills with no-ops would still make the ones behind them wait.
+   */
+  const queueUpscale = useCallback((item: MediaItem) => {
+    if (isFourK(item.width, item.height)) {
+      toast(`${item.name} is already 4K`, 'muted')
+      return
+    }
+    if (item.upscaledTo) {
+      toast(`${item.name} already has a 4K version`, 'muted')
+      return
+    }
+    setUpscaleQueue((current) => {
+      if (current.includes(item.id)) return current
+      toast(`Queued ${item.name} for 4K`, 'picked')
+      return [...current, item.id]
+    })
+  }, [])
+
+  /**
+   * Drain that queue, one picture at a time, whenever the GPU is free.
+   *
+   * Three things can hold it: a foreground batch from the selection toolbar,
+   * another background upscale still running, and Forge generating. The first
+   * two are ours and are simply waited for; Forge is asked every few seconds,
+   * because a generation finishing is not something this app is told about.
+   *
+   * An unreachable Forge counts as free, the same as it does for the toolbar
+   * button — this is a gate against competing for the card, not against Forge
+   * being closed.
+   */
+  useEffect(() => {
+    if (upscaleQueue.length === 0) return
+    if (backgroundUpscale !== null || upscaling !== null) return
+
+    let cancelled = false
+    const attempt = () => {
+      void forgeStatus().then(
+        (status) => {
+          if (cancelled || status.busy) return
+          start()
+        },
+        () => {
+          if (!cancelled) start()
+        },
+      )
+    }
+    const start = () => {
+      const next = upscaleQueue[0]
+      if (next === undefined) return
+      setUpscaleQueue((current) => current.slice(1))
+      setBackgroundUpscale(next)
+      void upscaleMedia([next]).then(
+        () => {
+          setBackgroundUpscale(null)
+          // Held back while the lightbox is up: see `pendingReload`.
+          if (openIdRef.current === null) library.reload()
+          else pendingReload.current = true
+        },
+        (error: unknown) => {
+          setBackgroundUpscale(null)
+          // A toast rather than a dialog. This was asked for with one key in
+          // the middle of something else, and a modal over the picture being
+          // reviewed is a worse interruption than the failure is a problem.
+          toast(`Could not upscale: ${String(error)}`, 'muted')
+        },
+      )
+    }
+
+    attempt()
+    const timer = setInterval(attempt, FORGE_RETRY_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [upscaleQueue, backgroundUpscale, upscaling, library])
+
+  // The deferred reload, once the lightbox is out of the way.
+  useEffect(() => {
+    if (openId !== null || !pendingReload.current) return
+    pendingReload.current = false
+    library.reload()
+  }, [openId, library])
 
   /**
    * The lightbox's judgement keys, over a selection, from the grid.
@@ -832,6 +961,7 @@ export function App() {
           // upscaled variant — so it sets the open id directly rather than
           // walking the filtered list the way `onStep` does.
           onOpenId={setOpenId}
+          onUpscale={queueUpscale}
           onToggleSelect={toggleSelect}
           selected={selected.has(openId)}
           showBoxes={showLightboxBoxes}
