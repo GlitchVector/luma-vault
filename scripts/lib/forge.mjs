@@ -75,7 +75,11 @@ export function architectureOf(file) {
  */
 export function familyOf(name) {
   if (/noob/i.test(name)) return 'noob'
-  if (/hassaku/i.test(name)) return 'hassaku'
+  // Every Illustrious checkpoint installed here, by the names they ship under.
+  // PerfectDeliberate is one too — its Civitai page lists it as an Illustrious
+  // checkpoint — and treating it as generic XL was an accident of the name not
+  // containing the word, not a fact about the model.
+  if (/hassaku|illustrious|perfectdeliberate/i.test(name)) return 'illustrious'
   if (/aniverse/i.test(name)) return 'aniverse'
   return undefined
 }
@@ -102,7 +106,7 @@ export function settingsFor(family, architecture) {
   if (family === 'aniverse') {
     return { cfg: 5.5, steps: 30, sampler: 'DPM++ 2M', schedule: 'Karras', trigger: '4n1v3rs3' }
   }
-  if (family === 'hassaku') {
+  if (family === 'illustrious') {
     // CFG is the one the sources disagree about — 7 on a Hassaku-specific
     // page, 4.5-5 in the Illustrious guides, usable range 3-7. 5 is inside
     // both, and `--cfg 7` tries the other reading.

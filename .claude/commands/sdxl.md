@@ -208,11 +208,14 @@ ADetailer settings keeps them untouched.
 
 Staying on the same architecture changes only the model and the seed.
 
-## Hassaku, and Illustrious checkpoints generally
+## Illustrious checkpoints — `hassaku`, `deliberate`, `illustrious`
 
-Pass `hassaku`. Both commands then send what the Illustrious guidance asks for:
+`hassaku`, `perfectdeliberate` and `waiNSFWIllustrious` are **all Illustrious
+checkpoints**, so all three get the same treatment — the split that used to put
+`deliberate` on the generic XL defaults was an accident of its name, not a fact
+about the model. Both commands send what the Illustrious guidance asks for:
 
-| | Hassaku / Illustrious | the plain XL default |
+| | Illustrious | the plain XL default |
 |---|---|---|
 | Quality | `masterpiece, best quality, amazing quality, very aesthetic, **newest**, absurdres` | same without `newest` |
 | Negative | adds **`bad quality`** beside `worst quality` | `worst quality` only |
@@ -231,8 +234,24 @@ Neither is the creator — Civitai moved the model behind a host that cannot be
 read — so the commands send 5, which is inside both. Try `--cfg 7` for the
 other reading.
 
-`perfectdeliberate` is an Illustrious checkpoint too, and its own card asks for
-CFG 5-8, so `--cfg 6` is worth a try there when a render looks flat.
+**Shortcut: `illu`.** `--model` is a substring match, so `illu` finds every
+Illustrious checkpoint installed and takes the newest by file date. Name one
+specifically — `hassaku`, `deliberate`, `wai` — when you want that one rather
+than the latest.
+
+**Switching between them needs no new command.** Because every Illustrious
+checkpoint gets the same quality tags, negative, sampler, CFG and steps, a
+block written for one is already correct for all of them: change Forge's
+Checkpoint dropdown and generate again. Nothing else in the tab has to move.
+
+That does *not* hold across families. `noob` wants different quality tags,
+`aniverse` needs its trigger and a different sampler and CFG — so switching to
+either means re-running the command rather than swapping the dropdown. And the
+checkpoint is global in Forge, so the dropdown moves it for every tab, not just
+the one in front of you.
+
+`perfectdeliberate`'s own card asks for CFG 5-8 where the Illustrious guides say
+4.5-5, so `--cfg 6` is worth a try there when a render looks flat.
 
 ## AniVerse
 
