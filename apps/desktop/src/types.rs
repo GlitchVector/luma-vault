@@ -310,6 +310,25 @@ pub struct MediaQuery {
     /// Only rows from (true) or not from (false) the Extras tab.
     #[serde(default)]
     pub extras: Option<bool>,
+    /// Only rows the detector found this label on, at or above
+    /// [`crate::db::LABEL_MIN_SCORE`].
+    ///
+    /// Every label found, not the one the verdict happens to name: `topLabel`
+    /// is picked by rating weight, so six labels — `FACE_FEMALE` among them,
+    /// on 85,000 rows — can never appear there at all.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Only animated images (true), or only still ones (false).
+    ///
+    /// By extension, which is what [`crate::types::MediaKind`] cannot express:
+    /// a GIF and a PNG are both `image`. A static WebP is caught by `true` and
+    /// excluded by `false` — the container allows animation and the name is all
+    /// there is to go on without decoding every file.
+    #[serde(default)]
+    pub animated: Option<bool>,
+    /// Only black-and-white rows (true), or only colour ones (false).
+    #[serde(default)]
+    pub greyscale: Option<bool>,
     /// Show only rows whose longest edge is at least this many pixels.
     ///
     /// A number rather than a `four_k_only` flag, because the rule is a number

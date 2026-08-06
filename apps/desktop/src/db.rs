@@ -55,7 +55,9 @@ impl Db {
     }
 
     fn migrate(&self) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        // `mut` for the one backfill below that needs a transaction: 155,000
+        // single-statement updates in autocommit would each be their own fsync.
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
 
         // WAL so a long classification transaction never blocks the grid's
         // reads; NORMAL synchronous because this is a rebuildable cache and
@@ -122,6 +124,27 @@ impl Db {
                 PRIMARY KEY (media_id, name)
             );
             CREATE INDEX IF NOT EXISTS characters_by_name ON media_characters(name, media_id);
+
+            -- Every label the detector found, not merely the one that won.
+            --
+            -- `media.verdict_json` keeps a single `topLabel`, chosen by rating
+            -- weight — so a picture showing three things records one, and six
+            -- labels can never appear there at all because they carry no weight
+            -- and cannot win: FACE_FEMALE is on 85,000 images and was
+            -- unfilterable. The detections themselves were never lost, only
+            -- unindexed; they sit in `media_frames.verdict_json`, one frame row
+            -- per image and several per video.
+            --
+            -- Derived from those rows rather than from the model again. The
+            -- score is the best that label scored on any frame, so a video is
+            -- described by its strongest moment the way its verdict is.
+            CREATE TABLE IF NOT EXISTS media_labels (
+                media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                label    TEXT    NOT NULL,
+                score    REAL    NOT NULL,
+                PRIMARY KEY (media_id, label)
+            );
+            CREATE INDEX IF NOT EXISTS labels_by_label ON media_labels(label, score);
 
             CREATE INDEX IF NOT EXISTS tags_by_tag       ON media_tags(tag, media_id);
             CREATE INDEX IF NOT EXISTS media_folder      ON media(folder_id);
@@ -253,6 +276,12 @@ impl Db {
             ("colour_sig", "BLOB"),
             // Which set of duplicates this row belongs to, or NULL for none.
             ("dupe_group", "INTEGER"),
+            // How far this picture is from monochrome: the mean per-cell gap
+            // between the strongest and weakest channel of `colour_sig`, 0-255.
+            // Derived from bytes already stored, so it costs no decoding. A
+            // measure rather than a flag, because where black-and-white ends is
+            // a query-time question and a stored boolean would freeze it.
+            ("chroma", "REAL"),
         ] {
             let present = conn
                 .prepare("PRAGMA table_info(media)")?
@@ -505,6 +534,73 @@ impl Db {
                 "INSERT INTO settings (key, value) VALUES ('character_detection', ?1)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 params![CHARACTER_DETECTION_VERSION],
+            )?;
+        }
+
+        // Chroma for every row that already has a colour signature.
+        //
+        // Rust rather than SQL because SQLite cannot reduce a blob, but still
+        // no file is opened: the 8x8 signature was written during the same pass
+        // as the perceptual hash, so this reads 192 bytes a row out of the
+        // database and writes a number back.
+        let chroma_done: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'chroma_index'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if chroma_done.as_deref() != Some(CHROMA_INDEX_VERSION) {
+            let pending: Vec<(i64, Vec<u8>)> = conn
+                .prepare("SELECT id, colour_sig FROM media WHERE colour_sig IS NOT NULL")?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .filter_map(Result::ok)
+                .collect();
+            let tx = conn.transaction()?;
+            {
+                let mut stmt = tx.prepare("UPDATE media SET chroma = ?2 WHERE id = ?1")?;
+                for (id, signature) in &pending {
+                    stmt.execute(params![id, crate::dupes::chroma(signature)])?;
+                }
+            }
+            tx.commit()?;
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('chroma_index', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![CHROMA_INDEX_VERSION],
+            )?;
+        }
+
+        // Labels for everything classified before the table existed.
+        //
+        // Pure SQL over `media_frames`: the detections have been written on
+        // every classified row all along, so this is an index being built, not
+        // a model being re-run. 155,000 images and 660,000 detections, no GPU
+        // and no file touched — the alternative reading of "we never stored
+        // them" would have cost hours of classification for data already here.
+        let labels_done: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'label_index'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if labels_done.as_deref() != Some(LABEL_INDEX_VERSION) {
+            conn.execute(
+                "INSERT OR REPLACE INTO media_labels (media_id, label, score)
+                 SELECT f.media_id,
+                        json_extract(d.value, '$.label'),
+                        MAX(json_extract(d.value, '$.score'))
+                   FROM media_frames f,
+                        json_each(json_extract(f.verdict_json, '$.detections')) d
+                  WHERE json_extract(d.value, '$.score') >= ?1
+                  GROUP BY f.media_id, json_extract(d.value, '$.label')",
+                params![LABEL_STORE_FLOOR],
+            )?;
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('label_index', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![LABEL_INDEX_VERSION],
             )?;
         }
 
@@ -808,8 +904,11 @@ impl Db {
     pub fn set_fingerprint(&self, id: i64, hash: u64, colour: &[u8]) -> Result<()> {
         let conn = self.conn.lock().expect("index mutex poisoned");
         conn.execute(
-            "UPDATE media SET phash = ?2, colour_sig = ?3 WHERE id = ?1",
-            params![id, hash as i64, colour],
+            // Chroma alongside them rather than in a pass of its own: it is a
+            // reduction of the signature being written on this very line, so
+            // computing it anywhere else would mean reading the blob back.
+            "UPDATE media SET phash = ?2, colour_sig = ?3, chroma = ?4 WHERE id = ?1",
+            params![id, hash as i64, colour, crate::dupes::chroma(colour)],
         )?;
         Ok(())
     }
@@ -1736,8 +1835,28 @@ impl Db {
                 ])?;
             }
         }
+        // Rebuilt here rather than by the pipeline, because this is the one
+        // place frames are ever written: a row that is re-classified cannot
+        // then disagree with its own labels, and nothing has to remember to
+        // call a second function.
+        rebuild_labels(&tx, media_id, frames.iter().map(|frame| frame.verdict_json.as_str()))?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Every label a row's frames carry, best score first.
+    ///
+    /// The detail panel's answer to "what else is in this picture" — the
+    /// verdict names one label, and this is the rest of what was found.
+    pub fn labels_for_media(&self, media_id: i64) -> Result<Vec<(String, f64)>> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT label, score FROM media_labels WHERE media_id = ?1 ORDER BY score DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![media_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     pub fn frames_for_media(&self, media_id: i64) -> Result<Vec<MediaFrame>> {
@@ -1923,6 +2042,44 @@ impl Db {
                     .to_string(),
             ),
             None => {}
+        }
+        if let Some(label) = query.label.as_deref().filter(|label| !label.is_empty()) {
+            where_parts.push(format!(
+                "EXISTS (SELECT 1 FROM media_labels l
+                          WHERE l.media_id = media.id AND l.label = ?{} AND l.score >= ?{})",
+                binds.len() + 1,
+                binds.len() + 2,
+            ));
+            binds.push(Box::new(label.to_string()));
+            binds.push(Box::new(LABEL_MIN_SCORE));
+        }
+        if let Some(animated) = query.animated {
+            // Built from one list so the two directions cannot drift apart, and
+            // matching `isAnimatedImage` in `@luma/core` — the UI badges what
+            // this filters.
+            let clauses: Vec<String> = ANIMATED_EXTENSIONS
+                .iter()
+                .map(|extension| format!("lower(media.name) LIKE '%{extension}'"))
+                .collect();
+            let any = clauses.join(" OR ");
+            where_parts.push(if animated {
+                format!("({any})")
+            } else {
+                // A video is not an animated *image*, so it is left to the kind
+                // filter: "no GIFs" and "no videos" are two questions, and
+                // answering both here would make the second unaskable.
+                format!("NOT ({any})")
+            });
+        }
+        if let Some(greyscale) = query.greyscale {
+            // An unmeasured row cannot support either claim, so NULL is
+            // excluded from both — the same reading as the 4K filter below.
+            where_parts.push(format!(
+                "media.chroma IS NOT NULL AND media.chroma {} ?{}",
+                if greyscale { "<=" } else { ">" },
+                binds.len() + 1,
+            ));
+            binds.push(Box::new(MAX_GREYSCALE_CHROMA));
         }
         if let Some(min) = query.min_longest_edge {
             // A row the measure phase has not reached yet has no dimensions, so
@@ -2264,6 +2421,59 @@ fn fts_expression(input: &str) -> Option<String> {
 /// Bumping this rebuilds the search index once, on the next launch. Change it
 /// whenever the tokenizer or the indexed columns change, or an existing library
 /// keeps an index that no longer matches the queries run against it.
+/// The floor under which a detection is the model saying "not this".
+///
+/// The detector's own NMS already drops anything below 0.25, so this is not
+/// about box noise — it is where a label stops being a claim about the picture
+/// worth indexing. Kept low deliberately: what counts as *present enough* to
+/// filter on is a query-time question ([`LABEL_MIN_SCORE`]), and baking a high
+/// floor in here would mean a re-backfill every time that answer changed.
+const LABEL_STORE_FLOOR: f64 = 0.25;
+
+/// How confident a detection must be for the filter to call the label present.
+///
+/// Measured on this library: at 0.5, 63.7% of images carry at least one label,
+/// against 70.4% at the storage floor — the difference is largely the detector
+/// listing what it considered and rejected.
+pub const LABEL_MIN_SCORE: f64 = 0.5;
+
+/// Replace one row's labels from the verdicts of its frames.
+///
+/// A video is described by its strongest moment, the same way its verdict is:
+/// the score kept per label is the best that label reached on any frame.
+fn rebuild_labels<'a>(
+    tx: &rusqlite::Transaction<'_>,
+    media_id: i64,
+    verdicts: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    let mut best: HashMap<String, f64> = HashMap::new();
+    for verdict in verdicts {
+        // A frame whose verdict will not parse is a row, not an exception —
+        // it costs this one row its labels and nothing else.
+        let Ok(parsed) = serde_json::from_str::<crate::types::FrameVerdict>(verdict) else {
+            continue;
+        };
+        for detection in parsed.detections {
+            if detection.score < LABEL_STORE_FLOOR {
+                continue;
+            }
+            let slot = best.entry(detection.label).or_insert(detection.score);
+            if detection.score > *slot {
+                *slot = detection.score;
+            }
+        }
+    }
+
+    tx.execute("DELETE FROM media_labels WHERE media_id = ?1", params![media_id])?;
+    let mut stmt = tx.prepare(
+        "INSERT OR REPLACE INTO media_labels (media_id, label, score) VALUES (?1, ?2, ?3)",
+    )?;
+    for (label, score) in best {
+        stmt.execute(params![media_id, label, score])?;
+    }
+    Ok(())
+}
+
 const FTS_VERSION: &str = "1-trigram-name-prompt";
 
 /// Bump when what an upscaled variant inherits from its original changes.
@@ -2278,6 +2488,27 @@ const CHARACTER_DETECTION_VERSION: &str = "4-dictionary";
 
 /// Bump to re-mark Extras-tab upscales across every stored row on next open.
 const EXTRAS_DETECTION_VERSION: &str = "2-by-path";
+
+/// Bumping this rebuilds `media_labels` from the frames on next launch.
+const LABEL_INDEX_VERSION: &str = "1-from-frames";
+
+/// Bumping this recomputes `media.chroma` from the stored signatures.
+const CHROMA_INDEX_VERSION: &str = "1-mean-channel-spread";
+
+/// How little colour a picture may carry and still be black and white.
+///
+/// Measured, not chosen: the median picture in this library scores 29.7 and the
+/// 90th percentile 58.3, while 6.5% sit at or under 3. Monochrome is a tight
+/// cluster with a wide empty gap above it, which is what makes the exact value
+/// unimportant — 1 and 5 select 5.3% and 7.6% of the same population.
+const MAX_GREYSCALE_CHROMA: f64 = 3.0;
+
+/// The image containers that can hold an animation.
+///
+/// Mirrors `isAnimatedImage` in `@luma/core`. A *static* WebP is caught by this
+/// too: the name is all there is short of decoding every file, and a filter
+/// that opens 155,000 images to answer is not a filter.
+const ANIMATED_EXTENSIONS: [&str; 3] = [".gif", ".webp", ".avif"];
 
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
@@ -2471,6 +2702,9 @@ mod tests {
             has_prompt: None,
             img2img: None,
             extras: None,
+            label: None,
+            animated: None,
+            greyscale: None,
             min_longest_edge: None,
             modified_after: None,
             modified_before: None,
@@ -2770,6 +3004,200 @@ mod tests {
         let found = db.query_media(&MediaQuery { extras: Some(true), ..query() }).expect("q");
         assert_eq!(found.total, 1, "the repaired row answers the extras filter");
         assert!(found.items[0].generation.as_ref().expect("gen").postprocessed);
+    }
+
+    #[test]
+    fn the_new_filters_survive_the_queries_that_share_the_where_builder() {
+        // The bug this exists for. `query_media` selects `FROM media`, but the
+        // same clauses are pasted into the character leaderboard, which reads
+        // `FROM media_characters c JOIN media` — and `media_characters` has a
+        // `name` column too. An unqualified `lower(name)` is ambiguous there,
+        // SQLite refuses the statement, and because the UI asks for the grid
+        // and the leaderboard in one `Promise.all`, the leaderboard's failure
+        // empties the grid. The grid's own query was never wrong.
+        //
+        // Testing `query_media` alone could not see it, which is exactly why
+        // this drives every consumer of the builder.
+        let (db, _) = seeded();
+        let filters = [
+            MediaQuery { animated: Some(true), ..query() },
+            MediaQuery { animated: Some(false), ..query() },
+            MediaQuery { greyscale: Some(true), ..query() },
+            MediaQuery { greyscale: Some(false), ..query() },
+            MediaQuery { label: Some("FACE_FEMALE".to_string()), ..query() },
+        ];
+
+        for filter in filters {
+            db.query_media(&filter).expect("the grid query");
+            // The one that was broken.
+            db.top_characters(&filter, 10).expect("the character leaderboard");
+            db.media_timeline(&filter).expect("the timeline histogram");
+        }
+    }
+
+    #[test]
+    fn a_label_filter_finds_what_the_verdict_never_named() {
+        // The point of the labels table. `topLabel` is chosen by rating weight,
+        // so FACE_FEMALE — which carries none — can never be the top label
+        // however many pictures show a face. On this library that is 85,000
+        // rows that were unfilterable.
+        let (db, _) = seeded();
+        let ids: Vec<i64> =
+            db.query_media(&query()).expect("query").items.iter().map(|i| i.id).collect();
+
+        db.replace_frames(
+            ids[0],
+            &[NewFrame {
+                frame_index: 0,
+                timestamp_sec: 0.0,
+                path: "/thumbs/a.jpg".to_string(),
+                verdict_json: serde_json::json!({
+                    "person": true, "sexy": true, "nude": false, "rating": "suggestive",
+                    "topLabel": "BUTTOCKS_EXPOSED", "topLabelTitle": "exposed buttocks",
+                    "topScore": 0.9,
+                    "detections": [
+                        { "label": "BUTTOCKS_EXPOSED", "score": 0.9, "box": [0.0, 0.0, 1.0, 1.0] },
+                        { "label": "FACE_FEMALE", "score": 0.8, "box": [0.0, 0.0, 1.0, 1.0] },
+                        { "label": "ANUS_EXPOSED", "score": 0.02, "box": [0.0, 0.0, 1.0, 1.0] }
+                    ]
+                })
+                .to_string(),
+            }],
+        )
+        .expect("frames");
+
+        let by_label = |label: &str| {
+            db.query_media(&MediaQuery { label: Some(label.to_string()), ..query() })
+                .expect("query")
+                .items
+                .len()
+        };
+        assert_eq!(by_label("FACE_FEMALE"), 1, "a label the verdict never names");
+        assert_eq!(by_label("BUTTOCKS_EXPOSED"), 1);
+        assert_eq!(by_label("ANUS_EXPOSED"), 0, "under the floor is not a finding");
+        assert_eq!(by_label("FEET_EXPOSED"), 0, "never detected at all");
+    }
+
+    #[test]
+    fn re_classifying_a_row_replaces_its_labels_rather_than_adding_to_them() {
+        // `replace_frames` is the only place frames are written, which is why
+        // the labels are rebuilt there: a row cannot end up disagreeing with
+        // its own detections.
+        let (db, _) = seeded();
+        let id = db.query_media(&query()).expect("query").items[0].id;
+        let frame = |label: &str| NewFrame {
+            frame_index: 0,
+            timestamp_sec: 0.0,
+            path: "/thumbs/a.jpg".to_string(),
+            verdict_json: serde_json::json!({
+                "person": true, "sexy": false, "nude": false, "rating": "sfw",
+                "topLabel": null, "topLabelTitle": null, "topScore": 0.0,
+                "detections": [{ "label": label, "score": 0.9, "box": [0.0, 0.0, 1.0, 1.0] }]
+            })
+            .to_string(),
+        };
+
+        db.replace_frames(id, &[frame("FACE_FEMALE")]).expect("first");
+        db.replace_frames(id, &[frame("FACE_MALE")]).expect("second");
+
+        let labels = db.labels_for_media(id).expect("labels");
+        assert_eq!(labels.len(), 1, "the old label is gone, not kept alongside");
+        assert_eq!(labels[0].0, "FACE_MALE");
+    }
+
+    #[test]
+    fn a_video_is_labelled_by_its_strongest_frame() {
+        // The same rule its verdict follows: one sexy frame makes the video
+        // sexy, so the best a label reaches on any frame is what it carries.
+        let (db, _) = seeded();
+        let id = db.query_media(&query()).expect("query").items[1].id;
+        let frame = |index: i64, score: f64| NewFrame {
+            frame_index: index,
+            timestamp_sec: index as f64,
+            path: format!("/frames/{index}.jpg"),
+            verdict_json: serde_json::json!({
+                "person": true, "sexy": false, "nude": false, "rating": "sfw",
+                "topLabel": null, "topLabelTitle": null, "topScore": 0.0,
+                "detections": [
+                    { "label": "FACE_FEMALE", "score": score, "box": [0.0, 0.0, 1.0, 1.0] }
+                ]
+            })
+            .to_string(),
+        };
+        db.replace_frames(id, &[frame(0, 0.30), frame(1, 0.95), frame(2, 0.10)])
+            .expect("frames");
+
+        let labels = db.labels_for_media(id).expect("labels");
+        assert_eq!(labels.len(), 1);
+        assert!((labels[0].1 - 0.95).abs() < 1e-9, "the best frame, not the last");
+    }
+
+    #[test]
+    fn the_animated_filter_splits_gifs_from_stills_without_touching_kind() {
+        // "Everything except videos and GIFs" is two questions — this one and
+        // the kind filter — so they have to compose rather than overlap.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/media/still.png", MediaKind::Image, 300),
+                file("/media/moving.GIF", MediaKind::Image, 200),
+                file("/media/maybe.webp", MediaKind::Image, 150),
+                file("/media/clip.mp4", MediaKind::Video, 100),
+            ],
+            1,
+        )
+        .expect("insert");
+
+        let names = |q: MediaQuery| {
+            let mut found: Vec<String> =
+                db.query_media(&q).expect("query").items.iter().map(|i| i.name.clone()).collect();
+            found.sort();
+            found
+        };
+
+        assert_eq!(
+            names(MediaQuery { animated: Some(true), ..query() }),
+            ["maybe.webp", "moving.GIF"],
+            "case-insensitive, and webp counts because the container can animate",
+        );
+        // The filter the request called "all but videos and gifs".
+        assert_eq!(
+            names(MediaQuery { animated: Some(false), kind: Some(MediaKind::Image), ..query() }),
+            ["still.png"],
+        );
+        // On its own it says nothing about videos, which is what lets the two
+        // compose.
+        assert_eq!(
+            names(MediaQuery { animated: Some(false), ..query() }),
+            ["clip.mp4", "still.png"],
+        );
+    }
+
+    #[test]
+    fn the_greyscale_filter_reads_the_signature_already_stored() {
+        // No decoding: chroma is a reduction of the colour signature written
+        // during fingerprinting. A row never fingerprinted supports neither
+        // claim and is excluded from both.
+        let (db, _) = seeded();
+        let ids: Vec<i64> =
+            db.query_media(&query()).expect("query").items.iter().map(|i| i.id).collect();
+
+        // Flat grey: every channel equal, so no colour at any brightness.
+        db.set_fingerprint(ids[0], 1, &[128; 192]).expect("grey");
+        let mut colour = vec![0_u8; 192];
+        for cell in colour.chunks_exact_mut(3) {
+            cell[0] = 200;
+            cell[2] = 20;
+        }
+        db.set_fingerprint(ids[1], 2, &colour).expect("colour");
+
+        let ids_for = |q: MediaQuery| {
+            db.query_media(&q).expect("query").items.iter().map(|i| i.id).collect::<Vec<_>>()
+        };
+        assert_eq!(ids_for(MediaQuery { greyscale: Some(true), ..query() }), vec![ids[0]]);
+        assert_eq!(ids_for(MediaQuery { greyscale: Some(false), ..query() }), vec![ids[1]]);
     }
 
     #[test]

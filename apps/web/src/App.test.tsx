@@ -2146,6 +2146,84 @@ describe('the Prompt filter', () => {
   })
 })
 
+describe('the More filters panel', () => {
+  const sent = () =>
+    queries.at(-1) as
+      | { greyscale?: boolean | null; animated?: boolean | null; label?: string | null; minLongestEdge?: number | null }
+      | undefined
+
+  async function openMore() {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    screen.getByRole('button', { name: /^More/ }).click()
+  }
+
+  it('stays out of the way until it is asked for', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    // The bar is already crowded; these are the filters you reach for
+    // occasionally, not the ones you steer with.
+    expect(screen.queryByRole('button', { name: 'B&W' })).toBeNull()
+
+    screen.getByRole('button', { name: /^More/ }).click()
+    expect(await screen.findByRole('button', { name: 'B&W' })).toBeTruthy()
+  })
+
+  it('asks the index for black and white', async () => {
+    await openMore()
+    queries.length = 0
+    screen.getByRole('button', { name: 'B&W' }).click()
+    await waitFor(() => expect(sent()?.greyscale).toBe(true))
+
+    screen.getByRole('button', { name: 'B&W' }).click()
+    await waitFor(() => expect(sent()?.greyscale).toBeNull())
+  })
+
+  it('sends both halves of "stills only", because it is two questions', async () => {
+    // Animation is not a kind — a GIF and a PNG are both images — so excluding
+    // videos and excluding GIFs are separate predicates that have to compose.
+    await openMore()
+    queries.length = 0
+    screen.getByRole('button', { name: 'Stills only' }).click()
+
+    await waitFor(() => expect(sent()?.animated).toBe(false))
+    expect((queries.at(-1) as { kind?: string | null }).kind).toBe('image')
+  })
+
+  it('filters on a label the verdict could never have named', async () => {
+    // FACE_FEMALE carries no rating weight, so it can never be a topLabel —
+    // the whole reason the labels table exists.
+    await openMore()
+    queries.length = 0
+    fireEvent.change(screen.getByLabelText('Found'), { target: { value: 'FACE_FEMALE' } })
+
+    await waitFor(() => expect(sent()?.label).toBe('FACE_FEMALE'))
+  })
+
+  it('counts what is on, so a collapsed panel cannot secretly empty the grid', async () => {
+    await openMore()
+    screen.getByRole('button', { name: 'B&W' }).click()
+    await screen.findByRole('button', { name: 'More · 1' })
+
+    screen.getByRole('button', { name: 'More · 1' }).click()
+    // Collapsed again, and still saying that something is narrowing the grid.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'B&W' })).toBeNull())
+    expect(screen.getByRole('button', { name: 'More · 1' })).toBeTruthy()
+  })
+
+  it('clears the whole panel in one go', async () => {
+    await openMore()
+    screen.getByRole('button', { name: 'B&W' }).click()
+    screen.getByRole('button', { name: 'GIFs' }).click()
+    const clear = await screen.findByText('clear these')
+    queries.length = 0
+
+    clear.click()
+    await waitFor(() => expect(sent()?.greyscale).toBeNull())
+    expect(sent()?.animated).toBeNull()
+  })
+})
+
 describe('img2img', () => {
   it('the pill cycles off → only → exclude → off', async () => {
     render(<App />)
