@@ -305,6 +305,21 @@ The notes will say whether it did. On a same-architecture move they are noise.
 - **"Apply settings" reverts the checkpoint** to whatever the Settings page was
   built with. Re-run this, or re-select the model, after using it.
 
+
+### While a batch is running
+
+Both scripts **refuse to switch the checkpoint** if Forge is mid-generation,
+and say so. This is not politeness: the checkpoint is a global setting and
+`modules/processing.py` calls `forge_model_reload()` *inside* the batch loop,
+so every iteration re-resolves the model from that global. Selecting one while
+a batch runs changes the model out from under it and the rest of the batch
+comes out in another style — no error, just images quietly not being what was
+asked for.
+
+The tab still opens either way. Its block names the model, so the switch
+happens when that tab generates, which is after the batch anyway. Say so when
+reporting: the dropdown will show the running batch's model until then.
+
 ## Requirements
 
 - Forge running with the `luma-vault-prefill` extension (`pnpm setup:forge`).

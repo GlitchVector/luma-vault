@@ -175,6 +175,11 @@ if (args.dryRun) {
   process.exit(0)
 }
 
-await selectCheckpoint(target.name)
+const selected = await selectCheckpoint(target.name)
 openWithBlock(block)
-console.log('\nopened Forge with the prompt prefilled.')
+console.log(
+  selected
+    ? '\nopened Forge with the prompt prefilled.'
+    : '\nopened Forge with the prompt prefilled. The dropdown still shows the running batch’s ' +
+        `model; generating from this tab switches to ${target.name}.`,
+)
