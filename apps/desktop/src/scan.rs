@@ -23,10 +23,40 @@ pub fn kind_of(path: &Path) -> Option<MediaKind> {
     if IMAGE_EXTENSIONS.contains(&extension.as_str()) {
         Some(MediaKind::Image)
     } else if VIDEO_EXTENSIONS.contains(&extension.as_str()) {
+        // `ts` is the one extension the list cannot decide on its own.
+        if extension == "ts" && !is_transport_stream(path) {
+            return None;
+        }
         Some(MediaKind::Video)
     } else {
         None
     }
+}
+
+/// Does this `.ts` file actually contain a transport stream?
+///
+/// `ts` is a genuine video extension and simultaneously the commonest source
+/// extension on a developer's disk, so the name cannot separate the two: a scan
+/// of one home directory matched 17,123 TypeScript files and not a single
+/// video. Every one was indexed as a video and cost an `ffprobe` spawn to fail.
+///
+/// So the format is asked instead of the filename. A transport stream is a
+/// sequence of 188-byte packets, each beginning with sync byte `0x47`; checking
+/// three of them in a row is enough that source code will not pass by accident.
+///
+/// Unreadable or too short is "no": a file that cannot be opened here would
+/// fail in ffprobe anyway, and 377 bytes is smaller than any real capture.
+fn is_transport_stream(path: &Path) -> bool {
+    use std::io::Read;
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 377];
+    if file.read_exact(&mut head).is_err() {
+        return false;
+    }
+    head[0] == 0x47 && head[188] == 0x47 && head[376] == 0x47
 }
 
 /// Marker file that excludes a directory and everything under it.
@@ -91,6 +121,34 @@ fn is_generated_grid_dir(name: &str) -> bool {
     lower.ends_with("-grids") || lower.ends_with("-grid")
 }
 
+/// Other apps' private storage: `~/Library`, minus the one part of it people
+/// put files in themselves.
+///
+/// Watching a whole disk is a supported thing to do here, and this is nearly
+/// everything such a scan finds: one home directory produced 668,957 files
+/// under `~/Library` against 31,803 everywhere else — 658,909 of them inside a
+/// single messaging app's group container, 282 GB nobody browsed to. Left in,
+/// it is 95% of the library, and every phase behind it pays for that.
+///
+/// `Mobile Documents` is the exception, because it is iCloud Drive.
+///
+/// Read as a *position*, never as a name: a media folder called `Library` is
+/// ordinary, especially on a share, so only a `Library` sitting directly in a
+/// home directory counts.
+fn is_home_library_storage(segments: &[&str]) -> bool {
+    segments.windows(4).any(|w| {
+        w[0].eq_ignore_ascii_case("Users")
+            && w[2].eq_ignore_ascii_case("Library")
+            && !w[3].eq_ignore_ascii_case("Mobile Documents")
+    })
+}
+
+/// Split the way the index stores paths, not the way this host writes them: a
+/// database written on Windows carries backslashes and must stay readable here.
+fn path_segments(path: &str) -> Vec<&str> {
+    path.split(['/', '\\']).collect()
+}
+
 /// Bump when a name is added to or removed from the ignore list above.
 ///
 /// The index sweep that applies these rules retroactively is a table scan, and
@@ -98,7 +156,7 @@ fn is_generated_grid_dir(name: &str) -> bool {
 /// rule change rather than once per launch. Forgetting to bump this means a
 /// newly-ignored directory stops being walked but its existing rows stay, which
 /// is the exact failure the sweep exists to prevent.
-pub const IGNORE_RULES_VERSION: &str = "1-grids";
+pub const IGNORE_RULES_VERSION: &str = "2-home-library";
 
 /// Would the walk have skipped the directory this file sits in?
 ///
@@ -111,11 +169,12 @@ pub const IGNORE_RULES_VERSION: &str = "1-grids";
 /// filesystem reported, so a database written on Windows carries backslashes
 /// and must still be readable by a build that is not running there.
 pub fn is_in_ignored_dir(path: &str) -> bool {
-    let mut segments: Vec<&str> = path.split(['/', '\\']).collect();
+    let mut segments = path_segments(path);
     // The file's own name is not a directory, and a picture called `x-grid.png`
     // is a picture.
     segments.pop();
     segments.iter().any(|segment| is_ignored_dir(segment))
+        || is_home_library_storage(&segments)
 }
 
 /// Is this a Stable Diffusion Image Browser database?
@@ -173,7 +232,11 @@ where
             }
             let name = entry.file_name().to_string_lossy();
             if entry.file_type().is_dir() {
-                if is_ignored_dir(&name) || is_excluded(entry.path()) {
+                let path = entry.path().to_string_lossy();
+                if is_ignored_dir(&name)
+                    || is_home_library_storage(&path_segments(&path))
+                    || is_excluded(entry.path())
+                {
                     return false;
                 }
                 // One stat per directory, not per file — cheap even on SMB.
@@ -312,6 +375,99 @@ mod tests {
         // picture — the last segment is never tested.
         assert!(!is_in_ignored_dir("/vault/photos/wedding-grid.png"));
         assert!(!is_in_ignored_dir("/vault/photos/holiday.jpg"));
+    }
+
+    /// 188-byte packets, each starting with sync byte 0x47.
+    fn write_transport_stream(path: &Path) {
+        let mut bytes = vec![0u8; 377];
+        for offset in [0, 188, 376] {
+            bytes[offset] = 0x47;
+        }
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn a_real_transport_stream_is_still_a_video() {
+        let dir = tempfile::tempdir().unwrap();
+        let capture = dir.path().join("recording.ts");
+        write_transport_stream(&capture);
+
+        assert_eq!(kind_of(&capture), Some(MediaKind::Video));
+    }
+
+    #[test]
+    fn a_typescript_file_is_not_a_video() {
+        // `ts` is a real video extension and the commonest source extension
+        // there is; one whole-home scan matched 17,123 of these and no videos.
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("media.ts");
+        std::fs::write(&source, b"export const IMAGE_EXTENSIONS = ['jpg']\n").unwrap();
+
+        assert_eq!(kind_of(&source), None);
+    }
+
+    #[test]
+    fn skips_other_apps_private_storage_under_a_home_library() {
+        // What a whole-home scan actually turns up: 659k files in WhatsApp's
+        // group container alone, none of them anything you went looking for.
+        assert!(is_in_ignored_dir(
+            "/Users/someone/Library/Group Containers/group.net.whatsapp.WhatsApp.shared/Message/Media/0@s.whatsapp.net/8/b/x.mp4"
+        ));
+        assert!(is_in_ignored_dir(
+            "/Users/someone/Library/Containers/net.whatsapp.WhatsApp/Data/x.jpg"
+        ));
+        assert!(is_in_ignored_dir(
+            "/Users/someone/Library/Application Support/Google/Chrome/Default/x.png"
+        ));
+        assert!(is_in_ignored_dir(
+            "/Users/someone/Library/Developer/CoreSimulator/Devices/7E/data/x.png"
+        ));
+        assert!(is_in_ignored_dir("/Users/someone/Library/Caches/x.jpg"));
+    }
+
+    #[test]
+    fn keeps_icloud_drive_which_lives_under_the_same_library() {
+        // `Mobile Documents` is the one directory under `~/Library` holding
+        // files a person put there themselves, so the rule stops short of it.
+        assert!(!is_in_ignored_dir(
+            "/Users/someone/Library/Mobile Documents/com~apple~CloudDocs/Photos/holiday.jpg"
+        ));
+    }
+
+    #[test]
+    fn only_a_home_library_counts_as_app_storage() {
+        // The rule reads a position, not a name: a media folder is free to be
+        // called `Library`, and on a share it very often is.
+        assert!(!is_in_ignored_dir("/Volumes/Media/Library/Caches/holiday.jpg"));
+        assert!(!is_in_ignored_dir("/Users/someone/Pictures/Library/holiday.jpg"));
+        // The home directory itself is not app storage.
+        assert!(!is_in_ignored_dir("/Users/someone/Pictures/holiday.jpg"));
+    }
+
+    #[test]
+    fn a_home_library_is_walked_straight_past() {
+        // Not just pruned afterwards: descending into a group container costs
+        // the walk hundreds of thousands of stats before anything can drop them.
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("Users").join("someone");
+        let container = home.join("Library").join("Group Containers").join("app.shared");
+        let icloud = home.join("Library").join("Mobile Documents").join("com~apple~CloudDocs");
+        let pictures = home.join("Pictures");
+        std::fs::create_dir_all(&container).unwrap();
+        std::fs::create_dir_all(&icloud).unwrap();
+        std::fs::create_dir_all(&pictures).unwrap();
+        std::fs::write(container.join("received.jpg"), b"x").unwrap();
+        std::fs::write(icloud.join("scan.jpg"), b"x").unwrap();
+        std::fs::write(pictures.join("holiday.jpg"), b"x").unwrap();
+
+        let walk = walk_folder(root.path(), &[], |_, _| {});
+        let mut names: Vec<&str> = walk.files.iter().map(|f| f.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            vec!["holiday.jpg", "scan.jpg"],
+            "iCloud Drive and the real folders survive; the app container does not"
+        );
     }
 
     #[test]
