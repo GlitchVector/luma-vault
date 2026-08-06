@@ -38,6 +38,16 @@ import { useRemote } from '#/lib/useRemote.ts'
 const TILE_SIZE_KEY = 'luma.tileSize'
 
 /**
+ * How long a second bare tap of Ctrl has to arrive to count as a double tap.
+ *
+ * The way out of selecting mode by keyboard. 500ms is the interval Windows
+ * itself uses for a double click, so it is the one already in everybody's
+ * hands — long enough to be comfortable, short enough that two deliberate
+ * presses a moment apart are not mistaken for one gesture.
+ */
+export const DOUBLE_TAP_MS = 500
+
+/**
  * The tile size to open with.
  *
  * Remembered, unlike the view toggles beside it: those answer a question you
@@ -353,11 +363,21 @@ export function App() {
   // already on is left alone, because leaving it discards the selection and a
   // set assembled by hand must not be destroyed by typing Ctrl-C.
   //
-  // The way back *out* by keyboard is a long hold: 1.5 seconds of bare Ctrl,
-  // uninterrupted by a click or another key, leaves the mode exactly like the
-  // toolbar button — selection dropped and all. Long enough to be nobody's
-  // combination and nobody's aim; a hold that gets used for picking is
-  // disarmed by the click, so it cannot fire mid-gesture.
+  // The way back *out* by keyboard is a **double tap**: two bare taps of Ctrl
+  // inside {@link DOUBLE_TAP_MS} leave the mode exactly like the toolbar button
+  // — selection dropped and all.
+  //
+  // Only *bare* taps count, and that is the whole safety of the thing. A press
+  // that had another key with it, or a click while it was held, is not a tap at
+  // all: so Ctrl-C followed straight away by Ctrl-V cannot destroy a selection,
+  // and neither can holding Ctrl to pick a run of pictures. Whether a press was
+  // bare is only known when it comes *up*, which is why the pairing happens on
+  // keyup rather than on the way down like the mode itself.
+  //
+  // This replaced a 1.5-second hold. The hold was unusable in practice: a
+  // second and a half is long enough to feel broken, there is nothing on screen
+  // counting it down, and letting go a moment early does nothing at all — so
+  // the only feedback for getting it wrong is that nothing happened.
   useEffect(() => {
     // Not while the lightbox is up: it owns the keyboard there, and Ctrl is
     // held for its own shortcuts.
@@ -365,12 +385,15 @@ export function App() {
 
     let down = false
     let opened = false
-    let holding: ReturnType<typeof setTimeout> | undefined
+    /** Whether the Ctrl now held is still a bare tap: no other key, no click. */
+    let bare = false
+    /** A first tap is waiting for its partner. */
+    let pairing: ReturnType<typeof setTimeout> | undefined
 
-    const disarm = () => {
-      if (holding === undefined) return
-      clearTimeout(holding)
-      holding = undefined
+    const forgetFirstTap = () => {
+      if (pairing === undefined) return
+      clearTimeout(pairing)
+      pairing = undefined
     }
 
     const revert = () => {
@@ -392,27 +415,28 @@ export function App() {
         const target = event.target as HTMLElement | null
         const tag = target?.tagName
         if (target?.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+          // Not a tap either: Ctrl pressed inside the search box is on its way
+          // to being Ctrl-A, and must never pair with one pressed outside it.
+          bare = false
           return
         }
+        bare = true
         opened = !selectingRef.current
         if (opened) setSelecting(true)
-        holding = setTimeout(() => {
-          holding = undefined
-          opened = false
-          setSelecting(false)
-          setSelected(new Set())
-          anchor.current = null
-        }, 1500)
         return
       }
+      // Anything else pressed between two taps means they were not one
+      // gesture. Unconditional, because this is true whether or not a Ctrl is
+      // still held: tap Ctrl, type something, tap Ctrl is two separate taps.
+      forgetFirstTap()
       if (down) {
-        disarm()
+        bare = false
         revert()
       }
     }
     // A click while Ctrl is still held is someone *using* the mode they just
     // turned on — hold Ctrl, click several pictures, let go — not the second
-    // half of a Ctrl-click combination.
+    // half of a Ctrl-click combination, and not a tap.
     //
     // So this does not take the mode back; it gives up the right to. Reverting
     // here fired before the click reached the grid, so `selecting` was false by
@@ -421,21 +445,39 @@ export function App() {
     // which clearing this achieves.
     const onPointerDown = () => {
       opened = false
-      disarm()
+      bare = false
+      // And it separates two taps for the same reason a keypress does: tap
+      // Ctrl, pick a picture, tap Ctrl is somebody using the mode, not asking
+      // to leave it.
+      forgetFirstTap()
     }
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key !== 'Control') return
       down = false
       opened = false
-      disarm()
+      if (!bare) return
+      bare = false
+
+      if (pairing !== undefined) {
+        forgetFirstTap()
+        setSelecting(false)
+        setSelected(new Set())
+        anchor.current = null
+        return
+      }
+      pairing = setTimeout(() => {
+        pairing = undefined
+      }, DOUBLE_TAP_MS)
     }
     // Focus left with the key still down: the keyup is going to another
     // window and nothing more is coming. Holding Ctrl across a switch to
-    // Forge must not leave a half-pressed state behind.
+    // Forge must not leave a half-pressed state behind — and a tap made before
+    // leaving must not pair with one made on the way back.
     const onBlur = () => {
       down = false
       opened = false
-      disarm()
+      bare = false
+      forgetFirstTap()
     }
 
     window.addEventListener('keydown', onKeyDown)
@@ -443,7 +485,7 @@ export function App() {
     window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('blur', onBlur)
     return () => {
-      disarm()
+      forgetFirstTap()
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('pointerdown', onPointerDown)

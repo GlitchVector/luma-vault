@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDialogs } from '#/lib/dialogs.ts'
 import { resetInViewRegistry } from '#/lib/useInView.ts'
-import { App } from './App.tsx'
+import { App, DOUBLE_TAP_MS } from './App.tsx'
 
 /**
  * Deleting a file, end to end, against a fake backend.
@@ -767,11 +767,18 @@ describe('starting selection with a tap of Ctrl', () => {
   })
 
   it('does not throw away a selection already made', async () => {
+    // The click goes through the real sequence — pointerdown, then click —
+    // because that ordering is now load-bearing twice over: it tells the
+    // handler the mode is being used, and it separates the tap before it from
+    // the tap after, which would otherwise pair into a double tap and discard
+    // the very selection this is about.
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
     ctrlDown()
     ctrlUp()
-    screen.getByTitle(`image-${LIBRARY_SIZE}.png`).click()
+    const tile = screen.getByTitle(`image-${LIBRARY_SIZE}.png`)
+    fireEvent.pointerDown(tile, { button: 0 })
+    fireEvent.click(tile)
     await screen.findByText('1 selected')
 
     ctrlDown()
@@ -793,10 +800,30 @@ describe('starting selection with a tap of Ctrl', () => {
     expect(screen.queryByText('Nothing selected')).toBeNull()
   })
 
-  it('a long hold on Ctrl leaves the mode and drops the selection', async () => {
-    // Tapping Ctrl never leaves the mode — that guard is tested above. The
-    // deliberate way out is holding it: 1.5 seconds of bare Ctrl does what
-    // the toolbar button does, mode off and selection gone.
+  it('a double tap of Ctrl leaves the mode and drops the selection', async () => {
+    // Tapping Ctrl once never leaves the mode — that guard is tested above.
+    // The deliberate way out is tapping it twice: two bare taps inside the
+    // window do what the toolbar button does, mode off and selection gone.
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    ctrlDown()
+    clickTile(LIBRARY_SIZE)
+    await screen.findByText('1 selected')
+    ctrlUp()
+
+    ctrlDown()
+    ctrlUp()
+    ctrlDown()
+    ctrlUp()
+
+    expect(screen.queryByText('1 selected')).toBeNull()
+    expect(screen.queryByText('Nothing selected')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Select' })).toBeTruthy()
+  })
+
+  it('two taps too far apart are two taps, not a double', async () => {
+    // The second tap has to arrive inside the window. Past it, this is just
+    // someone turning the mode on twice.
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
     ctrlDown()
@@ -807,35 +834,35 @@ describe('starting selection with a tap of Ctrl', () => {
     vi.useFakeTimers()
     try {
       ctrlDown()
+      ctrlUp()
       act(() => {
-        vi.advanceTimersByTime(1500)
+        vi.advanceTimersByTime(DOUBLE_TAP_MS + 50)
       })
+      ctrlDown()
+      ctrlUp()
     } finally {
       vi.useRealTimers()
     }
 
-    expect(screen.queryByText('1 selected')).toBeNull()
-    expect(screen.queryByText('Nothing selected')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Select' })).toBeTruthy()
+    expect(screen.getByText('1 selected')).toBeTruthy()
   })
 
-  it('a hold that gets used for picking never fires the exit', async () => {
-    // Hold Ctrl, click a picture, keep holding while aiming at the next —
-    // however long that takes, the mode must not vanish mid-gesture.
+  it('a tap used for picking is not a tap, so it cannot pair', async () => {
+    // Hold Ctrl, click a picture, let go — then tap Ctrl. The click makes the
+    // first press a *use* of the mode rather than a tap, so the tap after it
+    // has nothing to pair with and the mode must survive.
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
 
-    vi.useFakeTimers()
-    try {
-      ctrlDown()
-      clickTile(LIBRARY_SIZE)
-      act(() => {
-        vi.advanceTimersByTime(4000)
-      })
-      expect(screen.getByText('1 selected')).toBeTruthy()
-    } finally {
-      vi.useRealTimers()
-    }
+    ctrlDown()
+    clickTile(LIBRARY_SIZE)
+    ctrlUp()
+    await screen.findByText('1 selected')
+
+    ctrlDown()
+    ctrlUp()
+
+    expect(screen.getByText('1 selected')).toBeTruthy()
   })
 
   it('survives a keyup lost to another window', async () => {
@@ -852,43 +879,58 @@ describe('starting selection with a tap of Ctrl', () => {
       window.dispatchEvent(new Event('blur'))
     })
 
-    vi.useFakeTimers()
-    try {
-      ctrlDown()
-      act(() => {
-        vi.advanceTimersByTime(1500)
-      })
-    } finally {
-      vi.useRealTimers()
-    }
+    ctrlDown()
+    ctrlUp()
+    ctrlDown()
+    ctrlUp()
 
     expect(screen.queryByText('Nothing selected')).toBeNull()
     expect(screen.getByRole('button', { name: 'Select' })).toBeTruthy()
   })
 
-  it('a combination disarms the exit along with the mode', async () => {
-    // Ctrl-C held past 1.5 seconds is a slow copy, not a request to leave a
-    // mode that was on before the Ctrl went down.
+  it('a keypress between two taps separates them', async () => {
+    // Tap Ctrl, type something, tap Ctrl. Two taps with a keystroke between
+    // them are two taps, whatever the clock says — the same rule a click
+    // follows, and the reason the search box cannot swallow a selection.
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
-    screen.getByRole('button', { name: 'Select' }).click()
-    await screen.findByText('Nothing selected')
+    ctrlDown()
+    clickTile(LIBRARY_SIZE)
+    await screen.findByText('1 selected')
+    ctrlUp()
 
-    vi.useFakeTimers()
-    try {
+    ctrlDown()
+    ctrlUp()
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', bubbles: true }))
+    })
+    ctrlDown()
+    ctrlUp()
+
+    expect(screen.getByText('1 selected')).toBeTruthy()
+  })
+
+  it('a combination is not a tap, so Ctrl-C then Ctrl-V keeps the selection', async () => {
+    // The failure this guards: two combinations typed in quick succession are
+    // four Ctrl events inside the window. If a press with another key on it
+    // counted as a tap, a copy-paste would silently destroy a set assembled by
+    // hand.
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    ctrlDown()
+    clickTile(LIBRARY_SIZE)
+    await screen.findByText('1 selected')
+    ctrlUp()
+
+    for (const key of ['c', 'v']) {
       ctrlDown()
       act(() => {
-        window.dispatchEvent(
-          new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true }),
-        )
+        window.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true }))
       })
-      act(() => {
-        vi.advanceTimersByTime(4000)
-      })
-      expect(screen.getByText('Nothing selected')).toBeTruthy()
-    } finally {
-      vi.useRealTimers()
+      ctrlUp()
     }
+
+    expect(screen.getByText('1 selected')).toBeTruthy()
   })
 })
 
