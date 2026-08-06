@@ -170,6 +170,30 @@ Then show the user the prompt you composed, with one line on anything you
 were unsure of — a character you almost recognised, an outfit detail you had
 to approximate. Those are the lines they will want to edit.
 
+## AniVerse
+
+Pass `aniverse` and both commands switch to **AniVerse XL's own recommended
+settings**, from its model card:
+
+| | AniVerse XL v4.0 | the booru-XL default |
+|---|---|---|
+| CFG | **5.5** | 5 |
+| Steps | **30** | 28 |
+| Sampler | **DPM++ 2M** Karras | DPM++ 2M SDE Karras |
+| Trigger | **`4n1v3rs3`** | none |
+
+The trigger matters more than any of the numbers. Without it the trained style
+is never engaged and the same prompt comes back looking like base SDXL each
+time — which reads as the model being wildly inconsistent rather than as a
+missing token. It goes at the **end** of the prompt, where the card puts it,
+and is not added twice if the prompt already carries it.
+
+`DPM++ 2M` rather than the SDE variant is deliberate: the creator names it as
+the one giving colour, detail and a **2.5D** result, against `Euler Max` which
+is flatter and closer to 2D.
+
+`--cfg` overrides the tuning when you want to explore.
+
 ## When the model is NoobAI
 
 If the user names `noob` (`--model noob`), the checkpoint is NoobAI-XL and the

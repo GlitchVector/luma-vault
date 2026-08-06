@@ -20,6 +20,7 @@
 import {
   DEFAULT_MODEL,
   familyOf,
+  settingsFor,
   warnAboutVPrediction,
   inspectCheckpoint,
   fail,
@@ -42,7 +43,7 @@ function unescape(value) {
 }
 
 function parseArgs(argv) {
-  const args = { model: DEFAULT_MODEL, width: 832, height: 1216, dryRun: false }
+  const args = { model: DEFAULT_MODEL, width: 832, height: 1216, cfg: 5, dryRun: false }
   for (let at = 0; at < argv.length; at++) {
     const flag = argv[at]
     if (flag === '--dry-run') args.dryRun = true
@@ -53,6 +54,9 @@ function parseArgs(argv) {
     else if (flag === '--model') args.model = argv[++at]
     else if (flag === '--width') args.width = Number(argv[++at])
     else if (flag === '--height') args.height = Number(argv[++at])
+    // Booru-XL sits at 5, but NoobAI wants 4-6 and burns colour at the top of
+    // that — a saturated, night-lit render from a daylight prompt is the tell.
+    else if (flag === '--cfg') { args.cfg = Number(argv[++at]); args.cfgGiven = true }
     else fail(`unknown argument: ${flag}`)
   }
   return args
@@ -93,14 +97,30 @@ const quote = (value) => '"' + String(value).replaceAll('"', "'") + '"'
 // A v-prediction checkpoint predicts v rather than noise. The sampler is the
 // half a parameter block can carry — the *mode* is the webui's job, and not
 // every build does it. See the warning below.
+// What this family was actually generated at, where it differs from the
+// booru-XL default — see `settingsFor`. A v-prediction target overrides the
+// sampler regardless, because that is a correctness question rather than a
+// taste one.
+const tuned = settingsFor(familyOf(target.name))
 const sampler = vPred
-  ? ['Sampler: Euler a']
-  : ['Sampler: DPM++ 2M SDE', 'Schedule type: Karras']
+  ? ['Sampler: Euler']
+  : tuned
+    ? [`Sampler: ${tuned.sampler}`, `Schedule type: ${tuned.schedule}`]
+    : ['Sampler: DPM++ 2M SDE', 'Schedule type: Karras']
 if (vPred) warnAboutVPrediction(target.name)
+if (tuned) {
+  console.error(
+    `note: using ${target.name}'s own tuning — CFG ${tuned.cfg}, ${tuned.steps} steps,
+` +
+      `  ${tuned.sampler} ${tuned.schedule} — measured from your highest-rated images of this
+` +
+      '  family rather than the booru-XL default. Override with --cfg.',
+  )
+}
 const settings = [
-  'Steps: 28',
+  `Steps: ${tuned ? tuned.steps : 28}`,
   ...sampler,
-  'CFG scale: 5',
+  `CFG scale: ${args.cfgGiven ? args.cfg : (tuned ? tuned.cfg : args.cfg)}`,
   'Seed: -1',
   `Size: ${args.width}x${args.height}`,
   `Model: ${target.name}`,
@@ -115,7 +135,14 @@ const settings = [
   'ADetailer denoising strength: 0.4',
 ].filter(Boolean).join(', ')
 
-const block = [args.prompt, args.negative ? `Negative prompt: ${args.negative}` : null, settings]
+// The family's activation token, at the end where its card puts it — the
+// trained style is simply not engaged without it.
+const prompt =
+  tuned?.trigger && !args.prompt.toLowerCase().includes(tuned.trigger)
+    ? `${args.prompt.replace(/,\s*$/, '')}, ${tuned.trigger}`
+    : args.prompt
+
+const block = [prompt, args.negative ? `Negative prompt: ${args.negative}` : null, settings]
   .filter(Boolean)
   .join('\n')
 

@@ -74,7 +74,28 @@ export function architectureOf(file) {
  * tags, which is why a heuristic is acceptable at all.
  */
 export function familyOf(name) {
-  return /noob/i.test(name) ? 'noob' : undefined
+  if (/noob/i.test(name)) return 'noob'
+  if (/aniverse/i.test(name)) return 'aniverse'
+  return undefined
+}
+
+/**
+ * The settings and activation token a family wants, from its model card.
+ *
+ * AniVerse XL is the one that differs from the booru-XL default here. Its card
+ * asks for CFG 5.5, 30 steps and `DPM++ 2M` with the Karras scheduler — the
+ * SDE variant is a different sampler, and the creator names 2M specifically as
+ * the one that gives colour, detail and a 2.5D result.
+ *
+ * `trigger` matters more than any of the numbers: without `4n1v3rs3` the
+ * trained style is never engaged, and the same prompt comes back looking like
+ * base SDXL each time, which reads as the model being inconsistent.
+ */
+export function settingsFor(family) {
+  if (family === 'aniverse') {
+    return { cfg: 5.5, steps: 30, sampler: 'DPM++ 2M', schedule: 'Karras', trigger: '4n1v3rs3' }
+  }
+  return null
 }
 
 /**
