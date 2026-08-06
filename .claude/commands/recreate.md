@@ -203,14 +203,14 @@ anything.** The script reads `v_pred` out of the checkpoint's header, writes
 boilerplate: the *sampler* is all a parameter block can carry, and the
 prediction *mode* is the webui's to apply.
 
-Measured on the Forge here (`previous-224-g90019688`): it vendors
-`huggingface_guess`, whose `SDXL.model_type()` does read `v_pred` and return
-`ModelType.V_PREDICTION` — and **nothing calls that function**.
-`backend/diffusion_engine/sdxl.py` builds its predictor from the diffusers
-scheduler config of `stable-diffusion-xl-base-1.0`, which says
-`prediction_type: epsilon`. So SDXL is always sampled as epsilon, and a v-pred
-checkpoint renders as saturated red-and-blue noise with no error and every
-setting looking right.
+Forge builds before mid-2025 read `v_pred` through their vendored
+`huggingface_guess` and then called nothing with the answer, taking the
+predictor from the diffusers scheduler config of
+`stable-diffusion-xl-base-1.0` — `epsilon` — so every SDXL was sampled as
+epsilon. Current builds map it in `backend/loader.py`.
+
+The symptom on an old build: saturated red-and-blue noise, no error raised, and
+every setting in the block looking correct.
 
 So if the user is on such a build, steer them to an **Epsilon-pred** NoobAI
 release (1.1 or 1.0) — the prompt vocabulary above is identical — or to

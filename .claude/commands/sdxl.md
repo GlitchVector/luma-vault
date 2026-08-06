@@ -198,14 +198,15 @@ carries `v_pred` as a non-weight tensor in its header — `inspectCheckpoint`
 reads it from the same parse that identifies the architecture, so it costs no
 extra I/O — and the script warns when it finds one.
 
-Take that warning seriously. On the Forge measured here
-(`previous-224-g90019688`), `huggingface_guess` reads `v_pred` and returns
-`ModelType.V_PREDICTION`, and **nothing calls that function**;
-`backend/diffusion_engine/sdxl.py` takes its predictor from the diffusers
-scheduler config of `stable-diffusion-xl-base-1.0`, which is `epsilon`. SDXL is
-therefore always sampled as epsilon, and a v-pred checkpoint comes out as
-saturated red-and-blue noise — no error, every setting correct-looking. The way
-out is an Epsilon-pred release of the same model, or a newer Forge.
+Take that warning seriously. Forge builds before mid-2025 read `v_pred` through their vendored
+`huggingface_guess` and then called nothing with the answer, taking the
+predictor from the diffusers scheduler config of
+`stable-diffusion-xl-base-1.0` — `epsilon` — so every SDXL was sampled as
+epsilon. Current builds map it in `backend/loader.py`.
+
+The symptom, if the build is old: saturated red-and-blue noise, no error, every
+setting correct-looking. The way out is updating Forge or using an
+Epsilon-pred release of the same model.
 
 CFG stays at 5, which is inside NoobAI's recommended 4-6.
 

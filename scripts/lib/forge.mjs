@@ -78,26 +78,26 @@ export function familyOf(name) {
 }
 
 /**
- * Say plainly that the webui may ignore what the checkpoint declares.
+ * Name the one failure a parameter block cannot prevent, and its symptom.
  *
- * A v-prediction checkpoint carries `v_pred` as a non-weight tensor, and
- * `huggingface_guess` — vendored into Forge — reads it and returns
- * `ModelType.V_PREDICTION`. That result is then used by **nothing**: on the
- * build measured here (`previous-224-g90019688`), `model_type()` has no callers
- * at all, and `backend/diffusion_engine/sdxl.py` builds its predictor from the
- * diffusers scheduler config of `stable-diffusion-xl-base-1.0`, which says
- * `prediction_type: epsilon`. So SDXL is always sampled as epsilon.
+ * A v-prediction checkpoint carries `v_pred` as a non-weight tensor. Whether
+ * that is *acted on* is the webui's business, and older builds do not: before
+ * mid-2025 Forge read the marker through its vendored `huggingface_guess` and
+ * then called nothing with the answer, taking its predictor from the diffusers
+ * scheduler config of `stable-diffusion-xl-base-1.0` — `epsilon` — so every
+ * SDXL was sampled as epsilon. Current builds map it properly in
+ * `backend/loader.py`.
  *
- * The failure is loud but unattributed: saturated red-and-blue noise, no error
- * anywhere, and every setting in the block looking correct. Worth a warning
- * precisely because nothing else will mention it.
+ * Stated as a symptom rather than a verdict, because the script cannot tell
+ * which build is answering on the other end of the port, and asserting the
+ * wrong one is worse than describing what to look for. Nothing else will
+ * mention it: the render fails loudly and attributes itself to nothing.
  */
 export function warnAboutVPrediction(name) {
   console.error(
-    `warning: ${name} is a v-prediction checkpoint.\n` +
-      '  The block is written for it (Euler a), but the *mode* is the webui\'s to apply, and\n' +
-      '  Forge builds around 2024 sample SDXL as epsilon regardless — the result is saturated\n' +
-      '  red/blue noise rather than an error. If that is what comes out: update Forge, or use\n' +
+    `note: ${name} is a v-prediction checkpoint — the block asks for Euler a, but applying\n` +
+      '  the prediction mode is the webui\'s job. If the result is saturated red-and-blue\n' +
+      '  noise, this Forge is sampling it as epsilon: update Forge (fixed mid-2025), or use\n' +
       '  an Epsilon-pred release of the same model.',
   )
 }
