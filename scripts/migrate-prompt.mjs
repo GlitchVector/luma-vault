@@ -131,16 +131,35 @@ function flag(name) {
   if (!value) fail(`${name} needs a value, e.g. ${name} "full body"`)
   return value
 }
+/** A switch rather than a setting: present or not, no value. */
+function switchFlag(name) {
+  const at = argv.indexOf(name)
+  if (at < 0) return false
+  argv.splice(at, 1)
+  return true
+}
+// Prints the file's path and its block, and stops. The path is the point: the
+// prompt frequently does not describe the picture — see `/sdxl`, step 1 — and
+// the only way to find that out is to open the file.
+const show = switchFlag('--show')
 const shot = flag('--shot')
 const body = flag('--body')
+// What the picture shows and its prompt never said. An img2img block keeps its
+// subject in the init image, which the PNG does not carry — see the option's
+// doc comment in migrate.ts.
+const add = flag('--add')
+const size = flag('--size')
+if (size && !/^\d+\s*x\s*\d+$/.test(size)) fail(`--size takes WxH, e.g. --size 832x1216 (got "${size}")`)
 const [imageName, targetName = DEFAULT_MODEL] = argv
 if (!imageName) {
   fail(
-    'usage: pnpm migrate-prompt <image-name> [target-model] [--shot "full body"] [--body "(gigantic ass:2)"]',
+    'usage: pnpm migrate-prompt <image-name> [target-model] [--shot "full body"]',
+    '       [--body "(gigantic ass:2)"] [--add "black dress, demon horns"] [--size 832x1216]',
     '',
     `  pnpm migrate-prompt 00166-3997412987            # onto ${DEFAULT_MODEL}`,
     '  pnpm migrate-prompt 00166-3997412987 illustrious',
     '  pnpm migrate-prompt 00166-3997412987 --shot "wide shot" --body "(huge breasts:1.5)"',
+    '  pnpm migrate-prompt 00489 --add "black dress, garter straps" --size 832x1216',
   )
 }
 
@@ -148,6 +167,14 @@ const row = findImage(imageName)
 const file = externalPath(row.path)
 const block = parameterBlock(file)
 if (!block) fail(`${row.name} has no readable parameter block.`)
+
+if (show) {
+  // Before Forge is contacted, so this works with it closed.
+  console.log(file)
+  console.log('')
+  console.log(block)
+  process.exit(0)
+}
 
 const target = await resolveModel(targetName)
 const architecture = architectureOf(target.filename)
@@ -161,6 +188,8 @@ const { block: migrated, notes } = migrateGeneration(block, {
   emphasis: options.emphasis,
   shot,
   body,
+  add,
+  size,
 })
 
 console.log(`from  ${row.name}`)

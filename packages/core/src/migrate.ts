@@ -55,6 +55,32 @@ export interface MigrationTarget {
    * removed rather than argued with.
    */
   body?: string
+  /**
+   * Tags the picture shows and its prompt never said, appended to the prompt.
+   *
+   * **An img2img generation keeps its subject in the init image**, and a PNG
+   * parameter block does not carry that image. So a block can be twelve words
+   * about a face, with the character, the outfit, the pose and the room all
+   * living in a file nothing downstream has — and migrating it faithfully then
+   * produces a prompt that describes almost nothing, on a model that will
+   * happily invent the rest. Reading the picture is the only way to get those
+   * back, which is why `/sdxl` looks at it.
+   *
+   * Appended rather than prepended: these are the scene, and whatever the
+   * person originally wrote stays in front where its weight is. Anything the
+   * prompt already carries is dropped rather than said twice — a duplicated
+   * concept is encoded twice at half the attention each.
+   */
+  add?: string
+  /**
+   * An explicit canvas — `832x1216`. Wins over the bucket rule.
+   *
+   * The person choosing a shape, usually because the source was square and the
+   * picture is not. Snapped to the nearest SDXL bucket when the target is XL:
+   * the aspect is what was asked for, the pixel count is what the model was
+   * trained at.
+   */
+  size?: string
 }
 
 export interface Migration {
@@ -481,31 +507,6 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       if (!new RegExp(`(^|[^a-z])${term}([^a-z]|$)`).test(already)) keptNegative.push(term)
     }
     nextNegative = keptNegative.join(', ')
-
-    // Negatives that cancel what the prompt asks for. An SD1.5 negative
-    //    often carried `fat, chubby` to fight that model's doughiness; on a
-    //    booru model it deletes the body type the prompt just requested.
-    const asks = nextPrompt.toLowerCase()
-    const cancelling = new Set<string>()
-    for (const { wants, suppressedBy } of NEGATIVE_CONFLICTS) {
-      if (!wants.some((tag) => asks.includes(tag))) continue
-      for (const term of suppressedBy) cancelling.add(term)
-    }
-    if (cancelling.size > 0) {
-      const before = nextNegative
-      const cleared = dropTerms(nextNegative, [...cancelling])
-      nextNegative = cleared.text
-      if (cleared.removed.length > 0) {
-        notes.push(
-          `Removed ${cleared.removed.join(', ')} from the negative — the prompt asks for the ` +
-            'opposite, and the negative usually wins, which reads as the model ignoring you.',
-        )
-      } else if (before !== nextNegative) {
-        // Defensive: the two should not disagree.
-        notes.push('Adjusted the negative prompt.')
-      }
-    }
-
   }
 
   // Body-axis overrides from the command's questions, at the front where they
@@ -554,6 +555,67 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
     notes.push(note + '.')
   }
 
+  // What the picture shows and its prompt never said — see `MigrationTarget.add`.
+  // Last, so the duplicate check sees the imposed body and shot too.
+  if (target.add) {
+    const asked = target.add.trim().replace(/,\s*$/, '')
+    const already = new Set(
+      nextPrompt
+        .toLowerCase()
+        .split(/[,\n]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    )
+    const fresh: string[] = []
+    let repeated = 0
+    for (const wanted of asked.split(',').map((part) => part.trim()).filter(Boolean)) {
+      if (already.has(wanted.toLowerCase())) repeated += 1
+      else fresh.push(wanted)
+    }
+    if (fresh.length > 0) {
+      nextPrompt = nextPrompt ? `${nextPrompt},\n${fresh.join(', ')}` : fresh.join(', ')
+      notes.push(
+        `Added what the picture shows and the prompt never said: ${fresh.join(', ')}` +
+          (repeated > 0 ? ` (${repeated} already there)` : '') +
+          '.',
+      )
+    } else if (repeated > 0) {
+      notes.push(`Nothing added — the prompt already carried all ${repeated} of those tags.`)
+    }
+  }
+
+  // Negatives that cancel what the prompt asks for. An SD1.5 negative often
+  // carried `fat, chubby` to fight that model's doughiness; on a booru model it
+  // deletes the body type the prompt just requested.
+  //
+  // **After the overrides, not before.** This used to run while the prompt was
+  // still the original one, so a body imposed by the command — the loudest ask
+  // there is, and the whole reason `--body` exists — was invisible to it:
+  // `--body "(thick thighs:1.4)"` left `fat, chubby` sitting in the negative,
+  // and the render came back slim with nothing saying why.
+  if (crossing) {
+    const asks = nextPrompt.toLowerCase()
+    const cancelling = new Set<string>()
+    for (const { wants, suppressedBy } of NEGATIVE_CONFLICTS) {
+      if (!wants.some((tag) => asks.includes(tag))) continue
+      for (const term of suppressedBy) cancelling.add(term)
+    }
+    if (cancelling.size > 0) {
+      const before = nextNegative
+      const cleared = dropTerms(nextNegative, [...cancelling])
+      nextNegative = cleared.text
+      if (cleared.removed.length > 0) {
+        notes.push(
+          `Removed ${cleared.removed.join(', ')} from the negative — the prompt asks for the ` +
+            'opposite, and the negative usually wins, which reads as the model ignoring you.',
+        )
+      } else if (before !== nextNegative) {
+        // Defensive: the two should not disagree.
+        notes.push('Adjusted the negative prompt.')
+      }
+    }
+  }
+
   // --- settings -----------------------------------------------------------
   const next = new Map(fields)
   next.set('Model', target.checkpoint)
@@ -580,7 +642,9 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
 
   if (crossing) {
     const size = (get('Size') ?? '').match(/(\d+)x(\d+)/)
-    if (size) {
+    // An explicit canvas is applied below and would only overwrite this, note
+    // and all — two lines about the size, one of them already wrong.
+    if (size && !target.size) {
       const width = Number(size[1])
       const height = Number(size[2])
       const [bucketWidth, bucketHeight] = nearestBucket(width, height)
@@ -636,6 +700,26 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       'CFG 5, 28 steps, clip skip 2 — what booru-trained SDXL models are tuned for. Higher CFG ' +
         'burns contrast and steps past ~30 stop changing the image.',
     )
+  }
+
+  // An explicit canvas — see `MigrationTarget.size`. Outside the `crossing`
+  // branch, because somebody asking for portrait means it on a
+  // same-architecture move too.
+  if (target.size) {
+    const asked = target.size.match(/(\d+)\s*x\s*(\d+)/)
+    if (asked) {
+      const width = Number(asked[1])
+      const height = Number(asked[2])
+      const [finalWidth, finalHeight] =
+        target.architecture === 'xl' ? nearestBucket(width, height) : ([width, height] as const)
+      next.set('Size', `${finalWidth}x${finalHeight}`)
+      notes.push(
+        finalWidth === width && finalHeight === height
+          ? `Canvas set to ${finalWidth}x${finalHeight}.`
+          : `Canvas ${width}x${height} → ${finalWidth}x${finalHeight}, the nearest SDXL bucket. ` +
+            'The shape is what was asked for; the pixel count is what the model was trained at.',
+      )
+    }
   }
 
   // Hires and ADetailer ride along on every XL move, added only when the block
