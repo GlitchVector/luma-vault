@@ -1,5 +1,5 @@
 import type { MediaItem } from '@luma/core'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDialogs } from '#/lib/dialogs.ts'
 import { resetInViewRegistry } from '#/lib/useInView.ts'
@@ -66,8 +66,15 @@ let timelineFailure: string | null = null
 let topCharactersState: Array<{ name: string; count: number }> = []
 /** Every query the leaderboard was asked with, so following can be asserted. */
 const topCharacterQueries: Array<Record<string, unknown>> = []
+/** Folders the app asked to exclude, and what the backend answered. */
+const excludeCalls: string[] = []
+/** When set, excluding rejects with this — a folder that will not take the marker. */
+let excludeFailure: string | null = null
 /** Every query the grid asked the backend for, so a filter can be checked end to end. */
-const queries: Array<{ minStars?: number | null; minLongestEdge?: number | null }> = []
+const queries: Array<{
+  minStars?: number | null
+  minLongestEdge?: number | null
+}> = []
 /** Ids each upscale run was asked for. */
 const upscaleCalls: number[][] = []
 /** What Forge claims to be doing, for the upscale gate. */
@@ -193,7 +200,10 @@ vi.mock('#/lib/native.ts', () => ({
   generationParameters: () => Promise.resolve(null),
   forgeUrl: () => Promise.resolve('http://127.0.0.1:7860'),
   openExternal: () => Promise.resolve(),
-  excludeFolder: () => Promise.resolve(0),
+  excludeFolder: (path: string) => {
+    excludeCalls.push(path)
+    return excludeFailure ? Promise.reject(new Error(excludeFailure)) : Promise.resolve(12)
+  },
   includeFolder: () => Promise.resolve(),
   findDuplicates: () =>
     Promise.resolve({
@@ -277,6 +287,8 @@ beforeEach(() => {
   timelineFailure = null
   topCharactersState = []
   topCharacterQueries.length = 0
+  excludeCalls.length = 0
+  excludeFailure = null
   queries.length = 0
   upscaleCalls.length = 0
   deleteBatches.length = 0
@@ -541,6 +553,49 @@ describe('opening the lightbox', () => {
     ;(await screen.findByTitle(`image-${LIBRARY_SIZE - 1}.png`)).click()
 
     expect(await screen.findByRole('button', { name: 'Hide boxes' })).toBeTruthy()
+  })
+})
+
+describe('excluding a folder from the lightbox', () => {
+  /** Opens a picture and asks. The question is still on screen afterwards. */
+  async function askToExclude() {
+    render(<App />)
+    ;(await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)).click()
+    ;(await screen.findByRole('button', { name: 'Exclude folder' })).click()
+    return await screen.findByRole('alertdialog')
+  }
+
+  /** The dialog's own button, not the lightbox's — they share a label. */
+  const confirm = (dialog: HTMLElement) =>
+    within(dialog).getByRole('button', { name: 'Exclude folder' }).click()
+
+  it('says that a file is written into the folder, because one is', async () => {
+    // Excluding used to promise that nothing on disk was touched, and now the
+    // exclusion *is* something on disk. A dialog still making the old promise
+    // would be the app writing into someone's media folder unannounced.
+    const dialog = await askToExclude()
+
+    expect(within(dialog).getByText(/\.lumaignore file is written into it/)).toBeTruthy()
+    expect(within(dialog).getByText(/No media is deleted/)).toBeTruthy()
+    expect(within(dialog).getByText(/undo this from the sidebar/)).toBeTruthy()
+  })
+
+  it('excludes the folder the picture is in, and says how much left the library', async () => {
+    confirm(await askToExclude())
+
+    await waitFor(() => expect(excludeCalls).toEqual(['\\\\?\\UNC\\jebpot\\devs\\AI']))
+    expect(await screen.findByText(/Removed 12 files/)).toBeTruthy()
+  })
+
+  it('reports a folder that would not take the marker instead of claiming success', async () => {
+    // A read-only share, or one that has gone. Nothing was removed when the
+    // write fails, so a success dialog would be describing a library that did
+    // not change — and the folder would still be in the grid to prove it.
+    excludeFailure = 'could not write .lumaignore into that folder: access is denied'
+    confirm(await askToExclude())
+
+    expect(await screen.findByText(/access is denied/)).toBeTruthy()
+    expect(screen.queryByText(/Removed/)).toBeNull()
   })
 })
 

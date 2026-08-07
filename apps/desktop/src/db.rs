@@ -477,13 +477,16 @@ impl Db {
         // `match_key` is the path from `outputs\` onwards, lowercased. That
         // survives the whole tree being moved to another drive *and* the
         // install directory being renamed, both of which had happened.
-        // Folders the scanner walks straight past.
+        // Folders excluded from the app, so the sidebar can list them and offer
+        // an undo.
         //
-        // The app-managed twin of dropping a `.lumaignore` into a directory.
-        // Both exist because they suit different situations: the marker file
-        // travels with the folder and survives a reinstall, while this one can
-        // be set from the grid the moment you notice a texture pack in it —
-        // which is when you actually find out you wanted it.
+        // A record of markers written, *not* a second way to exclude something:
+        // what the walk skips is decided entirely by `.lumaignore` on disk. This
+        // used to be an independent mechanism, and the two disagreed in both
+        // directions — a folder excluded here came straight back when the index
+        // was rebuilt, and one marked on disk was never listed as excluded at
+        // all. The file is the exclusion; this table is what remembers we wrote
+        // one so it can be taken back.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS excluded_folders (
                  path       TEXT    NOT NULL PRIMARY KEY,

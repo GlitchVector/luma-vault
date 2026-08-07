@@ -22,7 +22,9 @@ use crate::types::{
     MediaFrame, MediaItem, MediaPage, MediaQuery, Rating, ScanProgress, SourceOrigin,
     TimelineBucket,
 };
-use crate::{imports, pipeline, thumbs, throttle, types, upscaler, video, AppState};
+use crate::{
+    imports, pipeline, protocol, scan, thumbs, throttle, types, upscaler, video, AppState,
+};
 
 pub const FORGE_URL_KEY: &str = "forge_url";
 /// Forge's own default. `127.0.0.1` rather than `localhost` because the latter
@@ -889,9 +891,27 @@ pub fn list_exclusions(state: &AppState) -> Result<Vec<String>, String> {
 /// texture pack you just excluded sitting in the grid until something else
 /// happened to prune it, which reads as the setting not working.
 ///
-/// Returns how many rows were removed. Files are never touched — this is an
-/// index that can be rebuilt, and the folder on disk is not ours to edit.
+/// The exclusion itself is a `.lumaignore` written into the folder — the same
+/// marker anyone can drop in by hand, and the only thing the walk consults. It
+/// is written *first*: if it cannot be, nothing else happens, because deleting
+/// rows for a folder the next walk will index again is worse than refusing.
+///
+/// So this is the one command here that writes into a watched folder rather
+/// than only into the index. It is bounded the same way reads are — inside a
+/// watched folder or nowhere — because it is reachable from a shared library
+/// over the LAN, where the caller is not necessarily sitting at this machine.
+///
+/// Returns how many rows were removed. No media is ever touched.
 pub fn exclude_folder(state: &AppState, path: String) -> Result<i64, String> {
+    let folder = Path::new(&path);
+    can_exclude(folder, &state.db.folder_paths().map_err(stringify)?)?;
+    scan::write_marker(folder).map_err(|error| {
+        format!(
+            "could not write {} into {path}: {error}",
+            scan::IGNORE_MARKER
+        )
+    })?;
+
     state
         .db
         .add_excluded_folder(&path, pipeline::now_ms())
@@ -916,9 +936,52 @@ pub fn exclude_folder(state: &AppState, path: String) -> Result<i64, String> {
     Ok(before - after)
 }
 
+/// May a marker be written into `folder`?
+///
+/// Two rules, both of which produce a message the UI shows verbatim:
+///
+/// - **Inside a watched folder.** The same bound reads have, for the same
+///   reason: this command is reachable from a shared library over the LAN, and
+///   the caller is then not the person sitting at this machine.
+/// - **Not a watched folder itself.** A marker at the top of one would be read
+///   by nothing — the walk starts *inside* the root and prunes downwards from
+///   there — so writing it would leave the folder excluded in the sidebar and
+///   scanned on disk. There is already a control for this, and it is the one to
+///   point at.
+///
+/// Paths are canonicalized on both sides, so a root reached through a symlink,
+/// a `..`, or a differently-cased drive letter is still recognised as one.
+fn can_exclude(folder: &Path, roots: &[PathBuf]) -> Result<(), String> {
+    if !protocol::is_allowed(folder, roots) {
+        return Err(format!("{} is not inside a watched folder", folder.display()));
+    }
+    let real = folder.canonicalize().map_err(|error| format!("{}: {error}", folder.display()))?;
+    if roots.iter().any(|root| root.canonicalize().map(|root| root == real).unwrap_or(false)) {
+        return Err(format!(
+            "{} is a folder you added to the library. Remove it from the sidebar instead.",
+            folder.display()
+        ));
+    }
+    Ok(())
+}
+
 /// Scan a folder again after excluding it. Nothing is re-read until the next
 /// walk, which the caller triggers.
+///
+/// The row goes only once the marker has: they are a record and the thing it
+/// records, and dropping the record while the folder is still marked would list
+/// it as included while every walk kept skipping it.
 pub fn include_folder(state: &AppState, path: String) -> Result<(), String> {
+    let gone = scan::remove_marker(Path::new(&path)).map_err(|error| {
+        format!("could not remove {} from {path}: {error}", scan::IGNORE_MARKER)
+    })?;
+    if !gone {
+        return Err(format!(
+            "{path} holds a {} that this app did not write, so it was left alone. \
+             Delete it by hand to scan the folder again.",
+            scan::IGNORE_MARKER
+        ));
+    }
     state.db.remove_excluded_folder(&path).map_err(stringify)
 }
 
@@ -1105,5 +1168,39 @@ mod tests {
         assert_eq!(snake_case("mediaId"), "media_id");
         assert_eq!(snake_case("clientSecret"), "client_secret");
         assert_eq!(snake_case("path"), "path");
+    }
+
+    #[test]
+    fn a_marker_is_only_ever_written_inside_a_watched_folder() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let watched = dir.path().join("vault");
+        let inside = watched.join("assets").join("Texture Pack");
+        let outside = dir.path().join("somewhere else");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let roots = vec![watched.clone()];
+
+        assert!(can_exclude(&inside, &roots).is_ok());
+
+        // Reachable over the LAN from another machine, so "any absolute path"
+        // would mean any folder on this disk.
+        let message = can_exclude(&outside, &roots).unwrap_err();
+        assert!(message.contains("not inside a watched folder"), "got: {message}");
+
+        // `..` cannot walk back out of one, either.
+        let sneaky = watched.join("..").join("somewhere else");
+        assert!(can_exclude(&sneaky, &roots).is_err());
+    }
+
+    #[test]
+    fn excluding_a_watched_folder_itself_points_at_the_control_that_works() {
+        // The marker would land where the walk never looks — it starts inside
+        // the root — so the folder would read as excluded and be scanned anyway.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let watched = dir.path().join("vault");
+        std::fs::create_dir_all(&watched).unwrap();
+
+        let message = can_exclude(&watched, std::slice::from_ref(&watched)).unwrap_err();
+        assert!(message.contains("Remove it from the sidebar"), "got: {message}");
     }
 }

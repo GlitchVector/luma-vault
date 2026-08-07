@@ -132,11 +132,16 @@ work mid-scan: a phase can abandon its pass and be re-run at a new size,
 because re-running costs a query.
 
 1. **Glob.** Walk the tree, skipping VCS directories, dot-files, Synology's
-   `@eaDir` mirrors, Stable Diffusion's `*-grids` contact sheets and any folder
-   you excluded. New files are inserted; rows whose file has vanished are
-   dropped. Existing rows are left untouched, so a rescan is cheap and a backup
-   tool rewriting mtimes cannot wipe your verdicts. Any `wib*.sqlite3` seen on
-   the way past is imported for its star ratings.
+   `@eaDir` mirrors, Stable Diffusion's `*-grids` contact sheets and any
+   directory holding a `.lumaignore`. New files are inserted; rows whose file has
+   vanished are dropped. Existing rows are left untouched, so a rescan is cheap
+   and a backup tool rewriting mtimes cannot wipe your verdicts. Any
+   `wib*.sqlite3` seen on the way past is imported for its star ratings.
+
+   That marker is the whole of "exclude". **Exclude folder** in the lightbox
+   writes one into the folder and drops its rows; **undo**, beside the folder in
+   the sidebar, deletes it again. Dropping the file in by hand does the same
+   thing, and a marker the app did not write is never deleted by one.
 
    The skipped names are applied to the *index* too, the first time you open
    the app after one is added. A rescan cannot do it: its pruning is a set

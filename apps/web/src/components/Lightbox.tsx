@@ -853,9 +853,12 @@ export function Lightbox({
           size="sm"
           onClick={() => {
             if (!storedFolder) return
+            // Says what lands on disk, because something does. A
+            // `.lumaignore` is how the scanner is told to skip a folder, and
+            // writing one is the whole of what "exclude" means here.
             const message = [
               folder,
-              'Its files leave the library. Nothing on disk is deleted, and you can undo this from the sidebar.',
+              'Its files leave the library and a .lumaignore file is written into it, which is what keeps it out. No media is deleted, and you can undo this from the sidebar.',
             ].join('\n\n')
             void askConfirm(message, {
               title: 'Stop scanning this folder?',
