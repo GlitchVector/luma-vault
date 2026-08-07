@@ -21,12 +21,46 @@ meet in the same place:**
 If neither is given, ask which — nothing else here works without a picture.
 
 **The argument is an image name, not a model.** The model used to live in that
-slot; it is now the first question you ask (step 2), because it is a choice
-worth putting in front of someone rather than defaulting silently. If the name
-finds nothing in the index, say so — do not quietly reinterpret it as a
+slot; it is now part of the first question you ask (step 1), because it is a
+choice worth putting in front of someone rather than defaulting silently. If the
+name finds nothing in the index, say so — do not quietly reinterpret it as a
 checkpoint.
 
-## 1. Read the image into danbooru tags
+## 1. Ask who it is, and which model — before looking at anything
+
+One `AskUserQuestion` call, two questions, both single-select. It comes first
+because both answers change the work that follows and neither needs the picture.
+
+### The character question
+
+**Read `.claude/character-tags.md`** — it carries the question, the lookup
+against the tagger's own vocabulary, and what to do with each kind of answer.
+The short version: the user usually knows who this is, recognising a character
+from a picture is the least reliable thing this command does, and one word from
+them removes the guess. Asked *before* step 2 because the answer is what the
+extraction is anchored on; asked afterwards it would only confirm a guess
+already baked into the tags.
+
+Optional, and no answer is a normal answer.
+
+### The model question
+
+| Question | Options |
+|---|---|
+| Model | `deliberate` (Recommended) · `wai` · `aniverse` · `noob` |
+
+All four are substrings, matched against the checkpoints actually installed,
+newest first — so is anything typed under Other, which is how you reach a
+checkpoint not on this list. `deliberate` is the script's own default and stays
+the recommendation; `wai` (waiNSFWIllustrious) has by far the best record on
+this vault's own 4+ ratings, so it is worth offering rather than burying.
+
+`deliberate`, `wai` and `hassaku` are all Illustrious and take identical
+settings; `aniverse` and `noob` each need their own tuning, which the script
+applies from the checkpoint rather than from what was typed. Pass the answer
+through as `--model <answer>`.
+
+## 2. Read the image into danbooru tags
 
 ### When a name was given, look it up first
 
@@ -49,7 +83,7 @@ confirms, drop what it does not.
 Now derive the tags below **from the picture, with the original prompt as the
 spine**: what it already says stays, in its own words and in front where its
 weight is, and what the picture shows that the prompt never said goes behind
-it. The output is that prompt adjusted by the answers in step 2 — not a
+it. The output is that prompt adjusted by the answers in step 3 — not a
 replacement written over the top of it.
 
 ### Either way, the vocabulary
@@ -59,11 +93,14 @@ Booru models learned *exact tag strings*, so near-misses carry nothing —
 Derive, in this order:
 
 - **Subject**: `1girl`, `solo`, `2girls`, … Count what is actually there.
-- **Character**: if you recognise them, the exact danbooru form —
-  `aqua (konosuba)`, `misato katsuragi` — plus their signature features
-  (hair colour/length/style, eye colour) so the model is anchored even where
-  the character tag is weak. If unrecognised, describe instead; never guess a
-  name you are not confident of, a wrong character tag drags the whole image.
+- **Character**: step 1's answer, resolved to the exact danbooru form and
+  written escaped — `aqua \(konosuba\)`, `katsuragi misato` (family name
+  first, which is how danbooru writes them and not how anyone says them) —
+  plus their signature features (hair colour/length/style, eye colour) so the
+  model is anchored even where the character tag is weak. When step 1 left it
+  to you: recognise them if you confidently can, describe them if you cannot.
+  Never guess a name you are not confident of — a wrong character tag drags the
+  whole image, which is why the question is asked in the first place.
 - **Framing**: the ladder is `close-up → upper body → cowboy shot → full body
   → wide shot`. Also `from behind`, `from side`, `from above`, `from below`,
   `looking at viewer`, `looking back`. Body-part *focus* tags (`ass focus`)
@@ -78,30 +115,16 @@ Derive, in this order:
 - **Style**: `realistic` for semi-real rendering, `anime coloring` the other
   way; photographic sources usually want `realistic, photorealistic`.
 
-## 2. Ask — always, and before composing
+## 3. Ask again — always, and before composing
 
 Use the AskUserQuestion tool. This is the point of the command: the user tunes
-the checkpoint, the proportions and the framing away from the source image, and
-"as seen" is a real answer on every body axis. **Three calls**, all
-single-select — the tool caps a call at four questions, and the boosts in the
-last one need the room.
+the proportions and the framing away from the source image, and "as seen" is a
+real answer on every body axis. **Two more calls**, all single-select — the tool
+caps a call at four questions, and the boosts in the last one need the room.
 
-### Call 1 — the model, on its own and first
-
-| Question | Options |
-|---|---|
-| Model | `deliberate` (Recommended) · `wai` · `aniverse` · `noob` |
-
-All four are substrings, matched against the checkpoints actually installed,
-newest first — so is anything typed under Other, which is how you reach a
-checkpoint not on this list. `deliberate` is the script's own default and stays
-the recommendation; `wai` (waiNSFWIllustrious) has by far the best record on
-this vault's own 4+ ratings, so it is worth offering rather than burying.
-
-`deliberate`, `wai` and `hassaku` are all Illustrious and take identical
-settings; `aniverse` and `noob` each need their own tuning, which the script
-applies from the checkpoint rather than from what was typed. Pass the answer
-through as `--model <answer>`.
+These wait for step 2 where call 1 could not: the body ladders read against what
+the picture already shows, and the shot question's "as-is" is whatever framing
+you just extracted.
 
 ### Call 2 — the four body axes
 
@@ -150,7 +173,7 @@ gigantic hips is to fill the frame with them. Four moves, all of them:
 
 - Write the rung weighted — `(full body:1.3)`, `:1.5` when the body tags run
   heavy.
-- Take the wide backstop in the negative (step 3).
+- Take the wide backstop in the negative (step 4).
 - Name footwear in the outfit chunk — `high heels`, `boots`, `feet` when
   bare. The model zooms out to draw what it must include.
 - Leave `hip focus` off the end of the maximum combo. It is a camera
@@ -192,7 +215,7 @@ in a language the model never learned. `shiny skin` is the one that carries the
 gloss. The flag applies the checked set and clears whatever competing rendering
 tag the prompt already had.
 
-## 3. Compose
+## 4. Compose
 
 "The original prompt is the spine" means its *content words* — the character,
 the outfit, the setting it names. Its structure is not preserved: the quality
@@ -256,7 +279,7 @@ not — `censored`, a specific unwanted object. Two kinds never come across:
   model they are not embeddings, they are the literal words, which is the
   opposite of what they were doing.
 
-## 4. Show it, and offer the last look
+## 5. Show it, and offer the last look
 
 **Nothing has been sent yet, and this is the only moment it is still free to
 change.** Once the tab is open the prompt is in Forge's box, and fixing it there
@@ -300,7 +323,7 @@ Two things follow an accepted edit rather than being asked about separately:
 
 Skip the whole call only when the user has already said to just send it.
 
-## 5. Open Forge
+## 6. Open Forge
 
 ```bash
 pnpm open-in-forge --prompt "..." --negative "..."   --adetailer-prompt "..."
@@ -330,7 +353,7 @@ ADetailer model — to every block, and the extension turns both toggles on.
   28 steps, clip skip 2, random seed), with Hires fix and an ADetailer face
   pass always in the block.
 
-The prompt itself was already shown in step 4, so the report afterwards is the
+The prompt itself was already shown in step 5, so the report afterwards is the
 things the prompt does not say: anything you were unsure of — a character you
 almost recognised, an outfit detail you had to approximate — and any tag from a
 free-text edit that is not in the tagger's vocabulary. Those are what someone
