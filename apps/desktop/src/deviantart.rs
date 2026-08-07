@@ -504,6 +504,15 @@ impl DeviantArt {
             // one that is still required fails the whole publish.
             ("agree_submission".to_string(), "1".to_string()),
             ("agree_tos".to_string(), "1".to_string()),
+            // Without this DeviantArt picks its own default, which downscales:
+            // a 2627x3840 upload displays at 1280 wide, throwing away the
+            // reason for uploading a 4K render at all. 0 is Original — the
+            // first rung of the submission form's own dropdown, and the docs
+            // only add that the value "cannot exceed original image size".
+            (
+                "display_resolution".to_string(),
+                draft.display_resolution.to_string(),
+            ),
         ];
 
         if draft.is_mature {
@@ -609,6 +618,14 @@ impl DeviantArt {
                     if stack_id.is_none() {
                         stack_id = created_stack;
                     }
+                    // Recorded at *staging*, before the publish is attempted.
+                    // The file is on DeviantArt's servers either way, so this is
+                    // already enough to stop it being uploaded twice — and if
+                    // the publish then fails, the badge is what says there is
+                    // something waiting in Studio.
+                    let _ =
+                        self.db
+                            .record_deviantart_post(&path, Some(item_id), None, None, false);
 
                     if publish_now {
                         let _ = app.emit(
@@ -626,6 +643,13 @@ impl DeviantArt {
                                 result.url = (!url.is_empty()).then_some(url);
                                 result.deviation_id = (!deviation.is_empty()).then_some(deviation);
                                 summary.published += 1;
+                                let _ = self.db.record_deviantart_post(
+                                    &path,
+                                    Some(item_id),
+                                    result.deviation_id.as_deref(),
+                                    result.url.as_deref(),
+                                    true,
+                                );
                             }
                             Err(error) => {
                                 // Staged but not published: the upload is not

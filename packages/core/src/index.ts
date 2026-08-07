@@ -102,6 +102,8 @@ export {
 } from './timeline.ts'
 
 export {
+  DISPLAY_ORIGINAL,
+  DISPLAY_RESOLUTIONS,
   MAX_TAGS,
   MAX_TITLE,
   POSE_TAGS,
@@ -113,6 +115,7 @@ export {
 } from './publish.ts'
 export type {
   DeviantArtDraft,
+  DisplayResolution,
   DraftOptions,
   MatureClassification,
   MatureLevel,

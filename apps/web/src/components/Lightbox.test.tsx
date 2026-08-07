@@ -58,6 +58,7 @@ function makeItem(id: number, overrides: Partial<MediaItem> = {}): MediaItem {
     dupeGroup: null,
     upscaledFrom: null,
     upscaledTo: null,
+    deviantArt: null,
     ...overrides,
   }
 }

@@ -245,6 +245,25 @@ body. `interpret_api_body` therefore reads the body *first* and only falls back
 to the status. Checking the status first reports failures as successes and then
 fails one line later looking for an item id that was never issued.
 
+**The API cannot make a multi-image deviation, and no amount of trying will
+change that.** `stash/publish` takes exactly one `itemid` — an integer, not a
+list — and `deviation/edit` accepts only metadata, with no parameter for
+attaching a second image. Multi-image deviations exist on the site and are made
+in Studio by selecting several drafts and merging them. So the batch upload
+posts one deviation per picture, and everything the panel does around that is
+aimed at making the *merge* cheap: one stack, one title, and the chosen poster
+uploaded **first**, because upload order is stack order and stack order is what
+the merge turns into image 1, 2, 3. Do not remove the ordering pass on the
+grounds that the API ignores it — Studio does not.
+
+**`display_resolution` defaults to downscaling.** Left unsent, a 2627x3840
+upload displays at 1280 wide, which throws away the reason for uploading a 4K
+render at all. The docs give the field as an integer 0-8 and never say what the
+numbers mean; the mapping in `DISPLAY_RESOLUTIONS` is read off the submission
+form's own dropdown, which lists exactly nine widths with Original first, and
+agrees with their one documented constraint — that a value "cannot exceed
+original image size".
+
 **The redirect URI must match the registered whitelist character for
 character**, which is why the port is a constant and not an ephemeral one. It is
 also why the setup panel shows the URI with a copy button rather than hiding it:
@@ -263,6 +282,14 @@ notice.
 rejects either one without the other, so the panel's checkbox sets and clears
 both, and the derivation returns `matureLevel: null` exactly when `isMature` is
 false.
+
+**What has already been posted is keyed on the path, not on `media.id`.** A
+row's id does not survive the index being rebuilt, which is something this app
+does deliberately — and losing the record would silently un-post pictures that
+are demonstrably public, sending someone to upload them a second time. So
+`deviantart_posts` has no foreign key and no cascade, and its rows outlive the
+media rows they were made for. The trade is that moving the files loses the
+badge, which is the rarer half.
 
 **Nothing derives a submission twice.** `packages/core/src/publish.ts` is the
 only place that maps a verdict onto tags and mature flags; Rust uploads what the

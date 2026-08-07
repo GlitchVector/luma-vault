@@ -157,6 +157,27 @@ pub struct MediaItem {
     /// deleted, and getting that wrong leaves a link pointing at nothing.
     #[serde(default)]
     pub upscaled_to: Option<String>,
+    /// Where this picture already is on DeviantArt, when it is.
+    ///
+    /// The only thing in the grid that is a fact about somewhere *else*. It is
+    /// carried on the row rather than fetched because the question — "have I
+    /// posted this one?" — is asked while scrolling past a hundred tiles, and
+    /// anything answered per tile over the network would not be answered.
+    #[serde(default)]
+    pub deviant_art: Option<DeviantArtPost>,
+}
+
+/// A picture's existing DeviantArt submission.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviantArtPost {
+    /// The deviation page. `None` while it is still only staged in Sta.sh, and
+    /// on rows marked by hand, which know the picture is up but not where.
+    pub url: Option<String>,
+    /// Posted publicly, as against staged in Sta.sh and not yet submitted.
+    pub published: bool,
+    /// Unix ms.
+    pub posted_at: i64,
 }
 
 /// The picture an img2img was made from — see [`crate::origin`] for the rule
@@ -421,6 +442,12 @@ pub struct DeviantArtDraft {
     pub mature_classification: Vec<String>,
     pub is_ai_generated: bool,
     pub noai: bool,
+    /// `display_resolution` on the wire: how wide the deviation page draws the
+    /// image, 0-8 with 0 meaning original. Defaulted rather than required so an
+    /// older frontend cannot fail to deserialize against a newer backend — the
+    /// value it lands on is the one this app wants anyway.
+    #[serde(default)]
+    pub display_resolution: u8,
 }
 
 /// Which account is connected, and what it is actually allowed to do.

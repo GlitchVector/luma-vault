@@ -53,7 +53,41 @@ export interface DeviantArtDraft {
   isAiGenerated: boolean
   /** Ask that the work be excluded from AI training sets. */
   noai: boolean
+  /**
+   * How large the picture is *shown* on its deviation page.
+   *
+   * DeviantArt's own default downscales — a 2627x3840 upload displays at 1280
+   * wide unless something says otherwise, which throws away the entire point of
+   * uploading a 4K render. See {@link DISPLAY_ORIGINAL}.
+   */
+  displayResolution: DisplayResolution
 }
+
+/**
+ * `display_resolution` on the wire: how wide the deviation page draws the image.
+ *
+ * The API documents the field as an integer 0-8 and does not say what the
+ * numbers mean. The mapping below is read off the submission form's own
+ * dropdown, which offers exactly nine choices in this order — Original first.
+ * Their docs add only that a value "cannot exceed original image size", which
+ * is consistent with the rungs being widths and 0 being the un-resized one.
+ */
+export const DISPLAY_RESOLUTIONS = [
+  { value: 0, label: 'Original' },
+  { value: 1, label: '400px wide' },
+  { value: 2, label: '600px wide' },
+  { value: 3, label: '800px wide' },
+  { value: 4, label: '900px wide' },
+  { value: 5, label: '1024px wide' },
+  { value: 6, label: '1280px wide' },
+  { value: 7, label: '1600px wide' },
+  { value: 8, label: '1920px wide' },
+] as const
+
+export type DisplayResolution = (typeof DISPLAY_RESOLUTIONS)[number]['value']
+
+/** Full resolution — what an upload of a 4K render is for. */
+export const DISPLAY_ORIGINAL = 0
 
 /**
  * DeviantArt's cap. Exceeding it is rejected outright rather than truncated,
@@ -330,15 +364,32 @@ function titleCase(value: string): string {
 }
 
 /**
+ * What the upscaler appends to a variant's filename.
+ *
+ * The same string as `UPSCALE_SUFFIX` in `apps/desktop/src/upscales.rs`, which
+ * owns the convention — this end only has to *recognise* it, so the two are not
+ * a rule implemented twice. Nothing derives from it except the title below.
+ */
+const UPSCALE_SUFFIX = '_upscaled_4k'
+
+/**
  * A filename worth showing, or null.
  *
  * Generated output is overwhelmingly named `00042-3746152819.png`, which is a
  * counter and a seed. That is a worse title than anything derivable from the
  * prompt, so it is rejected here and the caller falls through — a name has to
  * carry letters, and not just the extension's worth.
+ *
+ * The upscale suffix comes off first, and that is the whole reason this is not
+ * a one-liner. `00242-3753124055_upscaled_4k.png` is a counter and a seed too,
+ * but the suffix survives the digit strip and the file gets titled **"Upscaled
+ * 4k"** — which is not a title, and worse, is the *same* title for every
+ * variant in a batch. Since the grid shows variants in place of their
+ * originals, that was the normal case rather than an edge one.
  */
 function titleFromName(name: string): string | null {
-  const stem = name.replace(/\.[^.]+$/, '')
+  const bare = name.replace(/\.[^.]+$/, '')
+  const stem = bare.endsWith(UPSCALE_SUFFIX) ? bare.slice(0, -UPSCALE_SUFFIX.length) : bare
   const words = stem
     .replace(/[_-]+/g, ' ')
     .replace(/\b\d{4,}\b/g, ' ')
@@ -447,10 +498,18 @@ export interface DraftOptions {
    * ones a person chose deliberately should not be buried under derived ones.
    */
   baseTags?: readonly string[]
-  /** Ask that the work be excluded from AI training sets. */
+  /**
+   * Ask that the work be excluded from AI training sets.
+   *
+   * **Off unless asked for.** The flag is for someone protecting work they drew;
+   * asserting it over a library that is itself generated is a claim its owner
+   * has to actually want to make, so it is not made on their behalf.
+   */
   noai?: boolean
   /** Put the positive prompt in the description. */
   includePrompt?: boolean
+  /** Title every draft this instead of deriving one per picture. */
+  title?: string
 }
 
 /**
@@ -466,8 +525,9 @@ export function describeForDeviantArt(item: MediaItem, options: DraftOptions = {
   const topLabel = item.verdict?.topLabel ?? null
 
   const title =
-    titleFromName(item.name) ??
-    (item.generation?.prompt ? titleFromPrompt(item.generation.prompt) : null) ??
+    options.title?.trim() ||
+    titleFromName(item.name) ||
+    (item.generation?.prompt ? titleFromPrompt(item.generation.prompt) : null) ||
     'Untitled'
 
   const derived = [
@@ -488,12 +548,16 @@ export function describeForDeviantArt(item: MediaItem, options: DraftOptions = {
   const matureClassification = classify(rating, topLabel)
   const isMature = matureClassification.length > 0
 
+  // Empty unless the prompt is explicitly asked for.
+  //
+  // This used to append "Made with <checkpoint>." to every submission, which
+  // names the model on a public page for no benefit the poster asked for. The
+  // checkpoint already goes out as a *tag*, where it is a thing people browse
+  // by rather than a disclosure — and a tag can be removed in the panel before
+  // sending, which a derived sentence in the description was too easy to miss.
   const description: string[] = []
   if (options.includePrompt && item.generation?.prompt) {
     description.push(item.generation.prompt)
-  }
-  if (item.generation?.model) {
-    description.push(`Made with ${item.generation.model}.`)
   }
 
   return {
@@ -508,6 +572,7 @@ export function describeForDeviantArt(item: MediaItem, options: DraftOptions = {
     matureLevel: isMature ? (rating === 'explicit' ? 'strict' : 'moderate') : null,
     matureClassification,
     isAiGenerated: item.generation !== null,
-    noai: options.noai ?? true,
+    noai: options.noai ?? false,
+    displayResolution: DISPLAY_ORIGINAL,
   }
 }

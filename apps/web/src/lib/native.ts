@@ -649,6 +649,18 @@ export async function deviantArtSend(
   )
 }
 
+/**
+ * Mark a selection as already on DeviantArt, or clear the mark.
+ *
+ * For everything the app did not upload itself — posted from the website, or
+ * posted before it recorded anything. A row marked this way knows the picture
+ * is up but not where, so its badge carries no link.
+ */
+export async function deviantArtMark(ids: number[], posted: boolean): Promise<number> {
+  if (!isTauri()) return 0
+  return (await invoke('deviantart_mark', { ids, posted })) as number
+}
+
 /** Per-file progress while a batch uploads. Returns an unsubscribe. */
 export async function onDeviantArtProgress(
   handler: (progress: DeviantArtProgress) => void,

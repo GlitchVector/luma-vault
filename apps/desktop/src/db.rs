@@ -21,9 +21,10 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::generated::Generation;
+use crate::pipeline::now_ms;
 use crate::types::{
-    Folder, LibraryStats, MediaFrame, MediaItem, MediaKind, MediaPage, MediaQuery, MediaVerdict,
-    Rating, SortOrder,
+    DeviantArtPost, Folder, LibraryStats, MediaFrame, MediaItem, MediaKind, MediaPage, MediaQuery,
+    MediaVerdict, Rating, SortOrder,
 };
 
 pub struct Db {
@@ -145,6 +146,26 @@ impl Db {
                 PRIMARY KEY (media_id, label)
             );
             CREATE INDEX IF NOT EXISTS labels_by_label ON media_labels(label, score);
+
+            /* What has already gone to DeviantArt.
+             *
+             * Keyed on the **path**, not on `media.id`, and with no foreign key
+             * to cascade. A media row's id does not survive the index being
+             * rebuilt — which is a thing that happens deliberately here — and
+             * losing this would silently un-post pictures that are demonstrably
+             * public, sending someone to upload them a second time. The path
+             * survives a rebuild of the same tree; it does not survive the
+             * files being moved, which is the trade, and the far rarer half. */
+            CREATE TABLE IF NOT EXISTS deviantart_posts (
+                path         TEXT PRIMARY KEY,
+                item_id      INTEGER,
+                deviation_id TEXT,
+                url          TEXT,
+                /* Staged in Sta.sh but not posted is a real state, and the one
+                 * the badge has to distinguish — it means "go finish this". */
+                published    INTEGER NOT NULL DEFAULT 0,
+                posted_at    INTEGER NOT NULL
+            );
 
             CREATE INDEX IF NOT EXISTS tags_by_tag       ON media_tags(tag, media_id);
             CREATE INDEX IF NOT EXISTS media_folder      ON media(folder_id);
@@ -1969,6 +1990,83 @@ impl Db {
     }
 
     // -----------------------------------------------------------------------
+    // DeviantArt
+    // -----------------------------------------------------------------------
+
+    /// Record that a picture has gone to DeviantArt.
+    ///
+    /// Upsert rather than insert: uploading the same picture again is a thing
+    /// people do — a better crop, a retitle — and the second attempt's result
+    /// is the one worth keeping. Publishing a previously-staged item therefore
+    /// upgrades the row rather than colliding with it.
+    pub fn record_deviantart_post(
+        &self,
+        path: &str,
+        item_id: Option<i64>,
+        deviation_id: Option<&str>,
+        url: Option<&str>,
+        published: bool,
+    ) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "INSERT INTO deviantart_posts (path, item_id, deviation_id, url, published, posted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(path) DO UPDATE SET
+                 item_id      = COALESCE(excluded.item_id, item_id),
+                 deviation_id = COALESCE(excluded.deviation_id, deviation_id),
+                 url          = COALESCE(excluded.url, url),
+                 -- Never demote. A row that is public stays public even if a
+                 -- later staging of the same file reports otherwise.
+                 published    = MAX(published, excluded.published),
+                 posted_at    = excluded.posted_at",
+            params![
+                path,
+                item_id,
+                deviation_id,
+                url,
+                i64::from(published),
+                now_ms()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Mark or unmark rows by hand.
+    ///
+    /// The escape hatch for everything this app did not do itself: pictures
+    /// posted before it could record them, posted from the website, or recorded
+    /// wrongly. Marking by hand knows the picture is up but not where, so the
+    /// url stays null and the badge has no link — which is honest.
+    pub fn set_deviantart_posted(&self, ids: &[i64], posted: bool) -> Result<usize> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let transaction = conn.transaction()?;
+        let mut changed = 0;
+        for id in ids {
+            let path: Option<String> = transaction
+                .query_row("SELECT path FROM media WHERE id = ?1", params![id], |row| {
+                    row.get(0)
+                })
+                .optional()?;
+            let Some(path) = path else { continue };
+            changed += if posted {
+                transaction.execute(
+                    "INSERT INTO deviantart_posts (path, published, posted_at)
+                     VALUES (?1, 1, ?2)
+                     ON CONFLICT(path) DO UPDATE SET published = 1",
+                    params![path, now_ms()],
+                )?
+            } else {
+                transaction.execute(
+                    "DELETE FROM deviantart_posts WHERE path = ?1",
+                    params![path],
+                )?
+            };
+        }
+        transaction.commit()?;
+        Ok(changed)
+    }
+
+    // -----------------------------------------------------------------------
     // Query
     // -----------------------------------------------------------------------
 
@@ -2586,7 +2684,7 @@ const ANIMATED_EXTENSIONS: [&str; 3] = [".gif", ".webp", ".avif"];
 
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
-                             duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to";
+                             duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to, \n                             (SELECT p.url FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_url, \n                             (SELECT p.published FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_published, \n                             (SELECT p.posted_at FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_posted_at";
 
 fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
     let kind: String = row.get(4)?;
@@ -2622,6 +2720,16 @@ fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
         dupe_group: row.get(18)?,
         upscaled_from: row.get(19)?,
         upscaled_to: row.get(20)?,
+        // Absent unless there is a row in `deviantart_posts`, which is what the
+        // grid's badge reads. `posted_at` carries the presence, because it is
+        // the one column of the three that is never null.
+        deviant_art: row
+            .get::<_, Option<i64>>(23)?
+            .map(|posted_at| DeviantArtPost {
+                url: row.get(21).unwrap_or(None),
+                published: row.get::<_, Option<i64>>(22).unwrap_or(None).unwrap_or(0) != 0,
+                posted_at,
+            }),
     })
 }
 
@@ -3768,6 +3876,120 @@ mod tests {
             .find(|i| i.name == "00118_upscaled_4k.png")
             .expect("variant");
         assert_eq!(variant.upscaled_from.as_deref(), Some("/out/00118.png"));
+    }
+
+    #[test]
+    fn a_posted_picture_carries_its_deviantart_row() {
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(folder, &[file("/out/00242.png", MediaKind::Image, 300)], 1)
+            .expect("insert");
+
+        assert!(db.media_by_path("/out/00242.png").unwrap().unwrap().deviant_art.is_none());
+
+        // Staged, then published — the two calls `send` makes for one file.
+        db.record_deviantart_post("/out/00242.png", Some(88), None, None, false)
+            .expect("stage");
+        let staged = db.media_by_path("/out/00242.png").unwrap().unwrap();
+        let staged = staged.deviant_art.expect("a row after staging");
+        assert!(!staged.published, "staging is not posting");
+        assert_eq!(staged.url, None);
+
+        db.record_deviantart_post(
+            "/out/00242.png",
+            Some(88),
+            Some("abc-123"),
+            Some("https://www.deviantart.com/jebaz/art/x-1"),
+            true,
+        )
+        .expect("publish");
+        let posted = db.media_by_path("/out/00242.png").unwrap().unwrap();
+        let posted = posted.deviant_art.expect("a row after publishing");
+        assert!(posted.published);
+        assert_eq!(posted.url.as_deref(), Some("https://www.deviantart.com/jebaz/art/x-1"));
+    }
+
+    #[test]
+    fn a_second_staging_never_un_posts_something_public() {
+        // Re-uploading a picture that is already public — a better crop, a
+        // retitle — stages first, and that staging reports `published: false`.
+        // Taking it at its word would clear the badge on a deviation that is
+        // demonstrably still up, which is the one direction that misleads.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(folder, &[file("/out/00242.png", MediaKind::Image, 300)], 1)
+            .expect("insert");
+
+        db.record_deviantart_post("/out/00242.png", Some(1), None, Some("https://d/1"), true)
+            .expect("publish");
+        db.record_deviantart_post("/out/00242.png", Some(2), None, None, false)
+            .expect("stage again");
+
+        let row = db.media_by_path("/out/00242.png").unwrap().unwrap();
+        let row = row.deviant_art.expect("still recorded");
+        assert!(row.published, "a public deviation must not be demoted");
+        assert_eq!(row.url.as_deref(), Some("https://d/1"), "nor lose its link");
+    }
+
+    #[test]
+    fn marking_by_hand_sets_and_clears_the_badge() {
+        // The back-fill path: pictures posted before anything recorded them.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/00242.png", MediaKind::Image, 300),
+                file("/out/00239.png", MediaKind::Image, 200),
+            ],
+            1,
+        )
+        .expect("insert");
+        let ids: Vec<i64> = ["/out/00242.png", "/out/00239.png"]
+            .iter()
+            .map(|path| db.media_by_path(path).unwrap().unwrap().id)
+            .collect();
+
+        assert_eq!(db.set_deviantart_posted(&ids, true).expect("mark"), 2);
+        for path in ["/out/00242.png", "/out/00239.png"] {
+            let row = db.media_by_path(path).unwrap().unwrap();
+            let post = row.deviant_art.expect("marked");
+            assert!(post.published);
+            // Marked by hand knows the picture is up but not where. A link it
+            // cannot know is worse than no link.
+            assert_eq!(post.url, None);
+        }
+
+        assert_eq!(db.set_deviantart_posted(&ids[..1], false).expect("unmark"), 1);
+        assert!(db.media_by_path("/out/00242.png").unwrap().unwrap().deviant_art.is_none());
+        assert!(db.media_by_path("/out/00239.png").unwrap().unwrap().deviant_art.is_some());
+    }
+
+    #[test]
+    fn the_deviantart_record_outlives_the_row_it_was_made_for() {
+        // Keyed on the path and not on `media.id`, because the id does not
+        // survive the index being rebuilt — and losing this would silently
+        // un-post pictures that are demonstrably public.
+        let path = tempfile::tempdir().unwrap().path().join("index.db");
+        {
+            let db = Db::open(&path).unwrap();
+            let folder = db.add_folder("/out", 1).unwrap();
+            db.insert_media_batch(folder, &[file("/out/00242.png", MediaKind::Image, 300)], 1)
+                .unwrap();
+            let id = db.media_by_path("/out/00242.png").unwrap().unwrap().id;
+            db.set_deviantart_posted(&[id], true).unwrap();
+            db.delete_media_by_path("/out/00242.png").unwrap();
+        }
+
+        // Re-indexed from scratch: new folder, new row, new id.
+        let db = Db::open(&path).unwrap();
+        let folder = db.add_folder("/out2", 1).unwrap();
+        db.insert_media_batch(folder, &[file("/out/00242.png", MediaKind::Image, 300)], 1)
+            .unwrap();
+        assert!(
+            db.media_by_path("/out/00242.png").unwrap().unwrap().deviant_art.is_some(),
+            "the badge must survive a rebuild",
+        );
     }
 
     #[test]
