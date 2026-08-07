@@ -95,6 +95,50 @@ export function dirnameOf(path: string): string {
 }
 
 /**
+ * Every directory between a path and its root, shallowest first, ending with
+ * the path itself.
+ *
+ * For choosing *how far up* to apply something the app found at one leaf. The
+ * exclusion dialog is the case: a texture pack is discovered from one picture
+ * inside `…\74751_Dimiro\Runtime\Textures\Dimiro\DMR 25`, and the folder worth
+ * excluding is four levels above it. Retyping a UNC path to trim it is the kind
+ * of task people abandon.
+ *
+ * Values are slices of the input, never rebuilt, so each one is byte-identical
+ * to the prefix the index stores — that is what an exclusion is keyed on, and a
+ * path reassembled with the wrong separator would match nothing.
+ *
+ * The root itself is never offered. A server's share, or a whole drive, cannot
+ * be what someone meant, and every watched folder is inside one.
+ */
+export function ancestorsOf(path: string): Array<{ label: string; value: string }> {
+  const prefix = path.startsWith('\\\\?\\UNC\\')
+    ? '\\\\?\\UNC\\'
+    : path.startsWith('\\\\?\\')
+      ? '\\\\?\\'
+      : path.startsWith('\\\\')
+        ? '\\\\'
+        : ''
+  // A UNC root is two segments — server and share — where a drive letter or a
+  // posix root is one.
+  const rootDepth = prefix === '\\\\?\\UNC\\' || prefix === '\\\\' ? 2 : 1
+
+  const found: Array<{ label: string; value: string }> = []
+  let depth = 0
+  let start = prefix.length
+  for (let index = prefix.length; index <= path.length; index += 1) {
+    const done = index === path.length
+    if (!done && path[index] !== '/' && path[index] !== '\\') continue
+    depth += 1
+    const label = path.slice(start, index)
+    if (depth > rootDepth && label) found.push({ label, value: path.slice(0, index) })
+    start = index + 1
+    if (done) break
+  }
+  return found
+}
+
+/**
  * A path as a person should read it.
  *
  * The index stores canonicalized paths, which on Windows means the

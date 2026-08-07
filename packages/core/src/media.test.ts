@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   basenameOf,
+  ancestorsOf,
   dirnameOf,
   toParameterBlock,
   displayPath,
@@ -289,5 +290,64 @@ describe('folderMatch', () => {
     const found = folderMatch(path, 'best')!
     expect(found.text.endsWith('best')).toBe(true)
     expect(found.text.slice(found.from, found.to)).toBe('best')
+  })
+})
+
+describe('ancestorsOf', () => {
+  // The real path from the case this was built for: a texture pack found from
+  // one picture nine levels down a share.
+  const deep = String.raw`\\?\UNC\jebpot\devs\_3d\daz3d\_genesis 9\74751_Dimiro\Runtime\Textures\Dimiro\DMR 25`
+
+  it('offers every level between the share and the folder itself', () => {
+    const found = ancestorsOf(deep)
+    expect(found.map((entry) => entry.label)).toEqual([
+      '_3d',
+      'daz3d',
+      '_genesis 9',
+      '74751_Dimiro',
+      'Runtime',
+      'Textures',
+      'Dimiro',
+      'DMR 25',
+    ])
+    // The last one is the folder that was passed in, so the row can show where
+    // you already are rather than only where you could go.
+    expect(found.at(-1)?.value).toBe(deep)
+  })
+
+  it('never offers the root, on either spelling of one', () => {
+    // The root is where the filesystem is mounted, and that differs between
+    // the two: a UNC root is server *and* share, so neither `jebpot` nor
+    // `devs` is a directory anyone could exclude.
+    expect(ancestorsOf(deep).some((entry) => entry.label === 'jebpot')).toBe(false)
+    expect(ancestorsOf(deep).some((entry) => entry.label === 'devs')).toBe(false)
+
+    // A drive letter is the whole root, so `Users` under it is an ordinary
+    // directory and is offered. Far above any watched folder in practice — but
+    // that is the allowlist's judgement to make and it has the roots to make
+    // it, where this has only the string.
+    expect(ancestorsOf(String.raw`\\?\C:\Users\me\Pictures`).map((e) => e.label)).toEqual([
+      'Users',
+      'me',
+      'Pictures',
+    ])
+  })
+
+  it('slices the input rather than rebuilding it', () => {
+    // What comes back is used as an index key, and the index stores whatever
+    // the filesystem reported. A path reassembled with the other separator
+    // would match nothing and look like the exclusion silently failing.
+    for (const entry of ancestorsOf(deep)) {
+      expect(deep.startsWith(entry.value)).toBe(true)
+    }
+    expect(ancestorsOf(String.raw`\\jebpot\devs\a\b`).map((e) => e.value)).toEqual([
+      String.raw`\\jebpot\devs\a`,
+      String.raw`\\jebpot\devs\a\b`,
+    ])
+  })
+
+  it('has nothing to offer for a path with no room above it', () => {
+    expect(ancestorsOf(String.raw`\\?\UNC\jebpot\devs`)).toEqual([])
+    expect(ancestorsOf('')).toEqual([])
   })
 })

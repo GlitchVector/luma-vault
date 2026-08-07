@@ -615,11 +615,70 @@ describe('excluding a folder from the lightbox', () => {
     expect(within(dialog).getByText(/undo this from the sidebar/)).toBeTruthy()
   })
 
-  it('excludes the folder the picture is in, and says how much left the library', async () => {
-    confirm(await askToExclude())
+  it('starts from the folder the picture is in, spelled the way a person reads it', async () => {
+    // The index stores `\\?\UNC\server\share\…`, which nobody can check at a
+    // glance — and this is a field somebody is about to edit. The backend
+    // canonicalizes what comes back, so both spellings reach the same folder.
+    const dialog = await askToExclude()
+    expect(within(dialog).getByLabelText('Folder to exclude')).toHaveProperty(
+      'value',
+      '\\\\jebpot\\devs\\AI',
+    )
 
-    await waitFor(() => expect(excludeCalls).toEqual(['\\\\?\\UNC\\jebpot\\devs\\AI']))
+    confirm(dialog)
+    await waitFor(() => expect(excludeCalls).toEqual(['\\\\jebpot\\devs\\AI']))
     expect(await screen.findByText(/Removed 12 files/)).toBeTruthy()
+  })
+
+  it('excludes what was typed rather than what was offered', async () => {
+    // The folder a picture sits in is a starting point. A texture pack is
+    // found from one texture several levels down, and the folder worth
+    // throwing out is a parent of it.
+    const dialog = await askToExclude()
+    fireEvent.change(within(dialog).getByLabelText('Folder to exclude'), {
+      target: { value: '\\\\jebpot\\devs' },
+    })
+    confirm(dialog)
+
+    await waitFor(() => expect(excludeCalls).toEqual(['\\\\jebpot\\devs']))
+  })
+
+  it('fills the field from an ancestor, so nobody retypes a UNC path', async () => {
+    // The shape of the real case: a texture found six levels inside a pack,
+    // where the folder worth excluding is `74751_Dimiro` and not the one the
+    // picture happens to sit in.
+    library[0]!.path = String.raw`\\?\UNC\jebpot\devs\_3d\74751_Dimiro\Textures\DMR 25\brick.png`
+    const dialog = await askToExclude()
+
+    // The share itself is never offered — every watched folder is inside one.
+    expect(within(dialog).queryByRole('button', { name: 'devs' })).toBeNull()
+
+    within(dialog).getByRole('button', { name: '74751_Dimiro' }).click()
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText('Folder to exclude')).toHaveProperty(
+        'value',
+        String.raw`\\jebpot\devs\_3d\74751_Dimiro`,
+      ),
+    )
+
+    confirm(dialog)
+    await waitFor(() =>
+      expect(excludeCalls).toEqual([String.raw`\\jebpot\devs\_3d\74751_Dimiro`]),
+    )
+  })
+
+  it('will not send an empty path', async () => {
+    // The one answer that is certainly wrong. Everything else is the backend's
+    // to judge — it holds the allowlist this dialog cannot see.
+    const dialog = await askToExclude()
+    fireEvent.change(within(dialog).getByLabelText('Folder to exclude'), {
+      target: { value: '   ' },
+    })
+
+    expect(within(dialog).getByRole('button', { name: 'Exclude folder' })).toHaveProperty(
+      'disabled',
+      true,
+    )
   })
 
   it('reports a folder that would not take the marker instead of claiming success', async () => {

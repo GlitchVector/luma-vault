@@ -903,9 +903,22 @@ pub fn list_exclusions(state: &AppState) -> Result<Vec<String>, String> {
 ///
 /// Returns how many rows were removed. No media is ever touched.
 pub fn exclude_folder(state: &AppState, path: String) -> Result<i64, String> {
-    let folder = Path::new(&path);
-    can_exclude(folder, &state.db.folder_paths().map_err(stringify)?)?;
-    scan::write_marker(folder).map_err(|error| {
+    let given = Path::new(&path);
+    can_exclude(given, &state.db.folder_paths().map_err(stringify)?)?;
+
+    // Canonicalized once, and every step below uses that spelling.
+    //
+    // The dialog hands back a path a person may have edited, and the readable
+    // form of a Windows path is not the one the index stores — `\\server\share`
+    // against `\\?\UNC\server\share`. The row deletion is a prefix match on
+    // stored paths, so the wrong spelling writes the marker and then quietly
+    // removes nothing, leaving every file of an "excluded" folder in the grid.
+    let folder = given
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", given.display()))?;
+    let path = folder.to_string_lossy().to_string();
+
+    scan::write_marker(&folder).map_err(|error| {
         format!(
             "could not write {} into {path}: {error}",
             scan::IGNORE_MARKER
