@@ -477,13 +477,16 @@ impl Db {
         // `match_key` is the path from `outputs\` onwards, lowercased. That
         // survives the whole tree being moved to another drive *and* the
         // install directory being renamed, both of which had happened.
-        // Folders the scanner walks straight past.
+        // Folders excluded from the app, so the sidebar can list them and offer
+        // an undo.
         //
-        // The app-managed twin of dropping a `.lumaignore` into a directory.
-        // Both exist because they suit different situations: the marker file
-        // travels with the folder and survives a reinstall, while this one can
-        // be set from the grid the moment you notice a texture pack in it —
-        // which is when you actually find out you wanted it.
+        // A record of markers written, *not* a second way to exclude something:
+        // what the walk skips is decided entirely by `.lumaignore` on disk. This
+        // used to be an independent mechanism, and the two disagreed in both
+        // directions — a folder excluded here came straight back when the index
+        // was rebuilt, and one marked on disk was never listed as excluded at
+        // all. The file is the exclusion; this table is what remembers we wrote
+        // one so it can be taken back.
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS excluded_folders (
                  path       TEXT    NOT NULL PRIMARY KEY,
@@ -2397,6 +2400,24 @@ impl Db {
             SortOrder::Oldest => "ORDER BY modified_at ASC, id ASC",
             SortOrder::Name => "ORDER BY name COLLATE NOCASE ASC, id ASC",
             SortOrder::Largest => "ORDER BY size_bytes DESC, id DESC",
+            // `NULLIF` because height defaults to 0 until the measure phase
+            // reaches a row, and integer division by zero is NULL in SQLite
+            // only if you ask for it — otherwise this is an error mid-query.
+            // NULL is the smallest value, so unmeasured rows land at the end
+            // under DESC, which is where a row of unknown shape belongs.
+            SortOrder::Aspect => "ORDER BY (width * 1.0 / NULLIF(height, 0)) DESC, id DESC",
+            // Unstarred first — NULL sorts smallest — because "what have I not
+            // dealt with" is the question this order is for. Newest within a
+            // band, so the pile you are working through faces you.
+            SortOrder::Lowest => "ORDER BY stars ASC, id DESC",
+            // The single strongest detection on the row, whatever label it was.
+            // `media_labels` already holds one row per label at its best score
+            // across every frame, so this is a seek on its primary key per row
+            // rather than a scan of the frame blobs.
+            SortOrder::Score => {
+                "ORDER BY (SELECT MAX(l.score) FROM media_labels l WHERE l.media_id = media.id) \
+                 DESC, id DESC"
+            }
             // A deterministic shuffle rather than RANDOM(): RANDOM() reorders
             // on every query, so page 2 would re-show items from page 1 and
             // silently skip others. This is stable for a given row set.
@@ -4311,6 +4332,79 @@ mod tests {
 
         // And the filter absent means the filter is absent.
         assert_eq!(db.query_media(&query()).unwrap().total, 3);
+    }
+
+    #[test]
+    fn sorting_by_aspect_runs_widest_to_tallest_with_the_unmeasured_last() {
+        // "Landscape first, then all portrait" as one gradient rather than two
+        // buckets. A row mid-scan has height 0, and dividing by it is an error
+        // in SQLite unless the query says otherwise — so this covers the guard
+        // as much as the order.
+        let (db, _folder) = seeded();
+        let pending = db.pending_dimensions(10).expect("queue");
+        let by_path = |path: &str| pending.iter().find(|p| p.path == path).expect(path).id;
+
+        db.update_dimensions(by_path("/media/a.jpg"), 832, 1216, None, None).unwrap();
+        db.update_dimensions(by_path("/media/b.mp4"), 1920, 1080, None, None).unwrap();
+        // c is left unmeasured.
+
+        let page = db
+            .query_media(&MediaQuery { sort: SortOrder::Aspect, ..query() })
+            .expect("query");
+        let names: Vec<&str> = page.items.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(names, vec!["b.mp4", "a.jpg", "c_100%.png"]);
+    }
+
+    #[test]
+    fn sorting_by_rating_starts_at_the_ones_nobody_has_judged() {
+        // Unstarred is not zero stars, and the whole point of the order is
+        // reaching the pile that has not been dealt with — so NULL leading is
+        // the feature, not a NULL-ordering accident to be corrected.
+        let (db, _folder) = seeded();
+        let ids: Vec<i64> = db.query_media(&query()).expect("q").items.iter().map(|i| i.id).collect();
+        db.set_stars(ids[0], Some(5)).expect("stars");
+        db.set_stars(ids[1], Some(2)).expect("stars");
+
+        let page = db
+            .query_media(&MediaQuery { sort: SortOrder::Lowest, ..query() })
+            .expect("query");
+        let stars: Vec<Option<i64>> = page.items.iter().map(|item| item.stars).collect();
+        assert_eq!(stars, vec![None, Some(2), Some(5)]);
+    }
+
+    #[test]
+    fn sorting_by_score_uses_the_strongest_label_whatever_it_was() {
+        // Not `topScore`, which is the score of the label that won on *rating
+        // weight* — a picture whose strongest detection is FACE_FEMALE at 0.99
+        // records a top score from something else entirely. This order asks how
+        // sure the detector was of anything at all.
+        let (db, _folder) = seeded();
+        let ids: Vec<i64> = db.query_media(&query()).expect("q").items.iter().map(|i| i.id).collect();
+        let frame = |label: &str, score: f64| NewFrame {
+            frame_index: 0,
+            timestamp_sec: 0.0,
+            path: "/thumbs/a.jpg".to_string(),
+            verdict_json: serde_json::json!({
+                "person": true, "sexy": false, "nude": false, "rating": "sfw",
+                "topLabel": label, "topLabelTitle": label, "topScore": 0.1,
+                "detections": [{ "label": label, "score": score, "box": [0.0, 0.0, 1.0, 1.0] }]
+            })
+            .to_string(),
+        };
+        db.replace_frames(ids[0], &[frame("FACE_FEMALE", 0.55)]).expect("frames");
+        db.replace_frames(ids[1], &[frame("FACE_FEMALE", 0.95)]).expect("frames");
+        // ids[2] is never classified.
+        assert_eq!(db.labels_for_media(ids[1]).unwrap().len(), 1, "the fixture wrote a label");
+
+        let page = db
+            .query_media(&MediaQuery { sort: SortOrder::Score, ..query() })
+            .expect("query");
+        let order: Vec<i64> = page.items.iter().map(|item| item.id).collect();
+        assert_eq!(
+            order,
+            vec![ids[1], ids[0], ids[2]],
+            "strongest first, and a row nothing has looked at yet is last rather than top"
+        );
     }
 
     #[test]

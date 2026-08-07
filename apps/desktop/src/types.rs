@@ -310,6 +310,12 @@ pub enum SortOrder {
     Oldest,
     Name,
     Largest,
+    /// Widest landscape first, down through square, to tallest portrait.
+    Aspect,
+    /// Stars ascending — unstarred first, then 1 upwards.
+    Lowest,
+    /// The strongest thing the detector saw, whatever it was.
+    Score,
     Random,
 }
 

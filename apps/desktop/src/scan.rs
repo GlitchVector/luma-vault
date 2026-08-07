@@ -65,7 +65,105 @@ fn is_transport_stream(path: &Path) -> bool {
 /// inside a media tree and is indistinguishable from the real thing by name or
 /// extension. Drop an empty `.lumaignore` into a directory and the scanner
 /// walks straight past it.
+///
+/// This is also the *only* way a folder is excluded. "Exclude folder" in the UI
+/// writes one of these ([`write_marker`]) rather than recording the exclusion
+/// somewhere the walk would have to check separately — two mechanisms meant two
+/// answers to one question, and a folder that was excluded in the app but not
+/// on disk came back the moment the index was rebuilt.
 pub const IGNORE_MARKER: &str = ".lumaignore";
+
+/// What [`write_marker`] puts inside the file.
+///
+/// The scanner only asks whether the file exists, so this body is for two other
+/// readers: whoever finds it in a folder months later with no memory of putting
+/// it there, and [`remove_marker`], which will only delete a marker it wrote.
+pub const MARKER_BODY: &str = "\
+# Luma Vault skips this folder and everything under it.
+#
+# Written by \"Exclude folder\" in the app, and removed again by \"undo\" beside
+# the folder in the sidebar. Deleting this file by hand has the same effect as
+# that undo: the folder is scanned again from the next walk onwards.
+";
+
+/// Mark `dir` so the scanner walks past it. Safe to call on a folder that is
+/// already marked.
+///
+/// A marker that is already there is left exactly as it is, whatever it says.
+/// It is doing the job either way, and someone who wrote their own may have put
+/// a reason in it worth more than our boilerplate.
+pub fn write_marker(dir: &Path) -> std::io::Result<()> {
+    let marker = dir.join(IGNORE_MARKER);
+    if marker.exists() {
+        return Ok(());
+    }
+    std::fs::write(marker, MARKER_BODY)
+}
+
+/// Unmark `dir`, but only if the marker is one we wrote.
+///
+/// `false` means a marker is still there and was not ours to delete — the
+/// folder stays unscanned, and the caller has to say so rather than report an
+/// undo that did not happen. A folder with no marker at all is already in the
+/// wanted state and answers `true`.
+pub fn remove_marker(dir: &Path) -> std::io::Result<bool> {
+    let marker = dir.join(IGNORE_MARKER);
+    match std::fs::read_to_string(&marker) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error),
+        Ok(body) if is_our_marker(&body) => {
+            std::fs::remove_file(&marker)?;
+            Ok(true)
+        }
+        Ok(_) => Ok(false),
+    }
+}
+
+/// Line endings normalised first: a marker opened in Notepad and saved comes
+/// back with CRLF, and it is still ours.
+fn is_our_marker(body: &str) -> bool {
+    body.replace("\r\n", "\n").trim() == MARKER_BODY.trim()
+}
+
+/// Does any directory between `path` and `root` carry [`IGNORE_MARKER`]?
+///
+/// The walk asks this once per directory, as part of pruning the traversal. The
+/// watcher cannot: it is handed one changed path at a time, with no idea which
+/// directories it already visited. Without the cache a debounced batch — a bulk
+/// copy is thousands of paths sharing a handful of directories — would stat the
+/// same ancestors thousands of times, and on an SMB share that is the expensive
+/// part of handling the batch at all.
+#[derive(Default)]
+pub struct MarkerCache {
+    known: std::collections::HashMap<PathBuf, bool>,
+}
+
+impl MarkerCache {
+    pub fn covers(&mut self, path: &Path, root: &Path) -> bool {
+        // A path that was deleted cannot be asked what it was, so start from
+        // the parent unless the directory is still there to say otherwise. The
+        // only marker that misses is one inside a directory that is itself
+        // gone, which excludes nothing any more either.
+        let start = if path.is_dir() { Some(path) } else { path.parent() };
+        start.is_some_and(|dir| self.covered(dir, root))
+    }
+
+    /// Cached per directory as the answer for the *whole chain above it*, not
+    /// for the one stat: a sibling asking about the same parent gets the
+    /// finished answer rather than starting the climb again.
+    fn covered(&mut self, dir: &Path, root: &Path) -> bool {
+        if !dir.starts_with(root) {
+            return false;
+        }
+        if let Some(known) = self.known.get(dir) {
+            return *known;
+        }
+        let covered = dir.join(IGNORE_MARKER).exists()
+            || dir.parent().is_some_and(|parent| self.covered(parent, root));
+        self.known.insert(dir.to_path_buf(), covered);
+        covered
+    }
+}
 
 /// Directories that are never worth walking.
 ///
@@ -206,19 +304,10 @@ pub struct Walk {
 /// `on_progress` is called with the running count so the UI can show the glob
 /// growing — on a large NAS share this phase alone can take a minute, and a
 /// motionless progress bar reads as a hang.
-pub fn walk_folder<F>(root: &Path, excluded: &[String], mut on_progress: F) -> Walk
+pub fn walk_folder<F>(root: &Path, mut on_progress: F) -> Walk
 where
     F: FnMut(usize, &Path),
 {
-    // Compared case-insensitively: the index stores whatever case the
-    // filesystem reported, and on Windows the same folder can be reached under
-    // several. An exclusion that silently stopped matching would be worse than
-    // one that never worked, because the folder would quietly come back.
-    let excluded: Vec<String> = excluded.iter().map(|path| path.to_lowercase()).collect();
-    let is_excluded = |path: &Path| {
-        let lower = path.to_string_lossy().to_lowercase();
-        excluded.contains(&lower)
-    };
     let mut files = Vec::new();
     let mut rating_databases = Vec::new();
     let mut errors = Vec::new();
@@ -233,13 +322,13 @@ where
             let name = entry.file_name().to_string_lossy();
             if entry.file_type().is_dir() {
                 let path = entry.path().to_string_lossy();
-                if is_ignored_dir(&name)
-                    || is_home_library_storage(&path_segments(&path))
-                    || is_excluded(entry.path())
-                {
+                if is_ignored_dir(&name) || is_home_library_storage(&path_segments(&path)) {
                     return false;
                 }
                 // One stat per directory, not per file — cheap even on SMB.
+                // Pruning here rather than filtering files later is also what
+                // makes an excluded folder free: a marked directory holding
+                // 50,000 texture maps is one stat, not 50,000.
                 return !entry.path().join(IGNORE_MARKER).exists();
             }
             // Skip AppleDouble sidecars and other dot-files outright.
@@ -460,7 +549,7 @@ mod tests {
         std::fs::write(icloud.join("scan.jpg"), b"x").unwrap();
         std::fs::write(pictures.join("holiday.jpg"), b"x").unwrap();
 
-        let walk = walk_folder(root.path(), &[], |_, _| {});
+        let walk = walk_folder(root.path(), |_, _| {});
         let mut names: Vec<&str> = walk.files.iter().map(|f| f.name.as_str()).collect();
         names.sort_unstable();
         assert_eq!(
@@ -482,7 +571,7 @@ mod tests {
         std::fs::write(images.join("00166-3997412987.png"), b"x").unwrap();
         std::fs::write(grids.join("grid-0008.png"), b"x").unwrap();
 
-        let walk = walk_folder(root.path(), &[], |_, _| {});
+        let walk = walk_folder(root.path(), |_, _| {});
         let names: Vec<&str> = walk.files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(
             names,
@@ -503,7 +592,7 @@ mod tests {
         std::fs::write(root.join("derived/nested/frame.jpg"), b"x").unwrap();
         std::fs::write(root.join("derived").join(IGNORE_MARKER), b"").unwrap();
 
-        let files = walk_folder(root, &[], |_, _| {}).files;
+        let files = walk_folder(root, |_, _| {}).files;
         let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
 
         assert_eq!(
@@ -525,15 +614,90 @@ mod tests {
         std::fs::create_dir_all(root.path().join("photos")).unwrap();
         std::fs::write(root.path().join("photos").join("keep.jpg"), b"x").unwrap();
 
-        let all = walk_folder(root.path(), &[], |_, _| {});
+        let all = walk_folder(root.path(), |_, _| {});
         assert_eq!(all.files.len(), 3, "nothing excluded yet");
 
-        // Case-insensitively, because the index stores whatever case the
-        // filesystem reported and Windows will happily hand back another.
-        let shouted = textures.to_string_lossy().to_uppercase();
-        let walk = walk_folder(root.path(), &[shouted], |_, _| {});
+        // Excluding is writing the marker. There is no second list the walk
+        // also consults, which is what stops the two from ever disagreeing.
+        write_marker(&textures).unwrap();
+        let walk = walk_folder(root.path(), |_, _| {});
         let names: Vec<&str> = walk.files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, vec!["keep.jpg"], "the pack and everything under it");
+    }
+
+    #[test]
+    fn undo_removes_our_marker_and_leaves_a_hand_written_one_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let ours = dir.path().join("ours");
+        let theirs = dir.path().join("theirs");
+        std::fs::create_dir_all(&ours).unwrap();
+        std::fs::create_dir_all(&theirs).unwrap();
+
+        write_marker(&ours).unwrap();
+        std::fs::write(theirs.join(IGNORE_MARKER), b"scratch renders, never index").unwrap();
+
+        assert!(remove_marker(&ours).unwrap());
+        assert!(!ours.join(IGNORE_MARKER).exists());
+
+        assert!(
+            !remove_marker(&theirs).unwrap(),
+            "a marker we did not write is not ours to delete, and undo has to say so"
+        );
+        assert!(theirs.join(IGNORE_MARKER).exists());
+
+        assert!(
+            remove_marker(&ours).unwrap(),
+            "a folder with no marker is already in the state undo is asking for"
+        );
+    }
+
+    #[test]
+    fn a_marker_saved_in_notepad_is_still_ours() {
+        // Windows editors rewrite the line endings of anything they touch, and
+        // a marker that stopped being recognised would make undo stop working
+        // for the one user who opened the file to see what it was.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(IGNORE_MARKER), MARKER_BODY.replace('\n', "\r\n"))
+            .unwrap();
+
+        assert!(remove_marker(dir.path()).unwrap());
+        assert!(!dir.path().join(IGNORE_MARKER).exists());
+    }
+
+    #[test]
+    fn write_marker_does_not_overwrite_what_is_already_there() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(IGNORE_MARKER), b"mine, with a reason in it").unwrap();
+
+        write_marker(dir.path()).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(IGNORE_MARKER)).unwrap(),
+            "mine, with a reason in it",
+            "already excluded is already excluded; the file is not ours to rewrite"
+        );
+    }
+
+    #[test]
+    fn the_marker_cache_answers_for_every_directory_up_to_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let excluded = root.join("assets").join("Texture Pack");
+        let deep = excluded.join("brick").join("4k");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::create_dir_all(root.join("photos")).unwrap();
+        write_marker(&excluded).unwrap();
+
+        let mut cache = MarkerCache::default();
+        assert!(cache.covers(&deep.join("normal.png"), root), "two levels under the marker");
+        assert!(cache.covers(&excluded, root), "the marked directory itself");
+        assert!(!cache.covers(&root.join("photos").join("keep.jpg"), root));
+        // The second ask is the one the cache exists for, and it must not
+        // change the answer.
+        assert!(cache.covers(&deep.join("diffuse.png"), root));
+
+        // Nothing above the watched root is ever stat'd, whatever sits there.
+        assert!(!cache.covers(root.parent().unwrap(), root));
     }
 
     #[test]
@@ -555,7 +719,7 @@ mod tests {
         std::fs::write(root.path().join("notes.sqlite3"), b"x").unwrap();
         std::fs::write(extension.join("wib_db.py"), b"x").unwrap();
 
-        let walk = walk_folder(root.path(), &[], |_, _| {});
+        let walk = walk_folder(root.path(), |_, _| {});
 
         let names: Vec<String> = walk
             .rating_databases
@@ -582,7 +746,7 @@ mod tests {
         std::fs::write(root.join("sub/b.mp4"), b"x").unwrap();
         std::fs::write(root.join("sub/@eaDir/c.jpg"), b"x").unwrap();
 
-        let Walk { files, errors, .. } = walk_folder(root, &[], |_, _| {});
+        let Walk { files, errors, .. } = walk_folder(root, |_, _| {});
         let mut names: Vec<_> = files.iter().map(|f| f.name.clone()).collect();
         names.sort();
 

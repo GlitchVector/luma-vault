@@ -13,7 +13,55 @@ BREAK-structured prompt from the picture, keeping only the words. Reach for
 that one when the original prompt is thin or badly structured; reach for this
 one when the generation was good and only the model should change.
 
-## 1. Look at the picture, not only at its prompt
+## 1. Ask who it is, and which model — before looking at anything
+
+One `AskUserQuestion` call, two questions, both single-select. It comes first
+because both answers change the work that follows and neither needs the picture.
+
+### The character question
+
+**Read `.claude/character-tags.md`** — it carries the question, the lookup
+against the tagger's own vocabulary, and what to do with each kind of answer.
+The short version: the user usually knows who this is, and recognising a
+character from a picture is the least reliable thing this command does.
+
+It matters more here than the name suggests. This command migrates a prompt
+that already exists, and step 2 is largely about what that prompt *fails* to
+say — an img2img block routinely names nobody at all while the picture is
+plainly someone. A name given here goes into `--add` as the character tag,
+which is often the single most valuable thing that flag carries.
+
+If the original prompt already names a character correctly, say so and leave it
+where it is: it is in front, where its weight is, and `--add` drops anything
+already present rather than repeating it.
+
+Optional, and no answer is a normal answer.
+
+### The model question
+
+| Question | Options |
+|---|---|
+| Model | `deliberate` (Recommended) · `wai` · `aniverse` · `noob` |
+
+All four are substrings, matched against the checkpoints actually installed,
+newest first — so is anything typed under Other, which is how you reach a
+checkpoint not on this list. `deliberate` is the script's own default and stays
+the recommendation; `wai` (waiNSFWIllustrious) has by far the best record on
+this vault's own 4+ ratings, so it is worth offering rather than burying.
+
+`deliberate`, `wai` and `hassaku` are all Illustrious and take identical
+settings; `aniverse` and `noob` each need their own tuning, which the script
+applies from the checkpoint rather than from what was typed. The answer becomes
+the **second positional argument** — `pnpm migrate-prompt 00489 wai` — not a
+flag.
+
+**Drop this half of the call when the user already named a model**, as `/sdxl
+00489 aniverse` does. Unlike `/recreate`, whose argument slot is the image, this
+command still takes a model positionally; a model typed there is an answer
+already given, and asking it back is friction. The character question is asked
+either way — the call happens, it just carries one question instead of two.
+
+## 2. Look at the picture, not only at its prompt
 
 **Open the image before anything else.** `pnpm migrate-prompt <name> --show`
 prints the block and the file's path; read the file with it.
@@ -60,37 +108,17 @@ trust it. Anything it names that you can *see* in the picture is worth putting
 in `--add`; anything you cannot see is not.
 
 Do not note the aspect. The canvas is `832x1216` on every run, whatever shape
-the source was — see step 3.
+the source was — see step 4.
 
-## 2. Ask — before running anything
+## 3. Ask again — before running anything
 
 The same questions `/recreate` asks, in the same order, with the same ladders.
-**Three calls**, all single-select — the tool caps a call at four questions, and
-the boosts in the last one need the room.
+**Two more calls**, all single-select — the tool caps a call at four questions,
+and the boosts in the last one need the room.
 
-### Call 1 — the model, on its own and first
-
-| Question | Options |
-|---|---|
-| Model | `deliberate` (Recommended) · `wai` · `aniverse` · `noob` |
-
-All four are substrings, matched against the checkpoints actually installed,
-newest first — so is anything typed under Other, which is how you reach a
-checkpoint not on this list. `deliberate` is the script's own default and stays
-the recommendation; `wai` (waiNSFWIllustrious) has by far the best record on
-this vault's own 4+ ratings, so it is worth offering rather than burying.
-
-`deliberate`, `wai` and `hassaku` are all Illustrious and take identical
-settings; `aniverse` and `noob` each need their own tuning, which the script
-applies from the checkpoint rather than from what was typed. The answer becomes
-the **second positional argument** — `pnpm migrate-prompt 00489 wai` — not a
-flag.
-
-**Skip this call when the user already named a model**, as `/sdxl 00489
-aniverse` does. Unlike `/recreate`, whose argument slot is the image, this
-command still takes a model positionally; a model typed there is an answer
-already given, and asking it back is friction. Ask whenever the arguments carry
-an image name and nothing else.
+These wait for step 2 where call 1 could not: the body ladders read against what
+the picture already shows, and the shot question's "as-is" is whatever framing
+its prompt already carries.
 
 ### Call 2 — the four body axes
 
@@ -161,7 +189,7 @@ in a language the model never learned. `shiny skin` is the one that carries the
 gloss. The flag applies the checked set and clears whatever competing rendering
 tag the prompt already had.
 
-## 3. Migrate, but do not send yet
+## 4. Migrate, but do not send yet
 
 ```bash
 pnpm migrate-prompt <image> <model> --dry-run
@@ -169,7 +197,7 @@ pnpm migrate-prompt <image> <model> --dry-run
 
 `--dry-run` runs the whole migration and prints the block it would send —
 selecting no checkpoint and opening no tab. (It still needs Forge up: the
-checkpoint list and the emphasis setting come from its API.) Step 4 is what
+checkpoint list and the emphasis setting come from its API.) Step 5 is what
 that print is for.
 
 The image is `$ARGUMENTS` unchanged; the model is call 1's answer, or the one
@@ -179,7 +207,7 @@ The answers ride on flags, and all of them are optional:
 
 | Flag | From |
 |---|---|
-| `--add "<tags>"` | step 1 — what the picture shows and the prompt never said |
+| `--add "<tags>"` | steps 1 and 2 — the character, and what the picture shows that the prompt never said |
 | `--shot "<tag>"` | call 3, unless the answer was as-is |
 | `--body "<tags>"` | call 2 and 3 — the rungs with their boosts, or the maximum combo |
 | `--style 2d\|2.5d\|3d` | call 3, unless the answer was as seen |
@@ -217,7 +245,7 @@ The model stays optional *to the script*, which defaults to `deliberate` on its
 own; that default is now the backstop rather than the normal path, because call
 1 asks.
 
-## 4. Show it, and offer the last look
+## 5. Show it, and offer the last look
 
 **Nothing has been sent yet, and this is the only moment the prompt is still
 free to change.** Once the tab is open the text is in Forge's box, and fixing it
@@ -240,7 +268,7 @@ ahead of everything the person originally wrote — see the rewrite notes. Those
 are not description; they are call 2 and call 3's answers, weighted and
 deduplicated against the rungs already in the prompt. Hand-editing them is how a
 prompt ends up carrying two framing rungs that cancel. A framing or body change
-is those questions asked again, which means re-running step 3.
+is those questions asked again, which means re-running step 4.
 
 ### Sending it
 
@@ -255,7 +283,7 @@ Three things about that flag, each of which silently ruins the result if missed:
   throws away the framing and body answers with nothing saying so.
 - **Newlines are written `\n`.** pnpm on Windows cannot carry a real newline
   through an argument. The script expands the escape.
-- **Repeat every flag from step 3.** The run migrates from scratch; the block is
+- **Repeat every flag from step 4.** The run migrates from scratch; the block is
   rebuilt, not resumed, and a `--shot` left off the second run is a shot that
   never happens.
 
@@ -284,7 +312,7 @@ otherwise — Forge raises nothing and the picture simply comes out different.
 5. Detects its architecture from the safetensors header — `sd`, `xl`, `flux`.
 6. Rewrites the block via `migrateGeneration` in `@luma/core` (tested there).
 7. Stops there under `--dry-run`, printing the block it would have sent.
-8. Applies `--prompt` over the rewritten prompt, if one came back from step 4.
+8. Applies `--prompt` over the rewritten prompt, if one came back from step 5.
 9. Selects the checkpoint in Forge **before** opening the tab.
 10. Opens the tab; the prefill extension fills every field.
 

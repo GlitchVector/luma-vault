@@ -302,6 +302,43 @@ fn prune_ignored(pipeline: &Arc<Pipeline>) {
     );
 }
 
+/// Give every folder excluded before the marker existed the file that now does
+/// the excluding.
+///
+/// These rows were the whole mechanism once, and the walk no longer reads them.
+/// Without this pass, upgrading would quietly re-index every folder the user had
+/// already thrown out — which is the failure that is hardest to notice, because
+/// it looks like the library growing.
+///
+/// Best-effort per folder, and the flag is only set once every one of them is
+/// marked: a share that was offline this launch is retried at the next, and a
+/// folder that has since been deleted is nothing to write to anyway.
+fn mark_exclusions(pipeline: &Arc<Pipeline>) {
+    let key = "exclusions_marked";
+    if pipeline.db.setting(key).ok().flatten().as_deref() == Some("1") {
+        return;
+    }
+
+    let Ok(excluded) = pipeline.db.excluded_folders() else {
+        return;
+    };
+    let mut all_marked = true;
+    for path in &excluded {
+        let folder = Path::new(path);
+        if !folder.is_dir() {
+            continue;
+        }
+        if let Err(error) = scan::write_marker(folder) {
+            eprintln!("[luma] could not mark {path} as excluded: {error}");
+            all_marked = false;
+        }
+    }
+
+    if all_marked {
+        let _ = pipeline.db.set_setting(key, "1");
+    }
+}
+
 /// Re-walk every watched folder, then drain the pipeline. Run once at startup.
 ///
 /// The watcher only sees changes while the app is running, so anything added,
@@ -321,7 +358,9 @@ pub fn run_startup(pipeline: Arc<Pipeline>, app: AppHandle) {
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // 0. Bring the index into line with what the walk would do today.
         //    First, so that nothing below spends a thumbnail, a verdict or an
-        //    anime pass on a row that is about to be dropped anyway.
+        //    anime pass on a row that is about to be dropped anyway — and,
+        //    for the exclusions, before the first walk can undo them.
+        mark_exclusions(&pipeline);
         prune_ignored(&pipeline);
 
         let folders = pipeline.db.list_folders().unwrap_or_default();
@@ -426,7 +465,6 @@ pub fn run_pending(pipeline: Arc<Pipeline>, app: AppHandle) {
 // ---------------------------------------------------------------------------
 
 fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &Path) {
-    let excluded = pipeline.db.excluded_folders().unwrap_or_default();
     // An unreachable root is not an empty folder. Walking one returns nothing,
     // and the prune below would then read "every file has been deleted" and
     // wipe the folder's entire index. Unplugging a NAS must not cost you your
@@ -465,7 +503,7 @@ fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &
         files,
         rating_databases,
         mut errors,
-    } = scan::walk_folder(root, &excluded, |count, current| {
+    } = scan::walk_folder(root, |count, current| {
         pipeline.publish(
             app,
             ScanProgress {

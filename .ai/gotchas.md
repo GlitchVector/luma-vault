@@ -92,6 +92,15 @@ and a fast scroll showed a wall of empty placeholders.
 reorders on every query, so page 2 re-shows items from page 1 and silently skips
 others.
 
+**Two sorts lean on NULL ordering, in opposite directions, and both are
+deliberate.** SQLite sorts NULL smallest. `lowest` (stars ascending) therefore
+opens on the unstarred, which is the pile the order exists to reach; `score`
+(strongest detection, descending) sends the unclassified to the end, because a
+row nothing has looked at has not earned the top of a confidence ranking. Adding
+`NULLS LAST` to both would break one of them. `aspect` divides by `height`, so
+it needs `NULLIF(height, 0)`: a row is 0×0 until the measure phase reaches it,
+and integer division by zero is an error mid-query rather than a NULL.
+
 ## The search index
 
 **`media_fts` has three columns and every query names the ones it means.** A
@@ -218,6 +227,28 @@ folder and then drains; `run_pending` (queues only) is for watcher events and
 the retry command.
 
 **Symlinks are not followed.** A loop would walk forever.
+
+**An excluded folder is a `.lumaignore` on disk and nothing else.** There used to
+be a second mechanism — a row in `excluded_folders` that `walk_folder` also
+consulted — and the two disagreed in both directions: a folder excluded in the
+app came back whenever the index was rebuilt or copied to another machine, and
+one marked on disk was never listed as excluded at all. The table still exists,
+but only as the record that lets the sidebar list an exclusion and undo it. If
+you find yourself teaching the walk about a second source, that is the bug
+returning.
+
+**A marker at the top of a watched folder does nothing.** `filter_entry` returns
+true unconditionally at depth 0, so the root's own `.lumaignore` is never read —
+which is why `can_exclude` refuses a watched root outright and points at
+**Remove folder** instead. Honouring it there would mean an empty walk, and an
+empty walk is the shape of an unplugged NAS.
+
+**The watcher has to skip what the walk skips, or exclusion lasts until the next
+file arrives.** Excluding a folder is something you do *while generating into a
+sibling of it*, so the very next file lands with the app open and the watcher —
+not the walk — deciding. `MarkerCache` answers per directory rather than per
+file, because a debounced batch is thousands of paths sharing a handful of
+directories and those stats are the expensive part on SMB.
 
 ## Video
 

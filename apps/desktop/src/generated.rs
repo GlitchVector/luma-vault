@@ -86,6 +86,19 @@ pub struct Generation {
     /// no settings line to anchor on, the postprocess line is all there is.
     #[serde(default)]
     pub postprocessed: bool,
+    /// The characters this prompt names, as {@link characters_of} found them.
+    ///
+    /// Carried rather than re-derived at the far end. The detection is a
+    /// dictionary of thousands of names plus a set of rules about emphasis,
+    /// weights and escaped parentheses, and a second copy of it in TypeScript
+    /// would be a second copy of a *rule* — the thing this codebase pins to
+    /// shared vectors precisely because two copies drift. Sending the answer
+    /// keeps one.
+    ///
+    /// Always serialized, so the far end can tell "no characters in this
+    /// prompt" from "this came from a build that did not look".
+    #[serde(default)]
+    pub characters: Vec<String>,
 }
 
 /// Was this made from another image?
@@ -135,6 +148,20 @@ pub fn read_generation(path: &Path) -> Option<Generation> {
     parse(&head)
 }
 
+/// Fill in what the prompt implies, for every parser at once.
+///
+/// Applied once, where `parse` returns — not inside `parse_a1111`,
+/// `parse_comfy` and `parse_novelai`, which is three chances to forget and a
+/// fourth waiting for whatever format arrives next. It was written that way
+/// first and the PNG `parameters` branch was already missing it, which is the
+/// whole argument in one bug.
+fn derived(mut generation: Generation) -> Generation {
+    if let Some(prompt) = generation.prompt.as_deref() {
+        generation.characters = characters_of(prompt);
+    }
+    generation
+}
+
 fn read_head(path: &Path) -> Option<Vec<u8>> {
     let mut head = vec![0_u8; HEAD_BYTES];
     let mut file = File::open(path).ok()?;
@@ -158,6 +185,10 @@ fn read_head(path: &Path) -> Option<Vec<u8>> {
 }
 
 fn parse(head: &[u8]) -> Option<Generation> {
+    parse_raw(head).map(derived)
+}
+
+fn parse_raw(head: &[u8]) -> Option<Generation> {
     for (keyword, text) in png_text_chunks(head) {
         match keyword.as_str() {
             // A1111 / Forge: the entire UI's parameter block, verbatim.
@@ -186,10 +217,7 @@ fn parse(head: &[u8]) -> Option<Generation> {
         }
     }
 
-    find_marker(head).map(|tool| Generation {
-        tool: tool.to_string(),
-        ..Default::default()
-    })
+    find_marker(head).map(|tool| Generation { tool: tool.to_string(), ..Default::default() })
 }
 
 /// Walk a PNG's `tEXt`/`iTXt` chunks.
@@ -495,6 +523,7 @@ fn parse_comfy(text: &str) -> Option<Generation> {
         sampler,
         steps,
         cfg_scale: cfg,
+        characters: Vec::new(),
     })
 }
 
@@ -519,6 +548,7 @@ fn parse_novelai(text: &str) -> Option<Generation> {
         sampler: get("sampler"),
         steps: get("steps"),
         cfg_scale: get("scale"),
+        characters: Vec::new(),
     })
 }
 
@@ -784,6 +814,26 @@ Steps: 20, Seed: 1"), None);
         assert_eq!(found.model.as_deref(), Some("someMix_v4"));
         // The comma inside the sampler name must not split the field.
         assert_eq!(found.sampler.as_deref(), Some("DPM++ 2M Karras"));
+    }
+
+    /// The characters ride along on the parse rather than being asked for
+    /// separately, so the far end never has to re-derive them — and so no
+    /// future parser can quietly ship without them.
+    #[test]
+    fn a_parsed_generation_carries_the_characters_its_prompt_names() {
+        let block = "masterpiece, aqua (konosuba), 1girl, blue hair
+                     Negative prompt: blurry
+                     Steps: 28, Sampler: Euler a, Seed: 1, Model: someMix_v4";
+        let found = parse(&png_with_text("parameters", block)).expect("parsed");
+        assert_eq!(found.characters, vec!["aqua (konosuba)".to_string()]);
+    }
+
+    #[test]
+    fn a_prompt_naming_nobody_carries_an_empty_list_rather_than_a_guess() {
+        let block = "masterpiece, 1girl, silver hair, glasses
+                     Steps: 28, Seed: 1, Model: someMix_v4";
+        let found = parse(&png_with_text("parameters", block)).expect("parsed");
+        assert!(found.characters.is_empty());
     }
 
     #[test]

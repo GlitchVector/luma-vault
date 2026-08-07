@@ -30,7 +30,7 @@
     "stars": 5,
     "generation": {
       "tool": "Stable Diffusion",
-      "prompt": "a girl on a beach, masterpiece",
+      "prompt": "a girl on a beach, aqua (konosuba), masterpiece",
       "negativePrompt": "bad hands, blurry",
       "model": "someMix_v4",
       "seed": "12345",
@@ -38,7 +38,8 @@
       "steps": "28",
       "cfgScale": "7",
       "needsSourceImage": false,
-      "postprocessed": false
+      "postprocessed": false,
+      "characters": ["aqua (konosuba)"]
     },
     "dupeGroup": 1,
     "upscaledFrom": "/Volumes/vault/Images/holiday.png",

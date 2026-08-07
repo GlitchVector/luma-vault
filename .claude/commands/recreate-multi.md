@@ -13,16 +13,17 @@ except the framing is identical between them.
 ## 1. Do everything `/recreate` does, up to and including the last look
 
 **Read `.claude/commands/recreate.md` and follow it.** All of it: the attached
-image or the named one, step 1's extraction, the three question calls, step 3's
-composition, and step 4's chunk-by-chunk edit. Every rule there holds here — the
-canvas, the model question, the BREAK structure, the negative baseline, the
+image or the named one, step 1's character and model questions, step 2's
+extraction, step 3's two question calls, step 4's composition, and step 5's
+chunk-by-chunk edit. Every rule there holds here — the canvas, the character
+question, the model question, the BREAK structure, the negative baseline, the
 locked chunk 1.
 
 That file is the source of truth and this one is a wrapper. Nothing about
 composing the prompt is restated here, so if the two ever seem to disagree, that
 one wins.
 
-**Stop before the send.** Step 5 opens a tab; do not. The shots question
+**Stop before the send.** Step 6 opens a tab; do not. The shots question
 replaces that single send.
 
 ## 2. The shots question — always last
@@ -32,7 +33,7 @@ is in **`.claude/shot-tags.md`** — read it: it carries each option's ladder ru
 and framing tags, and the rules about rungs, body tags and the wide backstop
 that make them safe to combine.
 
-**Mark the shot the picture already is.** You read its framing in step 1, and
+**Mark the shot the picture already is.** You read its framing in step 2, and
 call 3's shot answer may have already moved it — the detected one is whatever
 the composed prompt currently carries, not what the source had. Append
 ` — detected` to that option's label and put it first inside its own group.
@@ -73,7 +74,7 @@ Per shot, exactly two things move:
   `close-up` tab it argues against the shot being asked for, which is the same
   mistake in the other direction.
 
-Chunks 2, 3 and 4 are the text step 4 approved, byte for byte, in every tab.
+Chunks 2, 3 and 4 are the text step 5 approved, byte for byte, in every tab.
 That is what makes the set a set — with one exception, below.
 
 **A back-facing tab loses its front-only tags, and gets its framing weighted.**

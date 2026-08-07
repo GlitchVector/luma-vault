@@ -12,15 +12,16 @@ except the first line of the prompt is byte-identical between them.
 
 ## 1. Do everything `/sdxl` does, up to and including the last look
 
-**Read `.claude/commands/sdxl.md` and follow it.** All of it: step 1's look at
-the picture, the three question calls, step 3's `--dry-run`, and step 4's prompt
-edit. Every rule there holds here — the canvas, the model question, the locked
-first line, `--add`, the family tuning.
+**Read `.claude/commands/sdxl.md` and follow it.** All of it: step 1's character
+and model questions, step 2's look at the picture, step 3's two question calls,
+step 4's `--dry-run`, and step 5's prompt edit. Every rule there holds here — the
+canvas, the character question, the model question, the locked first line,
+`--add`, the family tuning.
 
 That file is the source of truth and this one is a wrapper. Nothing about the
 migration is restated here, so if the two ever seem to disagree, that one wins.
 
-**Stop before the send.** Step 4 ends by re-running without `--dry-run` to open
+**Stop before the send.** Step 5 ends by re-running without `--dry-run` to open
 a tab; do not. The shots question replaces that single send.
 
 ## 2. The shots question — always last
@@ -30,7 +31,7 @@ is in **`.claude/shot-tags.md`** — read it: it carries each option's ladder ru
 and framing tags, and the rules about rungs, body tags and the wide backstop
 that make them safe to combine.
 
-**Mark the shot the picture already is.** You read its framing in step 1 and it
+**Mark the shot the picture already is.** You read its framing in step 2 and it
 is whatever `--shot` would have been. Append ` — detected` to that option's
 label and put it first inside its own group. `AskUserQuestion` has no true
 preselection, so this is a label and nothing more: say in the question text that
@@ -56,7 +57,7 @@ Check `/sdapi/v1/progress` first — a non-zero `job_count` means every tab you
 open now will sit on "Loading…".
 
 ```bash
-pnpm migrate-prompt <image> <model> <the step 3 flags> \
+pnpm migrate-prompt <image> <model> <the step 4 flags> \
   --shot "<the rung>" --prompt "<line 1 for this shot>\n<lines 2+, unchanged>"
 ```
 
@@ -68,7 +69,7 @@ Per shot, exactly two things move:
 - **`--shot "<the rung>"`** is passed as well, and only the ladder rung, never
   the whole tag set.
 
-Everything from line 2 down is the text step 4 approved, byte for byte, in every
+Everything from line 2 down is the text step 5 approved, byte for byte, in every
 tab. That is what makes the set a set — with one exception, below.
 
 **A back-facing tab loses its front-only tags, and gets its framing weighted.**
@@ -90,7 +91,7 @@ present in the `full body` tabs and absent from the `close-up` ones. Passing the
 rung is how each tab gets the negative its own framing needs. Drop the flag and
 every wide tab quietly crops at the waist.
 
-### And why the flags from step 3 come along again
+### And why the flags from step 4 come along again
 
 Each run migrates from the original file from scratch — the block is rebuilt,
 not resumed. A `--body` or `--style` left off run three is a tab that silently

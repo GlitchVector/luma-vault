@@ -120,6 +120,18 @@ export const generationSchema = z.object({
   needsSourceImage: z.boolean().default(false),
   /** Ran through the Extras tab — an upscale of an existing image. */
   postprocessed: z.boolean().default(false),
+  /**
+   * The characters this prompt names, in danbooru's `name (series)` form.
+   *
+   * Detected on the Rust side and *carried*, never re-derived here. The rule is
+   * a dictionary of thousands of names plus a set of conventions about
+   * emphasis, weights and escaped parentheses — a second copy of it in this
+   * language would be a second copy of a rule, which is the thing the shared
+   * vectors exist to prevent. Reading the answer keeps one copy.
+   *
+   * Defaulted rather than required, so a row written by an older build parses.
+   */
+  characters: z.array(z.string()).default([]),
 })
 export type Generation = z.infer<typeof generationSchema>
 
@@ -385,7 +397,28 @@ export type LibraryStats = z.infer<typeof libraryStatsSchema>
 // Query
 // ---------------------------------------------------------------------------
 
-export const sortOrderSchema = z.enum(['recent', 'added', 'oldest', 'name', 'largest', 'random'])
+/**
+ * `aspect` is one continuous order rather than two groups: widest landscape
+ * first, down through square, to tallest portrait. Grouping by orientation and
+ * sorting within each would put a 16:9 beside a 4:3 in an order nothing on
+ * screen explains, and the gradient reads as deliberate where that does not.
+ *
+ * `lowest` and `score` both sort by a value a row can lack — nobody has starred
+ * it, nothing has classified it. SQLite sorts NULL smallest, so unstarred lands
+ * first under `lowest` (which is the pile you are sorting *for*) and unrated
+ * lands last under `score`.
+ */
+export const sortOrderSchema = z.enum([
+  'recent',
+  'added',
+  'oldest',
+  'name',
+  'largest',
+  'aspect',
+  'lowest',
+  'score',
+  'random',
+])
 export type SortOrder = z.infer<typeof sortOrderSchema>
 
 export const mediaQuerySchema = z.object({

@@ -740,7 +740,14 @@ export function App() {
           onRescan={(id) => void actions.rescanFolder(id)}
           onRetryFailed={() => void actions.retryFailed(query.folderId)}
           exclusions={library.exclusions}
-          onInclude={(path) => void actions.includeFolder(path)}
+          onInclude={(path) => {
+            // Undoing deletes the `.lumaignore` again, so this fails for the
+            // same reasons excluding does — and for one more: a marker someone
+            // wrote themselves is left where it is rather than overwritten.
+            void actions.includeFolder(path).catch((error: unknown) => {
+              void showMessage(String(error), { title: 'Could not scan that folder again' })
+            })
+          }}
           onImportRatings={() => {
             void actions.importRatings().then((summary) => {
               if (!summary) return
@@ -1026,11 +1033,19 @@ export function App() {
             // removed, so leaving the lightbox open would have it displaying
             // something the library no longer contains.
             setOpenId(null)
-            void actions.excludeFolder(folder).then((removed) => {
-              void showMessage(`Removed ${removed.toLocaleString()} files from the library.`, {
-                title: 'Folder excluded',
+            void actions
+              .excludeFolder(folder)
+              .then((removed) => {
+                void showMessage(`Removed ${removed.toLocaleString()} files from the library.`, {
+                  title: 'Folder excluded',
+                })
               })
-            })
+              // Excluding writes a file into the folder, and a read-only share
+              // or a folder that has gone can refuse. Nothing was removed when
+              // that happens, so saying so is the whole of the recovery.
+              .catch((error: unknown) => {
+                void showMessage(String(error), { title: 'Could not exclude that folder' })
+              })
           }}
         />
       ) : null}

@@ -135,6 +135,7 @@ fn handle_changes(
     let folders = db.folder_paths().unwrap_or_default();
     let thumb_root = pipeline.thumb_root();
     let frame_root = pipeline.frame_root();
+    let mut marked = scan::MarkerCache::default();
     let mut touched = false;
 
     for path in paths {
@@ -155,6 +156,16 @@ fn handle_changes(
         // none of them, because generating is exactly when the app is open.
         if scan::is_in_ignored_dir(path_str) {
             continue;
+        }
+
+        // And the same for an excluded folder, for the same reason turned the
+        // other way up: excluding one is something you do *while generating
+        // into a sibling of it*, so the next file to land there arrives with
+        // the app open and the watcher the only thing looking.
+        if let Some(root) = folders.iter().find(|folder| path.starts_with(folder)) {
+            if marked.covers(&path, root) {
+                continue;
+            }
         }
 
         if path.is_file() {

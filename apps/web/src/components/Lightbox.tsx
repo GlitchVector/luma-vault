@@ -5,6 +5,7 @@ import {
   effectiveRating,
   fitInside,
   fitView,
+  highlight,
   isOverPicture,
   isZoomed,
   toParameterBlock,
@@ -150,6 +151,54 @@ interface LightboxProps {
    * row but not what else is in flight.
    */
   onUpscale: (item: MediaItem) => void
+}
+
+/**
+ * A prompt with the characters it names picked out.
+ *
+ * These prompts run to two hundred tags and the character is the one thing you
+ * scan for — it is what the picture is *of*, and it is buried somewhere in the
+ * middle wearing the same colour as `masterpiece` and `blurry`.
+ *
+ * The names arrive already detected, from the Rust side. Nothing here decides
+ * what a character is; this only finds the words it was handed. Matching is
+ * literal and case-insensitive, so `Aqua (Konosuba)` is picked out by the
+ * normalised `aqua (konosuba)` — but a prompt that spells it with escaped
+ * parentheses or doubled spaces simply will not light up, which is the right
+ * way to fail. A missed highlight costs a glance; a wrong one says a picture is
+ * of somebody it is not.
+ */
+function PromptText({ prompt, characters }: { prompt: string; characters: string[] }) {
+  // `aqua \(konosuba\)` is the same tag wearing the prompt-level spelling of
+  // literal parens — detection already peels it, so the display has to know it
+  // too or the one form this library actually contains never highlights.
+  const spellings = characters.flatMap((name) =>
+    name.includes('(')
+      ? [name, name.replace('(', String.raw`\(`).replace(')', String.raw`\)`)]
+      : [name],
+  )
+  // Keyed by where each run starts, which is unique within a prompt and stable
+  // across re-renders — the position is the one thing about a part that cannot
+  // collide with another part.
+  let offset = 0
+  const parts: Array<{ text: string; match: boolean; at: number }> = []
+  for (const part of highlight(prompt, spellings)) {
+    parts.push({ text: part.text, match: part.match, at: offset })
+    offset += part.text.length
+  }
+  return (
+    <>
+      {parts.map((part) =>
+        part.match ? (
+          <span key={part.at} className="font-medium text-pink-400">
+            {part.text}
+          </span>
+        ) : (
+          <Fragment key={part.at}>{part.text}</Fragment>
+        ),
+      )}
+    </>
+  )
 }
 
 /**
@@ -804,9 +853,12 @@ export function Lightbox({
           size="sm"
           onClick={() => {
             if (!storedFolder) return
+            // Says what lands on disk, because something does. A
+            // `.lumaignore` is how the scanner is told to skip a folder, and
+            // writing one is the whole of what "exclude" means here.
             const message = [
               folder,
-              'Its files leave the library. Nothing on disk is deleted, and you can undo this from the sidebar.',
+              'Its files leave the library and a .lumaignore file is written into it, which is what keeps it out. No media is deleted, and you can undo this from the sidebar.',
             ].join('\n\n')
             void askConfirm(message, {
               title: 'Stop scanning this folder?',
@@ -1197,7 +1249,10 @@ export function Lightbox({
                         longer has — read it against the image:
                       </p>
                       <p className="mt-1 select-text whitespace-pre-wrap break-words text-amber-100/85">
-                        {origin.item.generation.prompt}
+                        <PromptText
+                          prompt={origin.item.generation.prompt}
+                          characters={origin.item.generation.characters}
+                        />
                       </p>
                     </>
                   ) : (
@@ -1217,7 +1272,10 @@ export function Lightbox({
             // `select-text` because the whole point is getting these words back
             // out — into another tool, or into the same one again.
             <p className="mt-2 select-text whitespace-pre-wrap break-words text-zinc-200">
-              {panelGeneration.prompt}
+              <PromptText
+                prompt={panelGeneration.prompt}
+                characters={panelGeneration.characters}
+              />
             </p>
           ) : (
             <p className="mt-2 text-zinc-600">
@@ -1289,10 +1347,16 @@ export function Lightbox({
             </>
           ) : null}
 
-          <h3 className="mt-3 border-t border-white/5 pt-2 text-zinc-600">
-            SDXL Claude Command
-          </h3>
+          {/* Both, because they take the same argument and do different things
+              with it: `/sdxl` migrates this block onto a newer checkpoint,
+              keeping the sampler, hires pass and ADetailer settings it already
+              carries; `/recreate` throws the block away and writes a fresh
+              prompt from the picture, keeping only the words. Which one is
+              wanted depends on whether the generation was good, and that is a
+              judgement made while looking at it — which is here. */}
+          <h3 className="mt-3 border-t border-white/5 pt-2 text-zinc-600">Claude Commands</h3>
           <CopyLabel value={`/sdxl ${panelItem.name}`} />
+          <CopyLabel value={`/recreate ${panelItem.name}`} />
         </aside>
       ) : null}
       </div>

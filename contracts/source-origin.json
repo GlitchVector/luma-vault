@@ -39,7 +39,8 @@
         "steps": "28",
         "cfgScale": "7",
         "needsSourceImage": false,
-        "postprocessed": false
+        "postprocessed": false,
+        "characters": []
       },
       "dupeGroup": null,
       "upscaledFrom": null,
@@ -73,7 +74,8 @@
       "generation": {
         "tool": "Stable Diffusion",
         "needsSourceImage": true,
-        "postprocessed": false
+        "postprocessed": false,
+        "characters": []
       },
       "dupeGroup": 5533,
       "upscaledFrom": null,
