@@ -17,6 +17,23 @@ export function fail(...lines) {
   process.exit(1)
 }
 
+/**
+ * A literal backslash-n in an argument becomes a real newline.
+ *
+ * pnpm on Windows cannot carry raw newlines through an argument — they arrive
+ * as the two characters backslash-n, which the tokenizer would read as text and
+ * which break `BREAK`, a keyword that must stand alone between whitespace. So
+ * callers write backslash-n and this expands it, and multiline prompts survive
+ * the shell.
+ *
+ * Two passes, because pnpm on Windows also doubles backslashes when re-quoting:
+ * the sequence can arrive as backslash-backslash-n. Expand first, then drop any
+ * backslash left stranded against the newline it used to escape.
+ */
+export function unescapeNewlines(value) {
+  return value == null ? value : value.replaceAll('\\n', '\n').replace(/\\+\n/g, '\n')
+}
+
 export async function forge(path, options) {
   const response = await fetch(FORGE + path, options)
   if (!response.ok) throw new Error(`${path} returned ${response.status}`)
@@ -235,3 +252,16 @@ export function openWithBlock(block) {
  * rather than pinning a version.
  */
 export const DEFAULT_MODEL = 'deliberate'
+
+/**
+ * The canvas both commands use unless the caller overrides it: the portrait
+ * SDXL bucket.
+ *
+ * Deliberately *not* derived from the source image's aspect. What these prompts
+ * are for is a standing figure, and a source's shape is an accident of whatever
+ * it came from — an img2img chain that passed through a square crop, a wallpaper
+ * someone saved. Inheriting it produced square and landscape canvases nobody had
+ * asked for, and a body prompt on a landscape canvas crops at the waist.
+ */
+export const PORTRAIT = '832x1216'
+export const [PORTRAIT_WIDTH, PORTRAIT_HEIGHT] = PORTRAIT.split('x').map(Number)

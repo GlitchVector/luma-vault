@@ -477,6 +477,91 @@ describe('migrateGeneration, an explicit canvas', () => {
     })
     expect(block.split('\n').at(-1)).toContain('Size: 512x768')
   })
+
+  // `/sdxl` now asks for portrait on every run, so this is the ordinary path
+  // rather than the exception — and the hires recompute used to sit inside the
+  // bucket rule, where an explicit canvas never reached it. 768 x 2 = 1536
+  // wanted; inheriting 2 against a 1216 canvas would have aimed at 2432.
+  it('recomputes the hires factor, which is a multiple of the canvas it just changed', () => {
+    const { block, notes } = migrateGeneration(
+      'a girl\nSteps: 20, Size: 512x768, Hires upscale: 2, Hires steps: 20, Hires upscaler: Latent',
+      { ...TO_XL, size: '832x1216' },
+    )
+    expect(block.split('\n').at(-1)).toContain('Hires upscale: 1.25')
+    expect(notes.some((note) => note.includes('near the original 1536px'))).toBe(true)
+  })
+
+  // Forcing portrait makes this routine: a landscape source wants a factor
+  // below the 1.1 floor, and the note must not claim a height it cannot reach.
+  it('says where the clamped factor actually lands, rather than where it aimed', () => {
+    const { block, notes } = migrateGeneration(
+      'a girl\nSteps: 20, Size: 768x512, Hires upscale: 2, Hires upscaler: Latent',
+      { ...TO_XL, size: '832x1216' },
+    )
+    expect(block.split('\n').at(-1)).toContain('Hires upscale: 1.1')
+    const note = notes.find((each) => each.includes('Hires upscale'))!
+    expect(note).toContain('the pass ends at 1338px')
+    expect(note).not.toContain('keeping the final height near')
+  })
+
+  it('leaves the hires factor alone when the canvas height did not move', () => {
+    const { block, notes } = migrateGeneration(
+      'a girl\nSteps: 20, Size: 832x1216, Hires upscale: 1.5, Hires upscaler: Latent',
+      { ...TO_XL, size: '832x1216' },
+    )
+    expect(block.split('\n').at(-1)).toContain('Hires upscale: 1.5')
+    expect(notes.some((note) => note.includes('Hires upscale'))).toBe(false)
+  })
+})
+
+describe('migrateGeneration, the last look', () => {
+  const BLOCK = 'a girl, blue hair\nNegative prompt: lowres\nSteps: 20, Size: 512x768, Model: x'
+
+  it('replaces the migrated prompt wholesale, and says it did', () => {
+    const { block, notes } = migrateGeneration(BLOCK, {
+      ...TO_XL,
+      add: 'red dress',
+      prompt: '1girl, solo, green hair, red dress',
+    })
+    const prompt = block.split('\nNegative prompt:')[0]!
+    expect(prompt).toBe('1girl, solo, green hair, red dress')
+    // The rewrites still ran — their output is what was shown for editing.
+    expect(prompt).not.toContain('blue hair')
+    expect(prompt).not.toContain('masterpiece')
+    expect(notes.some((note) => note.includes('superseded'))).toBe(true)
+  })
+
+  // An edit that renames the character would otherwise leave the face pass
+  // repainting a head from a description nobody agreed to.
+  it('builds the face pass from the approved text, not the proposed one', () => {
+    const { block } = migrateGeneration(BLOCK, {
+      ...TO_XL,
+      prompt: '1girl, green hair, purple eyes, smiling',
+    })
+    const settings = block.split('\n').at(-1)!
+    expect(settings).toContain('green hair')
+    expect(settings).not.toContain('blue hair')
+  })
+
+  // The negative-conflict pass reads the prompt back too — see the `crossing`
+  // branch. A body asked for in the edit must still clear the negative.
+  it('clears a negative that fights what the edit asks for', () => {
+    const { block } = migrateGeneration(
+      'a girl\nNegative prompt: fat, chubby, blurry\nSteps: 20, Size: 512x768, Model: x',
+      { ...TO_XL, prompt: '1girl, thick thighs, wide hips' },
+    )
+    const negative = block.split('\n')[1]!
+    expect(negative).not.toMatch(/\bfat\b/)
+    expect(negative).not.toContain('chubby')
+    expect(negative).toContain('blurry')
+  })
+
+  it('says nothing when the text came back unchanged', () => {
+    const proposed = migrateGeneration(BLOCK, TO_XL)
+    const prompt = proposed.block.split('\nNegative prompt:')[0]!
+    const { notes } = migrateGeneration(BLOCK, { ...TO_XL, prompt })
+    expect(notes.some((note) => note.includes('superseded'))).toBe(false)
+  })
 })
 
 describe('a negative that fights the imposed body', () => {

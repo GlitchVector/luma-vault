@@ -1,9 +1,17 @@
 ---
 description: Migrate a generated image's prompt onto a newer checkpoint and open it in Forge
-argument-hint: <image> [model — defaults to deliberate]
+argument-hint: <image> [model — optional; otherwise you are asked]
 ---
 
 # Migrating a generation to a newer model
+
+`/recreate <name>` now takes the same input, and the two do different things
+with it. **This one migrates the block**: the sampler, hires pass, ADetailer
+settings and ControlNet the original carried all come across, and the prompt is
+edited in place. `/recreate` throws the block away and writes a fresh
+BREAK-structured prompt from the picture, keeping only the words. Reach for
+that one when the original prompt is thin or badly structured; reach for this
+one when the generation was good and only the model should change.
 
 ## 1. Look at the picture, not only at its prompt
 
@@ -51,14 +59,40 @@ far back you are looking, and the weakest hop in bits so you know how much to
 trust it. Anything it names that you can *see* in the picture is worth putting
 in `--add`; anything you cannot see is not.
 
-Note the aspect too. A square source with a standing figure in it usually wants
-`--size 832x1216`, and the canvas is worth asking about whenever the two
-disagree.
+Do not note the aspect. The canvas is `832x1216` on every run, whatever shape
+the source was — see step 3.
 
-## 2. Ask about body shape and the shot — before running anything
+## 2. Ask — before running anything
 
-The same questions `/recreate` asks, with the same ladders. **First call,
-four questions**, single-select:
+The same questions `/recreate` asks, in the same order, with the same ladders.
+**Three calls**, all single-select — the tool caps a call at four questions, and
+the boosts in the last one need the room.
+
+### Call 1 — the model, on its own and first
+
+| Question | Options |
+|---|---|
+| Model | `deliberate` (Recommended) · `wai` · `aniverse` · `noob` |
+
+All four are substrings, matched against the checkpoints actually installed,
+newest first — so is anything typed under Other, which is how you reach a
+checkpoint not on this list. `deliberate` is the script's own default and stays
+the recommendation; `wai` (waiNSFWIllustrious) has by far the best record on
+this vault's own 4+ ratings, so it is worth offering rather than burying.
+
+`deliberate`, `wai` and `hassaku` are all Illustrious and take identical
+settings; `aniverse` and `noob` each need their own tuning, which the script
+applies from the checkpoint rather than from what was typed. The answer becomes
+the **second positional argument** — `pnpm migrate-prompt 00489 wai` — not a
+flag.
+
+**Skip this call when the user already named a model**, as `/sdxl 00489
+aniverse` does. Unlike `/recreate`, whose argument slot is the image, this
+command still takes a model positionally; a model typed there is an answer
+already given, and asking it back is friction. Ask whenever the arguments carry
+an image name and nothing else.
+
+### Call 2 — the four body axes
 
 | Question | Options |
 |---|---|
@@ -78,7 +112,10 @@ combo:
 When maximum is picked, drop whatever the thighs question answered — the
 combo already argues the thighs at 2.
 
-Then a **second call**, which always happens because it carries the shot:
+### Call 3 — the shot, the boosts and the style
+
+Always happens, because it carries the shot and the style whatever the body
+answers were:
 
 | Question | Options |
 |---|---|
@@ -93,7 +130,7 @@ the four buttons — `close-up`, `portrait`, `upper body`, `lower body`,
 it through as given.
 
 
-### The third question in that second call: the style
+#### The style question, in that same third call
 
 Ask it every time, alongside the shot. It is the axis with the largest visible
 effect on the result and the least obvious controls:
@@ -124,34 +161,46 @@ in a language the model never learned. `shiny skin` is the one that carries the
 gloss. The flag applies the checked set and clears whatever competing rendering
 tag the prompt already had.
 
-## 3. Run the script
-
-It does the whole thing; pass the arguments through untouched:
+## 3. Migrate, but do not send yet
 
 ```bash
-pnpm migrate-prompt $ARGUMENTS
+pnpm migrate-prompt <image> <model> --dry-run
 ```
 
-Four flags carry the answers, and all of them are optional:
+`--dry-run` runs the whole migration and prints the block it would send —
+selecting no checkpoint and opening no tab. (It still needs Forge up: the
+checkpoint list and the emphasis setting come from its API.) Step 4 is what
+that print is for.
+
+The image is `$ARGUMENTS` unchanged; the model is call 1's answer, or the one
+the user typed themselves when they did.
+
+The answers ride on flags, and all of them are optional:
 
 | Flag | From |
 |---|---|
 | `--add "<tags>"` | step 1 — what the picture shows and the prompt never said |
-| `--size WxH` | step 1 — the canvas, when the source shape is wrong for it |
-| `--shot "<tag>"` | step 2, unless the answer was as-is |
-| `--body "<tags>"` | step 2 — the rungs with their boosts, or the maximum combo |
+| `--shot "<tag>"` | call 3, unless the answer was as-is |
+| `--body "<tags>"` | call 2 and 3 — the rungs with their boosts, or the maximum combo |
+| `--style 2d\|2.5d\|3d` | call 3, unless the answer was as seen |
 
 ```bash
-pnpm migrate-prompt 00301 --shot "full body" --body "(gigantic ass:1.5), (wide hips:1.4)"
-pnpm migrate-prompt 00489 --size 832x1216 \
+pnpm migrate-prompt 00301 wai --dry-run \
+  --shot "full body" --body "(gigantic ass:1.5), (wide hips:1.4)"
+pnpm migrate-prompt 00489 deliberate --dry-run \
   --add "mano aloe, black dress, gold trim, garter straps, black thighhighs, demon tail"
 ```
 
 `--add` goes at the *end* of the prompt, behind whatever the person originally
-wrote, and drops anything already there rather than saying it twice. `--size`
-wins over the bucket rule and is snapped to the nearest SDXL bucket, so the
-shape is what was asked for and the pixel count is what the model was trained
-at.
+wrote, and drops anything already there rather than saying it twice.
+
+**The canvas is `832x1216` on every run, and you never pass it.** The source's
+shape is an accident of whatever it came from — an img2img chain that passed
+through a square crop, a wallpaper someone saved — not a request for that
+shape, and a body-tuned prompt on a landscape canvas crops at the waist and
+throws away everything the body questions just asked for. `--size WxH` still
+overrides it, snapped to the nearest SDXL bucket, but only reach for it when
+the *user* asks for another canvas in words.
 
 The rewrite puts both at the front of the prompt where they carry the most
 weight, and clears what they replace: every framing rung the prompt already
@@ -163,9 +212,60 @@ upper body` as the backstop against drifting tight. All reported in the
 notes.
 
 Both positional arguments are substrings — `00301` finds the image,
-`illustrious` finds the newest installed checkpoint whose filename contains
-it. **The model is optional**; the script defaults to `deliberate` on its
-own, so do not supply one when the user did not.
+`illustrious` finds the newest installed checkpoint whose filename contains it.
+The model stays optional *to the script*, which defaults to `deliberate` on its
+own; that default is now the backstop rather than the normal path, because call
+1 asks.
+
+## 4. Show it, and offer the last look
+
+**Nothing has been sent yet, and this is the only moment the prompt is still
+free to change.** Once the tab is open the text is in Forge's box, and fixing it
+there means retyping it by hand.
+
+So show the dry run's prompt, then make a **fourth AskUserQuestion call** — one
+question, because this prompt has no BREAK chunks to split along:
+
+| Question | Options |
+|---|---|
+| The prompt below the first line | Send as migrated · Drop the tags `--add` appended · Restore the original wording |
+
+Put the editable text in the option `preview` so the user is judging the real
+thing rather than a description of it, and phrase the question so the escape is
+obvious — "…or choose Other and type what you want instead."
+
+**The first line is not editable, and that is what the split is for.** The
+migration puts the framing rung and the body tags on their own leading line,
+ahead of everything the person originally wrote — see the rewrite notes. Those
+are not description; they are call 2 and call 3's answers, weighted and
+deduplicated against the rungs already in the prompt. Hand-editing them is how a
+prompt ends up carrying two framing rungs that cancel. A framing or body change
+is those questions asked again, which means re-running step 3.
+
+### Sending it
+
+```bash
+pnpm migrate-prompt <image> <model> <the same flags> --prompt "<the whole prompt>"
+```
+
+Three things about that flag, each of which silently ruins the result if missed:
+
+- **`--prompt` replaces the entire positive prompt, first line included.** So
+  re-attach that leading line verbatim in front of the user's text. Dropping it
+  throws away the framing and body answers with nothing saying so.
+- **Newlines are written `\n`.** pnpm on Windows cannot carry a real newline
+  through an argument. The script expands the escape.
+- **Repeat every flag from step 3.** The run migrates from scratch; the block is
+  rebuilt, not resumed, and a `--shot` left off the second run is a shot that
+  never happens.
+
+When the answer was "Send as migrated", re-run without `--prompt` — passing back
+text identical to the proposal is harmless (the script notices and says nothing)
+but the flag is just noise.
+
+The face pass follows the edit on its own. `ADetailer prompt` is derived from
+the approved text rather than the proposed one, so an edit that renames the
+character re-derives it — no separate flag, and nothing to remember.
 
 Then report the change notes it prints. They are the point of the command: each
 line says what was altered and why, and every one of them is a silent failure
@@ -183,8 +283,10 @@ otherwise — Forge raises nothing and the picture simply comes out different.
 4. Picks the newest installed checkpoint matching the target, by file date.
 5. Detects its architecture from the safetensors header — `sd`, `xl`, `flux`.
 6. Rewrites the block via `migrateGeneration` in `@luma/core` (tested there).
-7. Selects the checkpoint in Forge **before** opening the tab.
-8. Opens the tab; the prefill extension fills every field.
+7. Stops there under `--dry-run`, printing the block it would have sent.
+8. Applies `--prompt` over the rewritten prompt, if one came back from step 4.
+9. Selects the checkpoint in Forge **before** opening the tab.
+10. Opens the tab; the prefill extension fills every field.
 
 ## The rewrite, when crossing SD1.5 → SDXL
 
@@ -193,8 +295,8 @@ otherwise — Forge raises nothing and the picture simply comes out different.
 | LoRA tags removed | SD1.5 LoRAs have the wrong text-encoder dimensions; they are parsed, matched against nothing, dropped |
 | SD1.5 embeddings removed | `EasyNegative` on SDXL is not an embedding, it is the words "easy negative" steering the image |
 | Danbooru quality tags added | what booru-trained SDXL models were trained to expect |
-| Size → nearest SDXL bucket | SDXL trained at ~1MP; an SD1.5 canvas gives distorted anatomy, not a smaller image |
-| Hires factor recomputed | keeps the final resolution the original aimed at |
+| Size → `832x1216` | the portrait bucket, always; SDXL trained at ~1MP, and an SD1.5 canvas gives distorted anatomy rather than a smaller image |
+| Hires factor recomputed | keeps the final resolution the original aimed at, since the factor is a multiple of a canvas that just changed |
 | CFG 5, 28 steps, clip skip 2 | what these models are tuned for |
 | Seed → random | a seed is a coordinate in one model's noise space and means nothing in another's |
 
@@ -234,10 +336,10 @@ Neither is the creator — Civitai moved the model behind a host that cannot be
 read — so the commands send 5, which is inside both. Try `--cfg 7` for the
 other reading.
 
-**Shortcut: `illu`.** `--model` is a substring match, so `illu` finds every
-Illustrious checkpoint installed and takes the newest by file date. Name one
-specifically — `hassaku`, `deliberate`, `wai` — when you want that one rather
-than the latest.
+**Shortcut: `illu`.** The model argument is a substring match, so `illu` — typed
+under call 1's Other, or straight into the command — finds every Illustrious
+checkpoint installed and takes the newest by file date. Name one specifically —
+`hassaku`, `deliberate`, `wai` — when you want that one rather than the latest.
 
 **Switching between them needs no new command.** Because every Illustrious
 checkpoint gets the same quality tags, negative, sampler, CFG and steps, a
