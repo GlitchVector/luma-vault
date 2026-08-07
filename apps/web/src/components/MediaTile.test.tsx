@@ -364,3 +364,60 @@ describe('the folder-path overlay', () => {
     expect(document.body.textContent).not.toContain('konosuba')
   })
 })
+
+describe('the star score on a tile', () => {
+  beforeEach(() => mockObserver(true))
+
+  it('draws one glyph per star and nothing else', () => {
+    render(
+      <MediaTile item={{ ...item, stars: 4 }} onOpen={() => {}} showBoxes={false} size={DEFAULT_TILE_SIZE} />,
+    )
+    // Filled only. Five glyphs with the empty ones drawn would put a widget on
+    // every tile in the grid, where what is wanted is a glance.
+    expect(screen.getByTitle('4 of 5 stars').textContent).toBe('★★★★')
+  })
+
+  it('says nothing at all when the item is unrated', () => {
+    render(<MediaTile item={item} onOpen={() => {}} showBoxes={false} size={DEFAULT_TILE_SIZE} />)
+    expect(document.body.textContent).not.toContain('★')
+  })
+
+  it('shows nothing offscreen, where the tile mounts no content', () => {
+    cleanup()
+    resetInViewRegistry()
+    mockObserver(false)
+    render(
+      <MediaTile item={{ ...item, stars: 5 }} onOpen={() => {}} showBoxes={false} size={DEFAULT_TILE_SIZE} />,
+    )
+    expect(document.body.textContent).not.toContain('★')
+  })
+
+  // `stars` is a nullable number on the wire; `'★'.repeat(n)` throws on a
+  // negative and would hang the tile on a large one.
+  it('clamps a value outside 1-5 rather than trusting it', () => {
+    render(
+      <MediaTile item={{ ...item, stars: 99 }} onOpen={() => {}} showBoxes={false} size={DEFAULT_TILE_SIZE} />,
+    )
+    expect(screen.getByTitle('5 of 5 stars').textContent).toBe('★★★★★')
+
+    cleanup()
+    resetInViewRegistry()
+    render(
+      <MediaTile item={{ ...item, stars: -3 }} onOpen={() => {}} showBoxes={false} size={DEFAULT_TILE_SIZE} />,
+    )
+    expect(document.body.textContent).not.toContain('★')
+  })
+
+  it('clears the selection tick, which shares the corner', () => {
+    render(
+      <MediaTile
+        item={{ ...item, stars: 3 }}
+        onOpen={() => {}}
+        showBoxes={false}
+        size={DEFAULT_TILE_SIZE}
+        selected
+      />,
+    )
+    expect(screen.getByTitle('3 of 5 stars').className).toContain('ml-5')
+  })
+})
