@@ -782,7 +782,7 @@ describe('the /sdxl hand-off', () => {
   const generated = (name: string) => ({
     ...makeItem(7),
     name,
-    generation: { tool: 'Stable Diffusion', prompt: '1girl, silver hair', needsSourceImage: false, postprocessed: false },
+    generation: { tool: 'Stable Diffusion', prompt: '1girl, silver hair', needsSourceImage: false, postprocessed: false, characters: [] },
   })
 
   it('offers the exact command for this picture', () => {
@@ -790,6 +790,22 @@ describe('the /sdxl hand-off', () => {
     // this removes.
     renderLightbox({ seed: generated('00042-3746152819.png'), showGeneration: true })
     expect(screen.getByText('/sdxl 00042-3746152819.png')).toBeTruthy()
+  })
+
+  // Both commands take the same argument and do different things with it, and
+  // which one is wanted is decided while looking at the picture.
+  it('offers /recreate on the same picture, alongside /sdxl', async () => {
+    const written: string[] = []
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: (text: string) => (written.push(text), Promise.resolve()) },
+      configurable: true,
+    })
+
+    renderLightbox({ seed: generated('00042-3746152819.png'), showGeneration: true })
+    screen.getByText('/recreate 00042-3746152819.png').click()
+
+    expect(written).toEqual(['/recreate 00042-3746152819.png'])
+    expect(await screen.findByText('copied')).toBeTruthy()
   })
 
   it('puts it on the clipboard when clicked, and says it did', async () => {
@@ -837,7 +853,7 @@ describe('the /sdxl hand-off', () => {
   })
 })
 
-describe('where the /sdxl command sits', () => {
+describe('where the Claude commands sit', () => {
   it('is labelled, and comes after the settings rather than above the prompt', () => {
     // The panel reads top to bottom as "what this picture is" — prompt, then
     // settings. Handing off to another tool is what you do about it afterwards,
@@ -850,13 +866,13 @@ describe('where the /sdxl command sits', () => {
           tool: 'Stable Diffusion',
           prompt: '1girl, silver hair',
           model: 'waiNSFW.safetensors',
-          needsSourceImage: false, postprocessed: false,
+          needsSourceImage: false, postprocessed: false, characters: [],
         },
       },
       showGeneration: true,
     })
 
-    expect(screen.getByText('SDXL Claude Command')).toBeTruthy()
+    expect(screen.getByText('Claude Commands')).toBeTruthy()
 
     const panel = screen.getByText('/sdxl a.png').closest('aside')
     expect(panel).toBeTruthy()
@@ -864,8 +880,11 @@ describe('where the /sdxl command sits', () => {
     const at = (text: string) =>
       order.findIndex((node) => node.textContent?.trim() === text)
 
-    expect(at('SDXL Claude Command')).toBeGreaterThan(at('1girl, silver hair'))
-    expect(at('/sdxl a.png')).toBeGreaterThan(at('SDXL Claude Command'))
+    expect(at('Claude Commands')).toBeGreaterThan(at('1girl, silver hair'))
+    expect(at('/sdxl a.png')).toBeGreaterThan(at('Claude Commands'))
+    // /sdxl first: it is the one that keeps the block, so it is the smaller
+    // step of the two and the usual answer.
+    expect(at('/recreate a.png')).toBeGreaterThan(at('/sdxl a.png'))
   })
 })
 
@@ -876,7 +895,7 @@ describe('an Extras upscale in the lightbox', () => {
     generation: {
       tool: 'Stable Diffusion',
       prompt: 'Postprocess upscale by: 2, Postprocess upscaler: 4x-UltraSharp',
-      needsSourceImage: false, postprocessed: true,
+      needsSourceImage: false, postprocessed: true, characters: [],
     },
   })
 
@@ -890,7 +909,7 @@ describe('an Extras upscale in the lightbox', () => {
       generation: {
         tool: 'Stable Diffusion',
         prompt: 'aqua (konosuba), ocean, huge ass',
-        needsSourceImage: false, postprocessed: false,
+        needsSourceImage: false, postprocessed: false, characters: [],
       },
     }
     renderLightbox({ seed: extras(), showGeneration: true })
@@ -931,7 +950,7 @@ describe('the extras pill swaps the image', () => {
     thumbPath: '/thumbs/aa/bb/extras-upscale.png',
     generation: {
       tool: 'Stable Diffusion', prompt: 'copied original block',
-      needsSourceImage: false, postprocessed: true,
+      needsSourceImage: false, postprocessed: true, characters: [],
     },
     verdict: {
       person: true, sexy: false, nude: false, rating: 'sfw' as const,
@@ -947,7 +966,7 @@ describe('the extras pill swaps the image', () => {
       thumbPath: '/thumbs/cc/dd/the-original.png',
       generation: {
         tool: 'Stable Diffusion', prompt: '1girl',
-        needsSourceImage: false, postprocessed: false,
+        needsSourceImage: false, postprocessed: false, characters: [],
       },
     }
     renderLightbox({ seed: extrasSeed() })
@@ -1000,7 +1019,7 @@ describe('what an img2img was made from', () => {
         // prompt says nothing whatever about who is in the picture.
         prompt: 'very detailed human left hand',
         needsSourceImage: true,
-        postprocessed: false,
+        postprocessed: false, characters: [],
       },
     })
 
@@ -1010,7 +1029,7 @@ describe('what an img2img was made from', () => {
       tool: 'Stable Diffusion',
       prompt: '1girl, kiryu coco, dragon horns, small china dress',
       needsSourceImage: false,
-      postprocessed: false,
+      postprocessed: false, characters: [],
     },
   })
 
@@ -1092,7 +1111,7 @@ describe('what an img2img was made from', () => {
           tool: 'Stable Diffusion',
           prompt: '1girl, silver hair',
           needsSourceImage: false,
-          postprocessed: false,
+          postprocessed: false, characters: [],
         },
       }),
       showGeneration: true,
@@ -1115,7 +1134,7 @@ describe('an Extras upscale of an img2img', () => {
         tool: 'Stable Diffusion',
         prompt: 'very detailed human left hand',
         needsSourceImage: true,
-        postprocessed: true,
+        postprocessed: true, characters: [],
       },
     })
     extrasOriginalState = makeItem(50, {
@@ -1124,7 +1143,7 @@ describe('an Extras upscale of an img2img', () => {
         tool: 'Stable Diffusion',
         prompt: 'very detailed human left hand',
         needsSourceImage: true,
-        postprocessed: false,
+        postprocessed: false, characters: [],
       },
     })
     sourceOriginState = {
@@ -1134,7 +1153,7 @@ describe('an Extras upscale of an img2img', () => {
           tool: 'Stable Diffusion',
           prompt: '1girl, kiryu coco, small china dress',
           needsSourceImage: false,
-          postprocessed: false,
+          postprocessed: false, characters: [],
         },
       }),
       hops: 6,
@@ -1259,5 +1278,44 @@ describe('correcting the rating', () => {
       expect(screen.queryByRole('dialog', { name: 'Correct the rating' })).toBeNull(),
     )
     expect(screen.getByRole('button', { name: 'Correct the rating' })).toBeTruthy()
+  })
+})
+
+describe('the character name in a prompt', () => {
+  const withCharacter = (characters: string[]) => ({
+    ...makeItem(7),
+    name: 'a.png',
+    generation: {
+      tool: 'Stable Diffusion',
+      prompt: 'masterpiece, aqua (konosuba), 1girl, blue hair, ocean',
+      needsSourceImage: false,
+      postprocessed: false,
+      characters,
+    },
+  })
+
+  it('picks the character out of the prompt, so it can be scanned for', () => {
+    renderLightbox({ seed: withCharacter(['aqua (konosuba)']), showGeneration: true })
+    // Its own element, separate from the tags around it — that is what carries
+    // the colour. The rest of the prompt is untouched.
+    const marked = screen.getByText('aqua (konosuba)')
+    expect(marked.className).toContain('text-pink-400')
+    expect(document.body.textContent).toContain('masterpiece,')
+    expect(document.body.textContent).toContain('blue hair, ocean')
+  })
+
+  // The detection normalises to lowercase; prompts do not.
+  it('matches however the prompt happened to capitalise it', () => {
+    const item = withCharacter(['aqua (konosuba)'])
+    item.generation.prompt = 'masterpiece, Aqua (Konosuba), 1girl'
+    renderLightbox({ seed: item, showGeneration: true })
+    expect(screen.getByText('Aqua (Konosuba)').className).toContain('text-pink-400')
+  })
+
+  it('marks nothing when the prompt names no character', () => {
+    const item = withCharacter([])
+    item.generation.prompt = 'masterpiece, 1girl, blue hair'
+    renderLightbox({ seed: item, showGeneration: true })
+    expect(document.querySelector('.text-pink-400')).toBeNull()
   })
 })

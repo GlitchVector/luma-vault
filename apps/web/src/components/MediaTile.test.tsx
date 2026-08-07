@@ -187,7 +187,7 @@ describe('MediaTile', () => {
         <MediaTile
           item={{
             ...item,
-            generation: { tool: 'Stable Diffusion', needsSourceImage: true, postprocessed: false },
+            generation: { tool: 'Stable Diffusion', needsSourceImage: true, postprocessed: false, characters: [] },
           }}
           onOpen={() => {}}
           showBoxes={false}
@@ -202,7 +202,7 @@ describe('MediaTile', () => {
         <MediaTile
           item={{
             ...item,
-            generation: { tool: 'Stable Diffusion', needsSourceImage: false, postprocessed: true },
+            generation: { tool: 'Stable Diffusion', needsSourceImage: false, postprocessed: true, characters: [] },
           }}
           onOpen={() => {}}
           showBoxes={false}
@@ -253,7 +253,7 @@ describe('MediaTile', () => {
         <MediaTile
           item={{
             ...item,
-            generation: { tool: 'Stable Diffusion', needsSourceImage: false, postprocessed: false },
+            generation: { tool: 'Stable Diffusion', needsSourceImage: false, postprocessed: false, characters: [] },
           }}
           onOpen={() => {}}
           showBoxes={false}

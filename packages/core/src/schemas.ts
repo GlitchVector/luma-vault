@@ -120,6 +120,18 @@ export const generationSchema = z.object({
   needsSourceImage: z.boolean().default(false),
   /** Ran through the Extras tab — an upscale of an existing image. */
   postprocessed: z.boolean().default(false),
+  /**
+   * The characters this prompt names, in danbooru's `name (series)` form.
+   *
+   * Detected on the Rust side and *carried*, never re-derived here. The rule is
+   * a dictionary of thousands of names plus a set of conventions about
+   * emphasis, weights and escaped parentheses — a second copy of it in this
+   * language would be a second copy of a rule, which is the thing the shared
+   * vectors exist to prevent. Reading the answer keeps one copy.
+   *
+   * Defaulted rather than required, so a row written by an older build parses.
+   */
+  characters: z.array(z.string()).default([]),
 })
 export type Generation = z.infer<typeof generationSchema>
 

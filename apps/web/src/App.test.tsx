@@ -1872,7 +1872,7 @@ describe('the prompt panel', () => {
     library[0]!.generation = {
       tool: 'Stable Diffusion',
       prompt: '1girl, silver hair',
-      needsSourceImage: false, postprocessed: false,
+      needsSourceImage: false, postprocessed: false, characters: [],
     }
     await open(LIBRARY_SIZE)
 
@@ -1892,7 +1892,7 @@ describe('the prompt panel', () => {
     // Forcing it open per picture would make the close button useless — one
     // arrow key and it would be back.
     for (const row of library.slice(0, 2)) {
-      row.generation = { tool: 'Stable Diffusion', prompt: 'a prompt', needsSourceImage: false, postprocessed: false }
+      row.generation = { tool: 'Stable Diffusion', prompt: 'a prompt', needsSourceImage: false, postprocessed: false, characters: [] }
     }
     await open(LIBRARY_SIZE)
 
