@@ -92,6 +92,15 @@ and a fast scroll showed a wall of empty placeholders.
 reorders on every query, so page 2 re-shows items from page 1 and silently skips
 others.
 
+**Two sorts lean on NULL ordering, in opposite directions, and both are
+deliberate.** SQLite sorts NULL smallest. `lowest` (stars ascending) therefore
+opens on the unstarred, which is the pile the order exists to reach; `score`
+(strongest detection, descending) sends the unclassified to the end, because a
+row nothing has looked at has not earned the top of a confidence ranking. Adding
+`NULLS LAST` to both would break one of them. `aspect` divides by `height`, so
+it needs `NULLIF(height, 0)`: a row is 0×0 until the measure phase reaches it,
+and integer division by zero is an error mid-query rather than a NULL.
+
 ## The search index
 
 **`media_fts` has three columns and every query names the ones it means.** A

@@ -397,7 +397,28 @@ export type LibraryStats = z.infer<typeof libraryStatsSchema>
 // Query
 // ---------------------------------------------------------------------------
 
-export const sortOrderSchema = z.enum(['recent', 'added', 'oldest', 'name', 'largest', 'random'])
+/**
+ * `aspect` is one continuous order rather than two groups: widest landscape
+ * first, down through square, to tallest portrait. Grouping by orientation and
+ * sorting within each would put a 16:9 beside a 4:3 in an order nothing on
+ * screen explains, and the gradient reads as deliberate where that does not.
+ *
+ * `lowest` and `score` both sort by a value a row can lack — nobody has starred
+ * it, nothing has classified it. SQLite sorts NULL smallest, so unstarred lands
+ * first under `lowest` (which is the pile you are sorting *for*) and unrated
+ * lands last under `score`.
+ */
+export const sortOrderSchema = z.enum([
+  'recent',
+  'added',
+  'oldest',
+  'name',
+  'largest',
+  'aspect',
+  'lowest',
+  'score',
+  'random',
+])
 export type SortOrder = z.infer<typeof sortOrderSchema>
 
 export const mediaQuerySchema = z.object({

@@ -78,6 +78,11 @@ const SORTS: Array<{ value: SortOrder; label: string }> = [
   { value: 'oldest', label: 'Oldest' },
   { value: 'name', label: 'Name' },
   { value: 'largest', label: 'Largest' },
+  // Not "Landscape" / "Portrait" as two entries: it is one gradient, and a
+  // label naming only one end would read as a filter rather than an order.
+  { value: 'aspect', label: 'Aspect ratio' },
+  { value: 'lowest', label: 'Lowest rated' },
+  { value: 'score', label: 'Strongest detection' },
   { value: 'random', label: 'Shuffle' },
 ]
 
@@ -302,6 +307,7 @@ export function FilterBar({
       <span className="mx-1 h-4 w-px bg-white/10" />
 
       <select
+        aria-label="Sort order"
         value={query.sort}
         onChange={(event) => onChange({ sort: event.target.value as SortOrder })}
         className="h-7 rounded-full bg-white/5 px-2.5 text-xs text-zinc-300 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-400"

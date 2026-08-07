@@ -74,6 +74,7 @@ let excludeFailure: string | null = null
 const queries: Array<{
   minStars?: number | null
   minLongestEdge?: number | null
+  sort?: string
 }> = []
 /** Ids each upscale run was asked for. */
 const upscaleCalls: number[][] = []
@@ -553,6 +554,40 @@ describe('opening the lightbox', () => {
     ;(await screen.findByTitle(`image-${LIBRARY_SIZE - 1}.png`)).click()
 
     expect(await screen.findByRole('button', { name: 'Hide boxes' })).toBeTruthy()
+  })
+})
+
+describe('the sort orders', () => {
+  it('offers every order the backend can actually run', async () => {
+    // The list exists in three places — the enum in `@luma/core`, the `ORDER BY`
+    // per variant in Rust, and these labels. An option here with no arm there
+    // is a dropdown entry that silently sorts by whatever the fallback is.
+    render(<App />)
+    const sort = await screen.findByLabelText('Sort order')
+
+    const values = Array.from(sort.querySelectorAll('option')).map((option) => option.value)
+    expect(values).toEqual([
+      'recent',
+      'added',
+      'oldest',
+      'name',
+      'largest',
+      'aspect',
+      'lowest',
+      'score',
+      'random',
+    ])
+  })
+
+  it('asks the backend for the order that was picked', async () => {
+    render(<App />)
+    const sort = await screen.findByLabelText('Sort order')
+
+    fireEvent.change(sort, { target: { value: 'aspect' } })
+    await waitFor(() => expect(queries.at(-1)?.sort).toBe('aspect'))
+
+    fireEvent.change(sort, { target: { value: 'score' } })
+    await waitFor(() => expect(queries.at(-1)?.sort).toBe('score'))
   })
 })
 
