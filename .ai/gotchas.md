@@ -26,6 +26,26 @@ genuinely order-independent, which is the property the tests pin.
 **An unknown label degrades to `neutral`, it does not throw.** A newer model
 revision adding a class should under-report, not fail every scan.
 
+**`verdict.rating` is the model's opinion, never the answer.** A person can
+correct a false positive, and the correction lives in `ratingOverride` — so
+`effectiveRating(item)` is what everything draws, filters and uploads from.
+Reading the verdict directly is the bug this arrangement exists to make
+visible: a tile would wear a red dot while the grid filed the picture as safe,
+and a corrected picture would still go to DeviantArt flagged mature.
+
+**A correction is a separate column for the same reason `stars` is.**
+`rerate_phase` rewrites every verdict whenever `RATING_VERSION` moves, so a
+correction stored inside one would be undone by the next threshold tweak —
+silently, and at exactly the moment a wrongly-explicit picture would be
+expected to change anyway. `update_verdict` therefore always writes
+`verdict_json` and skips `rating`/`is_sexy` on a corrected row. Keeping the
+verdict intact is also what makes "use the model's" cost no inference.
+
+**The effective rating is mirrored into `rating` and `is_sexy`.** Those two
+columns are what every filter, index and count reads, and they were not taught
+about corrections — a correction that only lived in `rating_override` would
+move the badge and nothing else. `set_rating_override` writes all three.
+
 ## Thumbnails
 
 **Every file gets a thumbnail, even when the source is smaller than the target.**

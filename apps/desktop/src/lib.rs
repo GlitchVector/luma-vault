@@ -340,6 +340,15 @@ async fn deviantart_mark(
     api::deviantart_mark(&state, ids, posted)
 }
 
+#[tauri::command(async)]
+async fn set_rating_override(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+    rating: Option<String>,
+) -> Result<usize, String> {
+    api::set_rating_override(&state, ids, rating)
+}
+
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
@@ -759,6 +768,7 @@ pub fn run() {
             deviantart_disconnect,
             deviantart_send,
             deviantart_mark,
+            set_rating_override,
             remote_status,
             remote_connect,
             remote_disconnect,

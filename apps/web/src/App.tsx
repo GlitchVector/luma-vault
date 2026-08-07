@@ -1004,6 +1004,7 @@ export function App() {
           onOpenId={setOpenId}
           onUpscale={queueUpscale}
           onToggleSelect={toggleSelect}
+          onCorrected={library.reload}
           selected={selected.has(openId)}
           showBoxes={showLightboxBoxes}
           onToggleBoxes={() => setShowLightboxBoxes((previous) => !previous)}

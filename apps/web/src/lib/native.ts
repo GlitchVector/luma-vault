@@ -43,6 +43,7 @@ import {
   type MediaItem,
   type MediaPage,
   type MediaQuery,
+  type Rating,
   type RemoteStatus,
   type ScanProgress,
   type ShareStatus,
@@ -492,6 +493,21 @@ export async function setStars(id: number, stars: number | null): Promise<void> 
 export async function setStarsMany(ids: number[], stars: number | null): Promise<number> {
   if (!isTauri()) return 0
   return z.number().parse(await invoke('set_stars_many', { ids, stars }))
+}
+
+/**
+ * Correct the model's rating on a selection, or hand it back to the model.
+ *
+ * `null` clears the correction, which costs no inference — the detector's own
+ * verdict was never overwritten, so restoring it is a read. Returns how many
+ * rows changed.
+ */
+export async function setRatingOverride(
+  ids: number[],
+  rating: Exclude<Rating, 'unrated'> | null,
+): Promise<number> {
+  if (!isTauri()) return 0
+  return z.number().parse(await invoke('set_rating_override', { ids, rating }))
 }
 
 /**

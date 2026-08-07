@@ -42,6 +42,39 @@ export function maxRating(a: Rating, b: Rating): Rating {
 }
 
 /**
+ * What a row is actually rated: the person's correction if there is one, the
+ * model's verdict otherwise.
+ *
+ * The **only** place the two are resolved, and everything that draws, filters
+ * or uploads goes through it. Reading `verdict.rating` directly is the bug this
+ * exists to prevent — it is the model's opinion, which a correction is
+ * precisely a statement about being wrong, and a tile that colours from one
+ * while the grid filters on the other is a picture that is explicit in the
+ * corner and safe in the results.
+ *
+ * `unrated` for a row nothing has looked at yet, which is also what a row with
+ * no verdict and no correction reports.
+ */
+export function effectiveRating(item: {
+  verdict: { rating: Rating } | null
+  ratingOverride: Rating | null
+}): Rating {
+  return item.ratingOverride ?? item.verdict?.rating ?? 'unrated'
+}
+
+/**
+ * Whether a row counts as sexy under its effective rating.
+ *
+ * The same rule the frame verdict uses — anything the rules called suggestive
+ * or explicit is sexy — restated here so a correction lands on the `sexyOnly`
+ * filter as well as the badge. The index stores this alongside the rating; this
+ * is what it stores.
+ */
+export function ratingIsSexy(rating: Rating): boolean {
+  return rating === 'suggestive' || rating === 'explicit'
+}
+
+/**
  * Collapse one frame's raw detections into a verdict.
  *
  * Order-independent by construction: every detection is folded into a max, so

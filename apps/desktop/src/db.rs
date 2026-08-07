@@ -327,6 +327,14 @@ impl Db {
             // measure rather than a flag, because where black-and-white ends is
             // a query-time question and a stored boolean would freeze it.
             ("chroma", "REAL"),
+            // A person's correction of the model's rating; NULL trusts it.
+            //
+            // The effective rating is mirrored into `rating`/`is_sexy` when
+            // this is set, so every filter, index and count already written
+            // keeps working without knowing this exists. What this column adds
+            // is the knowledge that those two are a *human's* — which is what
+            // `update_verdict` reads before overwriting them.
+            ("rating_override", "TEXT"),
         ] {
             let present = conn
                 .prepare("PRAGMA table_info(media)")?
@@ -1850,12 +1858,28 @@ impl Db {
         Ok(())
     }
 
+    /// Record what the model concluded about a row.
+    ///
+    /// `verdict_json` is always written — it is the detector's own account and
+    /// stays true whatever a person thinks of it. `rating` and `is_sexy` are
+    /// **not** written on a row somebody has corrected, because those two are
+    /// the effective rating and on a corrected row the effective rating is
+    /// theirs.
+    ///
+    /// Without that guard the rerate phase silently undoes every correction in
+    /// the library the next time `RATING_VERSION` moves — the same class of bug
+    /// that keeping `stars` out of the pipeline avoids, and harder to notice,
+    /// because a re-rate is exactly when a wrongly-explicit picture would be
+    /// expected to change.
     pub fn update_verdict(&self, id: i64, verdict: &MediaVerdict, now: i64) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let json = serde_json::to_string(verdict)?;
         conn.execute(
             "UPDATE media
-             SET verdict_json = ?2, rating = ?3, is_sexy = ?4, classified_at = ?5
+             SET verdict_json = ?2,
+                 rating   = CASE WHEN rating_override IS NULL THEN ?3 ELSE rating END,
+                 is_sexy  = CASE WHEN rating_override IS NULL THEN ?4 ELSE is_sexy END,
+                 classified_at = ?5
              WHERE id = ?1",
             params![
                 id,
@@ -1866,6 +1890,53 @@ impl Db {
             ],
         )?;
         Ok(())
+    }
+
+    /// Correct the model, or hand a row back to it.
+    ///
+    /// `Some(rating)` records a person's judgement and mirrors it into the
+    /// columns everything filters on; `None` clears the correction and restores
+    /// whatever the stored verdict says, which is why clearing costs no
+    /// inference — the detector's account was never overwritten.
+    ///
+    /// A batch and a transaction for the reason `set_stars_many` is: a
+    /// correction applied to a selection lands on all of it or on none.
+    pub fn set_rating_override(&self, ids: &[i64], rating: Option<Rating>) -> Result<usize> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        let mut changed = 0;
+        {
+            let mut stmt = match rating {
+                Some(_) => tx.prepare(
+                    "UPDATE media
+                        SET rating_override = ?2, rating = ?2, is_sexy = ?3
+                      WHERE id = ?1",
+                )?,
+                // `json_extract` rather than a second round trip to read the
+                // verdict and hand it back: the restore is one statement, and a
+                // row whose verdict never arrived correctly falls to 'unrated'
+                // instead of keeping a rating nothing stands behind.
+                None => tx.prepare(
+                    "UPDATE media
+                        SET rating_override = NULL,
+                            rating = COALESCE(json_extract(verdict_json, '$.rating'), 'unrated'),
+                            is_sexy = COALESCE(json_extract(verdict_json, '$.sexy'), 0)
+                      WHERE id = ?1",
+                )?,
+            };
+            for id in ids {
+                changed += match rating {
+                    Some(value) => stmt.execute(params![
+                        id,
+                        value.as_str(),
+                        i64::from(matches!(value, Rating::Suggestive | Rating::Explicit))
+                    ])?,
+                    None => stmt.execute(params![id])?,
+                };
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
     }
 
     /// Give up on a file, recording why.
@@ -2708,7 +2779,7 @@ const ANIMATED_EXTENSIONS: [&str; 3] = [".gif", ".webp", ".avif"];
 
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
-                             duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to, \n                             (SELECT p.url FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_url, \n                             (SELECT p.published FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_published, \n                             (SELECT p.posted_at FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_posted_at";
+                             duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to, \n                             (SELECT p.url FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_url, \n                             (SELECT p.published FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_published, \n                             (SELECT p.posted_at FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_posted_at, \n                             rating_override";
 
 fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
     let kind: String = row.get(4)?;
@@ -2754,6 +2825,15 @@ fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
                 published: row.get::<_, Option<i64>>(22).unwrap_or(None).unwrap_or(0) != 0,
                 posted_at,
             }),
+        // `Rating::parse` answers `Unrated` for anything it does not
+        // recognise, and "unrated" is not a correction anybody can choose — it
+        // is the absence of one. So both fall to `None` here and the model's
+        // verdict stands, rather than the row claiming a person overruled it
+        // with a value they were never offered.
+        rating_override: row
+            .get::<_, Option<String>>(24)?
+            .map(|value| Rating::parse(&value))
+            .filter(|rating| *rating != Rating::Unrated),
     })
 }
 
@@ -2937,6 +3017,156 @@ mod tests {
         )
         .expect("insert");
         (db, folder)
+    }
+
+    /// A model verdict of the given severity, shaped as the rules would build
+    /// it — `sexy` set for anything above SFW, which is the rule a correction
+    /// has to reproduce on the other side.
+    fn model_verdict(rating: Rating) -> MediaVerdict {
+        MediaVerdict {
+            person: true,
+            sexy: matches!(rating, Rating::Suggestive | Rating::Explicit),
+            nude: rating == Rating::Explicit,
+            rating,
+            top_label: Some("FEMALE_BREAST_EXPOSED".to_string()),
+            top_label_title: Some("Breasts".to_string()),
+            top_score: 0.42,
+            frame_count: 1,
+            sexy_frame_count: 1,
+            poster_frame_index: Some(0),
+        }
+    }
+
+    #[test]
+    fn a_correction_replaces_the_model_everywhere_the_grid_filters() {
+        // The false positive this exists for: a bare shoulder scores 0.42 on
+        // FEMALE_BREAST_EXPOSED and the picture is explicit forever. Correcting
+        // it has to move the row in *every* view at once — the rating pills and
+        // the sexy-only filter both read columns, not the verdict blob, and a
+        // correction that reached one and not the other would file the picture
+        // as safe in one place and explicit in another.
+        let (db, _) = seeded();
+        let id = db.query_media(&query()).unwrap().items[0].id;
+        db.update_verdict(id, &model_verdict(Rating::Explicit), 10).unwrap();
+
+        let rated = |rating: Rating| {
+            db.query_media(&MediaQuery { rating: Some(rating), ..query() }).unwrap().total
+        };
+        let sexy_only = || {
+            db.query_media(&MediaQuery { sexy_only: true, ..query() }).unwrap().total
+        };
+        assert_eq!(rated(Rating::Explicit), 1, "the model's verdict stands to begin with");
+        assert_eq!(sexy_only(), 1);
+
+        assert_eq!(db.set_rating_override(&[id], Some(Rating::Sfw)).unwrap(), 1);
+
+        assert_eq!(rated(Rating::Explicit), 0, "no longer explicit to the pills");
+        assert_eq!(rated(Rating::Sfw), 1, "and safe to them instead");
+        assert_eq!(sexy_only(), 0, "nor sexy — the flag follows the rating");
+
+        // The detector's own account is untouched, which is what lets the
+        // lightbox show the correction *and* what it overruled.
+        let item = db.media_by_id(id).unwrap().expect("row");
+        assert_eq!(item.rating_override, Some(Rating::Sfw));
+        assert_eq!(
+            item.verdict.expect("verdict").rating,
+            Rating::Explicit,
+            "the model still says what it said"
+        );
+    }
+
+    #[test]
+    fn a_correction_survives_the_rating_rules_being_re_run() {
+        // The whole reason this is its own column. `rerate_phase` calls
+        // `update_verdict` for every row with frames whenever RATING_VERSION
+        // moves, and a correction stored in the verdict would be wiped by the
+        // next threshold tweak — silently, and at exactly the moment a
+        // wrongly-explicit picture would be expected to change anyway.
+        let (db, _) = seeded();
+        let id = db.query_media(&query()).unwrap().items[0].id;
+        db.update_verdict(id, &model_verdict(Rating::Explicit), 10).unwrap();
+        db.set_rating_override(&[id], Some(Rating::Sfw)).unwrap();
+
+        // The rules run again and reach the same wrong conclusion.
+        db.update_verdict(id, &model_verdict(Rating::Explicit), 20).unwrap();
+
+        let still = db
+            .query_media(&MediaQuery { rating: Some(Rating::Sfw), ..query() })
+            .unwrap();
+        assert_eq!(still.total, 1, "the correction outlives the re-rate");
+        assert_eq!(
+            db.query_media(&MediaQuery { sexy_only: true, ..query() }).unwrap().total,
+            0,
+            "and so does the flag that went with it"
+        );
+        // The fresh verdict still landed: only the two effective columns were
+        // held back, so the detections stay current.
+        let item = db.media_by_id(id).unwrap().expect("row");
+        assert_eq!(item.classified_at, Some(20), "the verdict itself was rewritten");
+    }
+
+    #[test]
+    fn clearing_a_correction_hands_the_row_back_to_the_model() {
+        // And costs no inference, because the verdict was never overwritten —
+        // which is the payoff for keeping the two apart.
+        let (db, _) = seeded();
+        let id = db.query_media(&query()).unwrap().items[0].id;
+        db.update_verdict(id, &model_verdict(Rating::Explicit), 10).unwrap();
+        db.set_rating_override(&[id], Some(Rating::Sfw)).unwrap();
+
+        assert_eq!(db.set_rating_override(&[id], None).unwrap(), 1);
+
+        let item = db.media_by_id(id).unwrap().expect("row");
+        assert_eq!(item.rating_override, None);
+        assert_eq!(
+            db.query_media(&MediaQuery { rating: Some(Rating::Explicit), ..query() })
+                .unwrap()
+                .total,
+            1,
+            "back to explicit without re-running anything"
+        );
+        assert_eq!(
+            db.query_media(&MediaQuery { sexy_only: true, ..query() }).unwrap().total,
+            1,
+            "and sexy again, read back out of the stored verdict"
+        );
+    }
+
+    #[test]
+    fn a_row_the_model_never_reached_falls_to_unrated_when_a_correction_clears() {
+        // Clearing restores from the stored verdict, and there may not be one:
+        // correcting a row before the classifier got to it is entirely possible
+        // — the grid shows unclassified files. Restoring `null` as a rating
+        // would write the string "null" into the column and match no pill at
+        // all, so the row would vanish from every rating view.
+        let (db, _) = seeded();
+        let id = db.query_media(&query()).unwrap().items[0].id;
+
+        db.set_rating_override(&[id], Some(Rating::Explicit)).unwrap();
+        assert_eq!(
+            db.query_media(&MediaQuery { rating: Some(Rating::Explicit), ..query() })
+                .unwrap()
+                .total,
+            1
+        );
+
+        db.set_rating_override(&[id], None).unwrap();
+        assert_eq!(
+            db.query_media(&MediaQuery { rating: Some(Rating::Explicit), ..query() })
+                .unwrap()
+                .total,
+            0,
+            "the correction is gone"
+        );
+        // Back among the unclassified, where it started — the whole seed is
+        // unrated, so the row has to be named rather than counted.
+        let unrated = db
+            .query_media(&MediaQuery { rating: Some(Rating::Unrated), ..query() })
+            .unwrap();
+        assert!(
+            unrated.items.iter().any(|item| item.id == id),
+            "unrated, which is what it was before anyone touched it"
+        );
     }
 
     /// Monday 2024-07-01 00:00 UTC — a known week boundary to build cases on.

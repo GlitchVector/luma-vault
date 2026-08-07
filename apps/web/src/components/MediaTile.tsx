@@ -1,4 +1,11 @@
-import { fitWithin, formatDuration, isAnimatedImage, isFourK, type MediaItem } from '@luma/core'
+import {
+  effectiveRating,
+  fitWithin,
+  formatDuration,
+  isAnimatedImage,
+  isFourK,
+  type MediaItem,
+} from '@luma/core'
 import { cn } from '@luma/ui'
 import { memo } from 'react'
 import { fileUrl } from '#/lib/native.ts'
@@ -97,6 +104,7 @@ export const MediaTile = memo(function MediaTile({
   const { width, height } = fitWithin(intrinsicWidth || 1, intrinsicHeight || 1, size)
 
   const verdict = item.verdict
+  const rating = effectiveRating(item)
   const isVideo = item.kind === 'video'
   // The source's own size, never the thumbnail's — the badge is a claim about
   // the file, and every thumbnail in the library is 512px.
@@ -211,15 +219,19 @@ export const MediaTile = memo(function MediaTile({
             </span>
           ) : null}
 
-          {verdict?.rating === 'explicit' ? (
+          {/* The effective rating, so a correction made in the lightbox shows
+              on the tile too. Reading `verdict.rating` here would leave a
+              corrected picture wearing a red dot while the grid files it as
+              safe — the dot and the filter disagreeing about the same row. */}
+          {rating === 'explicit' ? (
             <span
               className="pointer-events-none absolute right-1.5 top-1.5 size-2 rounded-full bg-red-400"
-              title="explicit"
+              title={item.ratingOverride ? 'explicit — your correction' : 'explicit'}
             />
-          ) : verdict?.rating === 'suggestive' ? (
+          ) : rating === 'suggestive' ? (
             <span
               className="pointer-events-none absolute right-1.5 top-1.5 size-2 rounded-full bg-amber-400"
-              title="suggestive"
+              title={item.ratingOverride ? 'suggestive — your correction' : 'suggestive'}
             />
           ) : verdict === null ? (
             <span

@@ -1,5 +1,5 @@
 import type { MediaItem } from '@luma/core'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDialogs } from '#/lib/dialogs.ts'
 import { resetToasts, toast } from '#/lib/toasts.ts'
@@ -15,6 +15,8 @@ let originCalls = 0
  * itself could not tell the two apart.
  */
 let answerOrigin: (() => void) | null = null
+/** Every rating correction sent to the backend, so the wire call can be read. */
+const corrections: Array<{ ids: number[]; rating: string | null }> = []
 import { ToastHost } from '#/components/ToastHost.tsx'
 import { resetPreloads } from '#/lib/preload.ts'
 import { DialogHost } from './DialogHost.tsx'
@@ -59,6 +61,7 @@ function makeItem(id: number, overrides: Partial<MediaItem> = {}): MediaItem {
     upscaledFrom: null,
     upscaledTo: null,
     deviantArt: null,
+    ratingOverride: null,
     ...overrides,
   }
 }
@@ -82,6 +85,10 @@ vi.mock('#/lib/native.ts', () => ({
     Promise.resolve(backend.find((row) => row.path === path) ?? null),
   mediaFrames: () => Promise.resolve([]),
   setStars: () => Promise.resolve(),
+  setRatingOverride: (ids: number[], rating: string | null) => {
+    corrections.push({ ids, rating })
+    return Promise.resolve(ids.length)
+  },
   extrasOriginal: () => Promise.resolve(extrasOriginalState),
   sourceOrigin: () => {
     originCalls += 1
@@ -168,6 +175,7 @@ afterEach(() => {
   sourceOriginState = null
   originCalls = 0
   answerOrigin = null
+  corrections.length = 0
   vi.unstubAllGlobals()
 })
 
@@ -190,6 +198,7 @@ function renderLightbox(props: Partial<React.ComponentProps<typeof Lightbox>> = 
       onOpenId={() => {}}
       onUpscale={() => {}}
       onToggleSelect={() => {}}
+      onCorrected={() => {}}
       selected={false}
       {...props}
     />
@@ -267,6 +276,7 @@ describe('the dwell before the original is fetched', () => {
       onOpenId={() => {}}
       onUpscale={() => {}}
       onToggleSelect={() => {}}
+      onCorrected={() => {}}
       selected={false}
       />
     )
@@ -568,6 +578,7 @@ describe('zooming and panning', () => {
       onOpenId={() => {}}
       onUpscale={() => {}}
       onToggleSelect={() => {}}
+      onCorrected={() => {}}
       selected={false}
       />,
     )
@@ -614,6 +625,7 @@ describe('warming the neighbours', () => {
       onOpenId={() => {}}
       onUpscale={() => {}}
       onToggleSelect={() => {}}
+      onCorrected={() => {}}
       selected={false}
         />,
       )
@@ -1138,5 +1150,114 @@ describe('an Extras upscale of an img2img', () => {
 
     expect(screen.getByRole('button', { name: '00083-3427824797.png' })).toBeTruthy()
     expect(screen.queryByText(/Looking for it/)).toBeNull()
+  })
+})
+
+/**
+ * Correcting a NudeNet false positive.
+ *
+ * The detector calls a bare shoulder `FEMALE_BREAST_EXPOSED` at 0.42 often
+ * enough that a way out is not optional. What these pin is that the way out is
+ * a *correction* — the model's own verdict stays visible and restorable — and
+ * that it reaches the wire rather than only the badge.
+ */
+describe('correcting the rating', () => {
+  const wronglyExplicit = () =>
+    makeItem(1, {
+      classifiedAt: 1_700_000_000_000,
+      verdict: {
+        person: true,
+        sexy: true,
+        nude: true,
+        rating: 'explicit',
+        topLabel: 'FEMALE_BREAST_EXPOSED',
+        topLabelTitle: 'exposed breasts',
+        topScore: 0.42,
+        frameCount: 1,
+        sexyFrameCount: 1,
+        posterFrameIndex: 0,
+      },
+    })
+
+  it('shows what the model saw, and sends the correction', async () => {
+    // The evidence has to be in the dialog. "Explicit" alone is not something
+    // anyone can review — deciding the model was wrong means seeing what it
+    // thought it saw and how sure it was.
+    const onCorrected = vi.fn()
+    renderLightbox({ seed: wronglyExplicit(), onCorrected })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Correct the rating' }))
+    // Scoped to the dialog: the footer behind it shows the same detection, so
+    // an unscoped query would pass on the footer alone and this would not be
+    // testing that the dialog carries the evidence at all.
+    const dialog = within(screen.getByRole('dialog', { name: 'Correct the rating' }))
+    expect(dialog.getByText(/exposed breasts/)).toBeTruthy()
+    expect(dialog.getByText(/42%/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /^SFW/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Correct it' }))
+
+    await waitFor(() => expect(corrections).toHaveLength(1))
+    expect(corrections[0]).toEqual({ ids: [1], rating: 'sfw' })
+    // The grid has to re-query: the row may no longer belong to the filter it
+    // is currently being listed under.
+    await waitFor(() => expect(onCorrected).toHaveBeenCalled())
+  })
+
+  it('marks the badge as yours rather than passing it off as the model’s', async () => {
+    // A corrected row that simply read "sfw" would be indistinguishable from
+    // one the detector got right, and the difference is the entire record.
+    renderLightbox({ seed: wronglyExplicit() })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Correct the rating' }))
+    fireEvent.click(screen.getByRole('button', { name: /^SFW/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Correct it' }))
+
+    const badge = await screen.findByRole('button', { name: 'Correct the rating' })
+    expect(badge.textContent).toContain('sfw')
+    expect(badge.textContent).toContain('yours')
+    // And it still says what it overruled, which is what makes it undoable.
+    expect(badge.getAttribute('title')).toContain('NudeNet rated it explicit')
+  })
+
+  it('offers the model’s verdict back only once there is a correction', async () => {
+    renderLightbox({ seed: wronglyExplicit() })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Correct the rating' }))
+    // Nothing to restore yet, so the button would do nothing and is not there.
+    expect(screen.queryByRole('button', { name: /Use the model/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^SFW/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Correct it' }))
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Correct the rating' }).getAttribute('title'),
+      ).toContain('You corrected this to sfw'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Correct the rating' }))
+    fireEvent.click(screen.getByRole('button', { name: /Use the model/ }))
+
+    await waitFor(() => expect(corrections).toHaveLength(2))
+    expect(corrections[1]).toEqual({ ids: [1], rating: null })
+  })
+
+  it('swallows the keys the lightbox is listening for', async () => {
+    // The lightbox binds 1-5 to stars and the arrows to stepping. A dialog
+    // that let those through would rate or navigate while a question about
+    // *this* picture is open, and the correction would land somewhere else.
+    const onStep = vi.fn()
+    renderLightbox({ seed: wronglyExplicit(), onStep })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Correct the rating' }))
+    fireEvent.keyDown(window, { key: 'ArrowRight', bubbles: true })
+    fireEvent.keyDown(window, { key: '4', bubbles: true })
+
+    expect(onStep).not.toHaveBeenCalled()
+    // Escape closes the dialog and nothing else — the lightbox stays open.
+    fireEvent.keyDown(window, { key: 'Escape', bubbles: true })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Correct the rating' })).toBeNull(),
+    )
+    expect(screen.getByRole('button', { name: 'Correct the rating' })).toBeTruthy()
   })
 })
