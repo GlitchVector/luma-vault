@@ -70,6 +70,43 @@ framing tags only — the rung, `from behind`, `looking back`, `looking at
 viewer`, `face focus`, `ass focus`, `breast focus`, `hip focus`, `from above`,
 `from below`, `from side`, `profile`, `standing`, `scenery`.
 
+**A framing that faces away has to be made to win, twice over.** This is the one
+rule that breaks the "chunks 2-4 are byte-identical" promise, and it has to.
+`from behind, ass focus` beside `cleavage, huge nipples, topless, navel` does
+not draw a back view missing those details — the model satisfies the larger,
+louder group and **turns her back around**, so the framing loses and the whole
+row of tabs comes back as the same angle. No error, nothing in the UI.
+
+`enforceFraming` in `@luma/core` does both halves, and both `open-in-forge` and
+`migrateGeneration` call it, so composing a prompt by hand cannot get it wrong.
+It reports everything it changed.
+
+1. **It clears the front-only tags** — `cleavage`, every `nipples` form,
+   `areolae`, `navel`, `stomach`, `collarbone`, `underboob`, `between breasts`,
+   `breast focus`, `topless`, `cameltoe`.
+2. **It weights what is left**, to `(from behind, ass focus:1.5)`, and moves it
+   to the front. Clearing alone is necessary but not sufficient: what survives —
+   `(huge breasts:1.7)`, `(wide hips:1.8)` — is *still* a front-facing
+   description as far as the model's learned distribution goes, and two bare
+   framing tags do not outrank it. 1.5 was measured. The wide rungs need only
+   1.3 against the same body tags, because they are arguing about where the
+   camera sits rather than about which way the subject is turned.
+
+A framing already weighted by hand is left alone — a second opinion layered on
+top of the first would fight it.
+
+What it deliberately keeps: **breast and hip size**, which still read as
+silhouette from behind, and `looking at viewer` whenever `looking back` is also
+present, because `from behind, looking back, looking at viewer` is one of the
+most common framings there is. And `skirt lift`, which works from either side.
+
+**Crops are the softer version of the same problem.** A `close-up, face focus`
+tab still carrying `black skirt, thigh strap, city street` is not contradicting
+itself — those tags are merely outside the frame, competing for attention rather
+than fighting. Nothing strips them automatically, because "outside the frame" is
+a judgement and deleting the setting from a portrait is sometimes wrong. Trim
+them by hand when a tight tab comes back busy.
+
 **`hip focus` and the wide rungs do not mix.** It is a camera instruction that
 drags the crop back to the hips, which is why the maximum-hips combo drops it
 for anything `full body` or wider. The table only pairs it with `cowboy shot`.
@@ -86,46 +123,54 @@ Say so rather than sending it quietly.
 
 ## Opening the tabs
 
-**Four at a time. Never the whole set.**
+**One at a time, each only after the previous one has finished loading, and
+never while Forge is generating.** Not on a timer — on the condition.
 
-Open at most four, ten seconds apart, then **stop and hand back to the user** —
-they render those four and close them, and only then do you open the next four.
-Say which batch this is and how many shots are left, every time.
+### The mechanism, because the obvious fix is the wrong one
 
-### Why four, and why waiting longer does not work instead
+A Forge page's `load` handler runs on **Gradio's queue, which drains one event
+at a time**. Every tab you open enqueues a job that waits behind every other
+tab's job *and* behind any render in progress. A script run returns when it has
+*spawned* the browser opener, not when that job has drained — so the loop has no
+idea whether the last tab is ready.
 
-This was measured, not guessed. Twelve tabs were opened at five seconds apart,
-then again at ten. Both wedged. Afterwards:
+This is why sleeping does not work, and cannot: a fixed delay is a guess about a
+queue it cannot see. Measured, in this order:
 
-- Forge's **API answered in 2ms** and its log held **zero tracebacks**. The
-  server never crashed — only the pages did.
-- The log recorded **five** tab loads and then went silent for half an hour,
-  through an entire second run of twelve. Tabs six and up were never granted a
-  session and never errored; they simply hung.
-- Every load that did land logged `Environment vars changed` followed by
-  `[GPU Setting] You will use 95.83% GPU memory…`. A Forge tab is not a viewer.
-  Each one re-applies **server-wide** settings on `root_block.load` — the same
-  hook behind the clip-skip stomp the commands already warn about.
+- **Twelve tabs, five seconds apart** — wedged. The API answered in 2ms
+  throughout, the log held no tracebacks, and the pages simply sat there.
+- **Twelve tabs, ten seconds apart** — wedged identically. Doubling the delay
+  bought nothing.
+- **Four tabs, ten seconds apart, while renders were running** — one loaded,
+  three stuck on "Loading…". The renders were holding the same queue.
 
-So the limit is **concurrent sessions, not the rate they are opened at**. An
-open tab holds its slot for as long as it exists, which is why spacing the
-spawns further apart changed nothing and why it never can. Do not "fix" a wedged
-run by raising the delay; the only lever is fewer tabs alive at once.
+Raising the delay is the tempting fix and it is the wrong one every time. The
+signal to wait on is the handler *completing*, which it announces in
+`webuiorge.log` as `Environment vars changed` followed by `[GPU Setting]`.
+Wait for a new one of those before opening the next tab, and give up rather than
+stack another tab behind a stuck one.
 
-The ten-second spacing stays anyway — it costs 30 seconds a batch, it was in
-place for the measurement, and there is no reason to change two variables at
-once while the ceiling is still only bracketed between four and twelve.
+Check `/sdapi/v1/progress` first as well: a non-zero `job_count` means a render
+holds the queue, and every tab opened now will stall behind it.
 
-Never in parallel, either. Beyond the load, each run selects the checkpoint, and
-that setting is global — two runs racing on it is the failure both commands
+Never in parallel, either. Beyond the queue, each run selects the checkpoint,
+and that setting is global — two runs racing on it is the failure both commands
 already warn about, arriving from your own loop instead of from a batch.
+
+### Do not trust that log line as a tab counter
+
+It records that the handler *ran*, which is not one-to-one with tabs opened —
+fourteen of them have been seen against sixteen completed renders. It is a good
+edge trigger for "a slot just freed" and a bad total. An earlier version of this
+file used it to claim a measured concurrency ceiling of four; that claim was
+wrong, and the ceiling is not a count at all.
 
 ### When a run has wedged anyway
 
 Restarting Forge clears it, but it kills **every other open tab's session** with
 it, and the prefill extension strips the prompt from the URL on first read — so
-a reload cannot recover a tab. The wedged ones have to be re-opened from the
-command. Say that rather than suggesting a reload.
+a reload cannot recover a tab. The wedged ones have to be closed and re-opened
+from the command. Say that rather than suggesting a reload.
 
 ## Not in the table
 

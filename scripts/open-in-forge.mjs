@@ -17,6 +17,7 @@
  * the model and prints the block but touches nothing — no selection, no tab.
  */
 
+import { enforceFraming } from '../packages/core/src/migrate.ts'
 import {
   DEFAULT_MODEL,
   PORTRAIT,
@@ -80,6 +81,14 @@ if (!args.prompt) {
 if (!Number.isFinite(args.width) || !Number.isFinite(args.height)) {
   fail('--width and --height must be numbers')
 }
+
+// Claims the framing has turned away from. Enforced here rather than left to
+// whoever composed the prompt: `from behind` beside `cleavage, huge nipples,
+// topless` does not produce a back view missing those details, it produces a
+// front view — the framing is outvoted, silently, and a row of tabs meant to be
+// different angles comes back as one angle repeated. See FACING_CONFLICTS.
+const framed = enforceFraming(args.prompt)
+args.prompt = framed.text
 
 const target = await resolveModel(args.model)
 const { architecture, vPred } = inspectCheckpoint(target.filename)
@@ -169,6 +178,14 @@ const block = [prompt, args.negative ? `Negative prompt: ${args.negative}` : nul
   .join('\n')
 
 console.log(`model  ${target.name}  (${architecture})`)
+if (framed.removed.length > 0) {
+  console.log(
+    `dropped ${[...new Set(framed.removed)].join(', ')} — the framing faces away from them`,
+  )
+}
+if (framed.weighted.length > 0) {
+  console.log(`weighted the framing — bare, it loses to the body tags`)
+}
 console.log('')
 console.log(block)
 
