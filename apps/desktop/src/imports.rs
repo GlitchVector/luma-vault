@@ -384,6 +384,7 @@ mod tests {
             rating: None,
             sexy_only: false,
             search: String::new(),
+            search_paths: false,
             tag: None,
             min_stars: None,
             unstarred: false,

@@ -304,7 +304,33 @@ impl Db {
              WHERE phash IS NULL AND thumb_path IS NOT NULL AND kind = 'image'",
         )?;
 
-        // Full-text search over filenames and prompts.
+        // The folder a file sits in, so the search index can hold it as a
+        // column of its own — see `fts_expression`.
+        //
+        // Generated rather than written at insert: `name` is always the tail of
+        // `path`, so a stored copy would be a third spelling of a fact already
+        // recorded twice, and one more thing every writer of `path` would have
+        // to remember. VIRTUAL because `ALTER TABLE` cannot add a STORED
+        // generated column, and because nothing reads this except the index.
+        //
+        // Checked with `table_xinfo`, **not** `table_info`. The latter lists
+        // only columns whose hidden flag is zero and a generated column's is
+        // two, so this is never found, the ALTER runs on every launch, and the
+        // second one fails with "duplicate column name" — taking every
+        // migration below it down with it.
+        let has_dir = conn
+            .prepare("PRAGMA table_xinfo(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "dir");
+        if !has_dir {
+            conn.execute_batch(
+                "ALTER TABLE media ADD COLUMN dir TEXT
+                 GENERATED ALWAYS AS (substr(path, 1, length(path) - length(name))) VIRTUAL",
+            )?;
+        }
+
+        // Full-text search over filenames, prompts and folder paths.
         //
         // **Trigram, not the default tokenizer.** The default indexes whole
         // words, and a booru prompt is full of `1girl`, `2girls`,
@@ -314,27 +340,55 @@ impl Db {
         //
         // Measured on this library, 160,901 rows: `LIKE` needs 183-230ms for a
         // count, which is far too slow to type against. Trigram answers the
-        // same queries in 0-7ms and builds once in 2.4s.
+        // same queries in 0-7ms and builds once in 2.4s. The folder search is
+        // in here for that reason and no other — `path LIKE '%moona%'` is the
+        // obvious implementation and it is the slow one.
+        //
+        // Three columns, and every query names which of them it means. A bare
+        // MATCH searches all three, which would silently fold folder names into
+        // the ordinary search the moment `dir` was added.
         //
         // `content='media'` so the text is not stored twice; the triggers below
         // are what an external-content table requires to stay in step.
+        //
+        // Read the version before the table is created, because on an upgrade
+        // it decides whether the existing one is thrown away.
+        let built: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key = 'fts_version'", [], |row| row.get(0))
+            .optional()?;
+        let stale = built.as_deref() != Some(FTS_VERSION);
+        if stale {
+            // `IF NOT EXISTS` cannot add a column to an index that already
+            // exists, and the triggers are `IF NOT EXISTS` too — so an upgraded
+            // library would keep a two-column index, keep writing two columns
+            // into it, and answer every folder search with nothing. Both go;
+            // the rebuild below refills the new shape.
+            conn.execute_batch(
+                "DROP TRIGGER IF EXISTS media_fts_insert;
+                 DROP TRIGGER IF EXISTS media_fts_delete;
+                 DROP TRIGGER IF EXISTS media_fts_update;
+                 DROP TABLE IF EXISTS media_fts;",
+            )?;
+        }
         conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
-                 name, prompt, content='media', content_rowid='id', tokenize='trigram'
+                 name, prompt, dir, content='media', content_rowid='id', tokenize='trigram'
              )",
         )?;
         conn.execute_batch(
             "CREATE TRIGGER IF NOT EXISTS media_fts_insert AFTER INSERT ON media BEGIN
-                 INSERT INTO media_fts(rowid, name, prompt) VALUES (new.id, new.name, new.prompt);
+                 INSERT INTO media_fts(rowid, name, prompt, dir)
+                 VALUES (new.id, new.name, new.prompt, new.dir);
              END;
              CREATE TRIGGER IF NOT EXISTS media_fts_delete AFTER DELETE ON media BEGIN
-                 INSERT INTO media_fts(media_fts, rowid, name, prompt)
-                 VALUES ('delete', old.id, old.name, old.prompt);
+                 INSERT INTO media_fts(media_fts, rowid, name, prompt, dir)
+                 VALUES ('delete', old.id, old.name, old.prompt, old.dir);
              END;
              CREATE TRIGGER IF NOT EXISTS media_fts_update AFTER UPDATE ON media BEGIN
-                 INSERT INTO media_fts(media_fts, rowid, name, prompt)
-                 VALUES ('delete', old.id, old.name, old.prompt);
-                 INSERT INTO media_fts(rowid, name, prompt) VALUES (new.id, new.name, new.prompt);
+                 INSERT INTO media_fts(media_fts, rowid, name, prompt, dir)
+                 VALUES ('delete', old.id, old.name, old.prompt, old.dir);
+                 INSERT INTO media_fts(rowid, name, prompt, dir)
+                 VALUES (new.id, new.name, new.prompt, new.dir);
              END;",
         )?;
         // Backfill once, recorded by a flag rather than by inspecting the table.
@@ -348,10 +402,7 @@ impl Db {
         //
         // The version lets a tokenizer or column change force one rebuild
         // later; rebuilding every launch would cost 3.7s on this library.
-        let built: Option<String> = conn
-            .query_row("SELECT value FROM settings WHERE key = 'fts_version'", [], |row| row.get(0))
-            .optional()?;
-        if built.as_deref() != Some(FTS_VERSION) {
+        if stale {
             conn.execute_batch("INSERT INTO media_fts(media_fts) VALUES ('rebuild')")?;
             conn.execute(
                 "INSERT INTO settings(key, value) VALUES ('fts_version', ?1)
@@ -1991,7 +2042,13 @@ impl Db {
             // A term the index cannot answer yields nothing rather than
             // everything: typing "ab" should show an empty grid, not the whole
             // library, because the next keystroke is about to make it useful.
-            match fts_expression(query.search.trim()) {
+            //
+            // Which columns is the whole of the folder-search mode: the same
+            // term, the same index, aimed at the directory instead. Nothing
+            // else about the query changes, so a folder search still composes
+            // with the rating pills and the timeline the way any other does.
+            let columns = if query.search_paths { PATH_COLUMNS } else { TEXT_COLUMNS };
+            match fts_expression(query.search.trim(), columns) {
                 Some(expression) => {
                     let at = binds.len() + 1;
                     where_parts.push(format!(
@@ -2396,17 +2453,34 @@ impl Db {
     }
 }
 
-/// An FTS5 MATCH expression for text a person typed.
+/// What the search box means by default: the filename and the prompt.
+///
+/// Named explicitly rather than left to a bare MATCH, which searches every
+/// column there is. `dir` is a column now, so "every column" and "what this
+/// field promises" are no longer the same set.
+const TEXT_COLUMNS: &str = "{name prompt}";
+
+/// The folder-search mode: the directory, without the filename on the end of
+/// it. See [`crate::types::MediaQuery::search_paths`] for why it replaces the
+/// default rather than adding to it.
+const PATH_COLUMNS: &str = "{dir}";
+
+/// An FTS5 MATCH expression for text a person typed, restricted to `columns`.
 ///
 /// Everything is quoted, so `(` `"` `*` and `-` are searched for rather than
 /// parsed as query syntax — typing `(wide hips:1.3)` should find that text, not
 /// raise "fts5: syntax error near". Terms are ANDed, so word order does not
 /// matter but every word must appear.
 ///
+/// The column filter wraps the whole conjunction rather than each term, because
+/// FTS5 applies a bare `{cols} : x AND y` to `x` only — which would leave the
+/// second word of a two-word folder search matching filenames and prompts as
+/// well, and the mode leaking exactly where a search is most specific.
+///
 /// Returns `None` for input the trigram tokenizer cannot answer: it indexes
 /// three-character sequences, so nothing shorter than three characters can be
 /// looked up.
-fn fts_expression(input: &str) -> Option<String> {
+fn fts_expression(input: &str, columns: &str) -> Option<String> {
     let terms: Vec<String> = input
         .split_whitespace()
         .filter(|term| term.chars().count() >= 3)
@@ -2415,7 +2489,7 @@ fn fts_expression(input: &str) -> Option<String> {
     if terms.is_empty() {
         return None;
     }
-    Some(terms.join(" AND "))
+    Some(format!("{columns} : ({})", terms.join(" AND ")))
 }
 
 /// Bumping this rebuilds the search index once, on the next launch. Change it
@@ -2474,7 +2548,7 @@ fn rebuild_labels<'a>(
     Ok(())
 }
 
-const FTS_VERSION: &str = "1-trigram-name-prompt";
+const FTS_VERSION: &str = "2-trigram-name-prompt-dir";
 
 /// Bump when what an upscaled variant inherits from its original changes.
 ///
@@ -2696,6 +2770,7 @@ mod tests {
             rating: None,
             sexy_only: false,
             search: String::new(),
+            search_paths: false,
             tag: None,
             min_stars: None,
             unstarred: false,
@@ -3824,11 +3899,14 @@ mod tests {
         // and raises "fts5: syntax error near", which reaches the UI as a red
         // toast for a perfectly reasonable search.
         assert_eq!(
-            fts_expression("(wide hips:1.3)").as_deref(),
-            Some(r#""(wide" AND "hips:1.3)""#)
+            fts_expression("(wide hips:1.3)", TEXT_COLUMNS).as_deref(),
+            Some(r#"{name prompt} : ("(wide" AND "hips:1.3)")"#)
         );
         // A quote in the input must not end the quoted term.
-        assert_eq!(fts_expression(r#"say "hi""#).as_deref(), Some(r#""say" AND """hi""""#));
+        assert_eq!(
+            fts_expression(r#"say "hi""#, TEXT_COLUMNS).as_deref(),
+            Some(r#"{name prompt} : ("say" AND """hi""")"#)
+        );
     }
 
     #[test]
@@ -3836,9 +3914,24 @@ mod tests {
         // Trigram indexes three-character sequences, so a shorter term matches
         // nothing at all — silently returning zero results for `a girl` would
         // be worse than searching for `girl`.
-        assert_eq!(fts_expression("a girl").as_deref(), Some(r#""girl""#));
-        assert_eq!(fts_expression("of"), None);
-        assert_eq!(fts_expression("   "), None);
+        assert_eq!(
+            fts_expression("a girl", TEXT_COLUMNS).as_deref(),
+            Some(r#"{name prompt} : ("girl")"#)
+        );
+        assert_eq!(fts_expression("of", TEXT_COLUMNS), None);
+        assert_eq!(fts_expression("   ", TEXT_COLUMNS), None);
+    }
+
+    #[test]
+    fn the_column_filter_covers_every_term_not_only_the_first() {
+        // FTS5 binds `{cols} : x AND y` to `x` alone, so an unparenthesised
+        // expression would leave the second word of a two-word folder search
+        // matching filenames and prompts — the mode leaking on exactly the
+        // searches specific enough to be typed deliberately.
+        assert_eq!(
+            fts_expression("art moona", PATH_COLUMNS).as_deref(),
+            Some(r#"{dir} : ("art" AND "moona")"#)
+        );
     }
 
     /// How many rows the grid's search finds for `text`.
@@ -3885,6 +3978,126 @@ mod tests {
         assert_eq!(found(&db, "hoshinova beach"), 0);
         // Punctuation from a real prompt must not be parsed as query syntax.
         assert_eq!(found(&db, "(wide hips:1.3)"), 0);
+    }
+
+    /// How many rows the folder-search mode finds for `text`.
+    fn found_by_path(db: &Db, text: &str) -> i64 {
+        let q = MediaQuery { search: text.to_string(), search_paths: true, ..query() };
+        db.query_media(&q).unwrap().total
+    }
+
+    #[test]
+    fn the_folder_mode_searches_the_directory_and_only_the_directory() {
+        // A library filed by character, which is the layout this mode is for:
+        // the term is in the path of every file in the folder and in the
+        // prompt of most of them, so "did it match" is not enough to tell the
+        // two modes apart. Each assertion below is one that fails if the
+        // column filter is dropped or applied to the wrong set.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/media/aqua/00166-3997412987.png", MediaKind::Image, 1),
+                file("/media/moona/00200-1234567890.png", MediaKind::Image, 2),
+                // The name carries "moona" while the folder does not. This is
+                // the row that catches a folder search still reading filenames.
+                file("/media/misc/moona-wallpaper.png", MediaKind::Image, 3),
+            ],
+            1,
+        )
+        .expect("insert");
+        // And a prompt naming a folder nothing is filed under, for the other
+        // direction: the prompt must not answer a folder search either.
+        let id = db
+            .query_media(&MediaQuery { search: "00166".to_string(), ..query() })
+            .unwrap()
+            .items[0]
+            .id;
+        db.set_generation(
+            id,
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".into(),
+                prompt: Some("moona hoshinova, 1girl".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("set generation");
+
+        assert_eq!(found_by_path(&db, "aqua"), 1, "a folder name matches");
+        // Two of the three rows say "moona" somewhere; exactly one says it in
+        // its folder.
+        assert_eq!(found(&db, "moona"), 2, "filename and prompt, as ever");
+        assert_eq!(found_by_path(&db, "moona"), 1, "the folder, and nothing else");
+        assert_eq!(found_by_path(&db, "wallpaper"), 0, "the filename is not the folder");
+        assert_eq!(found_by_path(&db, "hoshinova"), 0, "and neither is the prompt");
+        // A path fragment rather than one component, which is the point of
+        // matching a substring of the whole directory.
+        assert_eq!(found_by_path(&db, "media/moona"), 1, "a run of the path");
+        // The default mode must not have quietly gained a third column.
+        assert_eq!(found(&db, "misc"), 0, "the folder stays out of the plain search");
+    }
+
+    #[test]
+    fn a_library_indexed_before_folder_search_gains_it_on_the_next_open() {
+        // The upgrade every existing library takes, and the one nothing else
+        // here covers: the in-memory cases all start at the current shape.
+        //
+        // `CREATE VIRTUAL TABLE IF NOT EXISTS` cannot widen an index that
+        // already exists, and `CREATE TRIGGER IF NOT EXISTS` cannot widen what
+        // feeds it. Without the version bump doing the dropping, an upgraded
+        // library keeps a two-column index, keeps writing two columns into it,
+        // and answers every folder search with nothing — while looking
+        // completely healthy from the outside.
+        let file = tempfile::NamedTempFile::new().expect("temp");
+        let path = file.path().to_path_buf();
+        drop(file);
+
+        {
+            let db = Db::open(&path).expect("open");
+            let folder = db.add_folder("/media", 1).expect("add folder");
+            db.insert_media_batch(
+                folder,
+                // Qualified, because the temp-file binding above shadows the
+                // helper's name for the rest of this block.
+                &[super::tests::file("/media/moona/00166.png", MediaKind::Image, 1)],
+                1,
+            )
+            .expect("insert");
+
+            // Rewound to exactly what the previous version left behind: no
+            // `dir` column, a two-column index over it, and its own version
+            // recorded so this open looks like the last one it did.
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                "DROP TRIGGER media_fts_insert;
+                 DROP TRIGGER media_fts_delete;
+                 DROP TRIGGER media_fts_update;
+                 DROP TABLE media_fts;
+                 ALTER TABLE media DROP COLUMN dir;
+                 CREATE VIRTUAL TABLE media_fts USING fts5(
+                     name, prompt, content='media', content_rowid='id', tokenize='trigram');
+                 CREATE TRIGGER media_fts_insert AFTER INSERT ON media BEGIN
+                     INSERT INTO media_fts(rowid, name, prompt)
+                     VALUES (new.id, new.name, new.prompt);
+                 END;
+                 INSERT INTO media_fts(media_fts) VALUES ('rebuild');
+                 UPDATE settings SET value = '1-trigram-name-prompt'
+                  WHERE key = 'fts_version';",
+            )
+            .expect("rewind to the previous shape");
+        }
+
+        let db = Db::open(&path).expect("reopen");
+        assert_eq!(found_by_path(&db, "moona"), 1, "searchable without a rescan");
+        assert_eq!(found(&db, "00166"), 1, "and the old search still answers");
+
+        // Twice, because the "does this column exist" check is the trap: read
+        // with `table_info` it never finds a generated column, and this open is
+        // the one that would fail on a duplicate `dir`.
+        drop(db);
+        let db = Db::open(&path).expect("third open");
+        assert_eq!(found_by_path(&db, "moona"), 1);
     }
 
     #[test]

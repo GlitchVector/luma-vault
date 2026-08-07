@@ -285,6 +285,15 @@ pub struct MediaQuery {
     pub rating: Option<Rating>,
     pub sexy_only: bool,
     pub search: String,
+    /// Run `search` against the folder path rather than the filename and the
+    /// prompt.
+    ///
+    /// A mode on the one term, not a second one — and deliberately *instead of*
+    /// rather than *as well as*. A library filed into per-character folders
+    /// carries the same word in the path and in the prompt, so a term matched
+    /// either way would answer "which folder" with the whole library.
+    #[serde(default)]
+    pub search_paths: bool,
     /// Show only rows carrying this structural tag. `None` means "no filter".
     #[serde(default)]
     pub tag: Option<String>,

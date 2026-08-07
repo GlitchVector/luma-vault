@@ -2328,6 +2328,57 @@ describe('timeline and search together', () => {
   })
 })
 
+describe('the folder-path search toggle', () => {
+  it('aims the term already typed, without disturbing it', async () => {
+    // The whole promise of a mode rather than a second box: type once, and if
+    // the answer is not in the names, click once to ask the folders the same
+    // question. A toggle that cleared the field — or that only took effect on
+    // the next keystroke — would be no faster than a separate input.
+    library = [makeItem(1)]
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+
+    const search = screen.getByPlaceholderText(/search/i)
+    fireEvent.change(search, { target: { value: 'moona' } })
+    await waitFor(() => {
+      const sent = queries.at(-1) as { search?: string; searchPaths?: boolean }
+      expect(sent.search).toBe('moona')
+      expect(sent.searchPaths).toBe(false)
+    })
+
+    screen.getByRole('button', { name: 'Search folder paths' }).click()
+    await waitFor(() => {
+      const sent = queries.at(-1) as { search?: string; searchPaths?: boolean }
+      expect(sent.searchPaths).toBe(true)
+      expect(sent.search, 'the term must survive the mode change').toBe('moona')
+    })
+    expect((screen.getByPlaceholderText(/search/i) as HTMLInputElement).value).toBe('moona')
+
+    // And back, because a mode you cannot leave is a trap — the grid would
+    // stay narrowed to nothing with no visible reason why.
+    screen.getByRole('button', { name: 'Search folder paths' }).click()
+    await waitFor(() =>
+      expect((queries.at(-1) as { searchPaths?: boolean }).searchPaths).toBe(false),
+    )
+  })
+
+  it('says which mode it is in, in the field and on the button', async () => {
+    // The one thing that makes an unexpected empty grid explicable rather than
+    // a bug report: a search that found nothing has to say what it searched.
+    library = [makeItem(1)]
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+
+    const toggle = screen.getByRole('button', { name: 'Search folder paths' })
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByPlaceholderText(/filenames and prompts/i)).toBeTruthy()
+
+    toggle.click()
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'))
+    expect(screen.getByPlaceholderText(/folder paths/i)).toBeTruthy()
+  })
+})
+
 describe('the timeline axis under search', () => {
   const WEEK = 7 * 24 * 60 * 60 * 1000
   const MONDAY = 1_719_792_000_000

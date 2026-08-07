@@ -4,6 +4,7 @@
   "rating": "suggestive",
   "sexyOnly": true,
   "search": "beach",
+  "searchPaths": true,
   "tag": null,
   "hideTags": [
     "document"

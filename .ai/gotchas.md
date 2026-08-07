@@ -72,6 +72,34 @@ and a fast scroll showed a wall of empty placeholders.
 reorders on every query, so page 2 re-shows items from page 1 and silently skips
 others.
 
+## The search index
+
+**`media_fts` has three columns and every query names the ones it means.** A
+bare `MATCH "moona"` searches `name`, `prompt` *and* `dir` — so dropping the
+`{name prompt}` filter would quietly fold folder names into the ordinary search,
+and dropping `{dir}` would make the folder toggle do nothing visible. Both are
+built in `fts_expression`.
+
+**FTS5 binds a column filter to the first term only.** `{dir} : "a" AND "b"`
+restricts `"a"` and lets `"b"` match anything, which is why the whole
+conjunction is parenthesised. The failure is invisible on one-word searches and
+appears only once somebody types two, which is why there is a test for it.
+
+**`media.dir` is a VIRTUAL generated column, and `PRAGMA table_info` cannot see
+it.** `table_info` lists only columns whose hidden flag is 0; a generated
+column's is 2. Every other migration in `db.rs` checks with `table_info`, so
+matching them here is the natural mistake — and it makes the "does this column
+exist" check permanently false, which means the `ALTER` runs on every launch and
+fails on the second one with "duplicate column name", taking every migration
+after it down with it. Use `table_xinfo`.
+
+**Changing what is indexed means bumping `FTS_VERSION`.** The version does not
+just trigger a rebuild — it is also what drops the old table and triggers.
+`CREATE VIRTUAL TABLE IF NOT EXISTS` cannot add a column to an index that
+already exists, and neither can `CREATE TRIGGER IF NOT EXISTS`, so without the
+bump an upgraded library keeps the old shape and answers new queries with
+nothing.
+
 ## Finding what an img2img was made from
 
 **Two perceptual thresholds exist, and they are not the same question.**

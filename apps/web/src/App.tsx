@@ -813,6 +813,8 @@ export function App() {
           <SearchBar
             value={query.search}
             onChange={(search) => setQuery({ search })}
+            searchPaths={query.searchPaths}
+            onSearchPathsChange={(searchPaths) => setQuery({ searchPaths })}
             matches={library.total}
             loading={library.loading}
           />

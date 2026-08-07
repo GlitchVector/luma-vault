@@ -350,6 +350,22 @@ export const mediaQuerySchema = z.object({
   rating: ratingSchema.nullable().default(null),
   sexyOnly: z.boolean().default(false),
   search: z.string().default(''),
+  /**
+   * Run `search` against the folder path instead of the filename and prompt.
+   *
+   * A mode on the one field rather than a second box. The question is the same
+   * — *where does this word appear* — and two boxes would mean choosing which
+   * one holds the answer before knowing it. It is also why the term is not
+   * matched against *both*: a library organised into `\aqua\`, `\moona\` folders
+   * has the character's name in the path of every file and in the prompt of
+   * most of them, so an either-way match answers "the folder" with the whole
+   * library and the toggle would do nothing visible.
+   *
+   * The path here is the directory only — the filename is what the default
+   * mode already searches, and a term matching it in both modes would make the
+   * toggle look broken on exactly the searches people try first.
+   */
+  searchPaths: z.boolean().default(false),
   /** Show only items carrying this structural tag. */
   tag: z.string().nullable().default(null),
   /** Show only items rated at least this many stars. `1` means "rated at all". */
