@@ -47,7 +47,8 @@
       "url": "https://www.deviantart.com/jebaz/art/Sister-of-the-Halberd-1234567890",
       "published": true,
       "postedAt": 1754400000000
-    }
+    },
+    "ratingOverride": null
   },
   {
     "id": 2,
@@ -86,7 +87,8 @@
       "url": null,
       "published": false,
       "postedAt": 1754400500000
-    }
+    },
+    "ratingOverride": "sfw"
   },
   {
     "id": 3,
@@ -110,6 +112,7 @@
     "dupeGroup": null,
     "upscaledFrom": null,
     "upscaledTo": null,
-    "deviantArt": null
+    "deviantArt": null,
+    "ratingOverride": null
   }
 ]

@@ -4,6 +4,7 @@ import {
   dirnameOf,
   toParameterBlock,
   displayPath,
+  folderMatch,
   extensionOf,
   hasRecycleBin,
   fitInside,
@@ -232,5 +233,61 @@ describe('toParameterBlock', () => {
     // An empty first line, because the prompt is where a prompt goes even when
     // there is not one — Forge's parser reads the settings off the last line.
     expect(toParameterBlock({ tool: 'NovelAI', needsSourceImage: false, postprocessed: false, seed: '77' })).toBe(['', 'Seed: 77'].join('\n'))
+  })
+})
+
+describe('folderMatch', () => {
+  // `String.raw` so the backslashes are the path's, not escape sequences —
+  // this is the extended-length UNC form the index actually stores.
+  const path = String.raw`\\?\UNC\jebpot\devs\AI\characters\aqua-konosuba\best\00166-3997412987.png`
+
+  it('shows the folder around the match, not the whole path', () => {
+    // The path is why the row is in these results and it is far too long to
+    // put on a tile. The window is the readable part of that answer.
+    const found = folderMatch(path, 'aqua')
+    expect(found).not.toBeNull()
+    expect(found!.text).toContain('aqua-konosuba')
+    expect(found!.text.length).toBeLessThan(40)
+    // Clipped at the front, so the elision has to say so.
+    expect(found!.text.startsWith('…')).toBe(true)
+    // And the marked run is the term itself.
+    expect(found!.text.slice(found!.from, found!.to)).toBe('aqua')
+  })
+
+  it('reads the stored path the way a person would', () => {
+    // The index keeps Windows' extended-length form. `\?\UNC\` on a tile
+    // would be noise in the few characters there is room for.
+    expect(folderMatch(path, 'jebpot')!.text).not.toContain('?')
+  })
+
+  it('ignores the filename, which is the other mode’s job', () => {
+    // Matching here would claim the folder matched when it did not, and the
+    // index would disagree — it searches `dir`, with the name cut off.
+    expect(folderMatch(path, '00166')).toBeNull()
+    expect(folderMatch(path, '3997412987')).toBeNull()
+  })
+
+  it('matches case-insensitively, as the trigram index does', () => {
+    expect(folderMatch(path, 'AQUA')!.text.toLowerCase()).toContain('aqua')
+  })
+
+  it('needs every word, because the index ANDs them', () => {
+    expect(folderMatch(path, 'aqua best')).not.toBeNull()
+    expect(folderMatch(path, 'aqua moona')).toBeNull()
+  })
+
+  it('gives up quietly on a row whose own path does not carry the term', () => {
+    // Normal rather than exceptional: a variant stands in for an original
+    // filed elsewhere, so a result may genuinely not match in its own path.
+    expect(folderMatch(path, 'moona')).toBeNull()
+    expect(folderMatch(path, '   ')).toBeNull()
+    expect(folderMatch('no-folder.png', 'anything')).toBeNull()
+  })
+
+  it('spends the whole window on the side that has path to show', () => {
+    // A hit at the very end should not waste half its budget on nothing.
+    const found = folderMatch(path, 'best')!
+    expect(found.text.endsWith('best')).toBe(true)
+    expect(found.text.slice(found.from, found.to)).toBe('best')
   })
 })

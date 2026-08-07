@@ -71,6 +71,27 @@ const FILE_ROUTE: &str = "/luma/v1/file";
 /// they do is blocking: a SQLite query and a file read.
 const WORKERS: usize = 8;
 
+/// How long an ordinary remote operation may take before the caller is told the
+/// peer is not answering.
+///
+/// Generous rather than snappy: a query against a 160,000-row index on a machine
+/// that is mid-scan is seconds, and timing that out would be a bug of its own.
+/// What it rules out is the *unbounded* wait.
+const CALL_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// Operations that genuinely run for minutes, and would be broken by the limit
+/// above. Each reports progress separately, so a person is never watching a
+/// still window while one of these runs.
+const SLOW_OPERATIONS: [&str; 4] = [
+    "upscale_media",
+    "find_duplicates",
+    "deviantart_send",
+    "import_image_browser_db",
+];
+
+/// A ceiling for those, so even they cannot hang the session for ever.
+const SLOW_CALL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
 // ---------------------------------------------------------------------------
 // Addresses
 // ---------------------------------------------------------------------------
@@ -325,14 +346,38 @@ impl Session {
     /// Run one operation on the peer, by the name the frontend would have
     /// invoked locally.
     pub async fn call(&self, name: &str, args: Value) -> Result<Value, String> {
+        // Per-request, because the client itself deliberately has no read
+        // timeout — it also carries the upscale, which runs for minutes.
+        //
+        // Finite is the point. Without a limit here, a peer that accepts the
+        // connection and then never answers leaves this future pending for
+        // ever: the grid keeps its old rows, every later filter change queues
+        // behind the same hang, and the window looks frozen with nothing in the
+        // log. A limit turns all of that into one toast naming the machine.
+        let limit = if SLOW_OPERATIONS.contains(&name) {
+            SLOW_CALL_TIMEOUT
+        } else {
+            CALL_TIMEOUT
+        };
         let response = self
             .client
             .post(format!("http://{}{RPC_ROUTE}", self.address))
             .header(PASSPHRASE_HEADER, &self.passphrase)
             .json(&json!({ "name": name, "args": args }))
+            .timeout(limit)
             .send()
             .await
-            .map_err(|error| format!("{} is not answering: {}", self.address, cause(&error)))?;
+            .map_err(|error| {
+                if error.is_timeout() {
+                    format!(
+                        "{} did not answer {name} within {}s — it may be busy, or sharing may have stopped there",
+                        self.address,
+                        limit.as_secs()
+                    )
+                } else {
+                    format!("{} is not answering: {}", self.address, cause(&error))
+                }
+            })?;
 
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err("the other machine no longer accepts this passphrase".to_string());
@@ -517,7 +562,23 @@ impl Sharing {
                     // Ends when the server is unblocked, which is how `stop`
                     // collects these.
                     for request in server.incoming_requests() {
-                        answer(&shared, request);
+                        // A panic must not cost a worker. Unwinding out of this
+                        // loop retires the thread for good, and there are only
+                        // eight of them — so eight bad requests, or one
+                        // poisoned lock hit eight times, leave a server that
+                        // still *accepts* connections (the listener outlives
+                        // its workers) and never answers one again. The peer
+                        // then hangs on every call with nothing to show.
+                        //
+                        // Whatever went wrong belongs to that one request. The
+                        // caller gets a 500 it can put in a toast, and the
+                        // worker takes the next request.
+                        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                            || answer(&shared, request),
+                        ));
+                        if outcome.is_err() {
+                            eprintln!("[luma] a remote request panicked; worker continuing");
+                        }
                     }
                 })
             })
@@ -871,6 +932,11 @@ mod tests {
                     if name == "boom" {
                         return Err("that file is no longer in the library".to_string());
                     }
+                    // Stands in for the real thing: a poisoned index mutex,
+                    // which panics every caller that touches it from then on.
+                    if name == "panic" {
+                        panic!("index mutex poisoned");
+                    }
                     Ok(json!({ "ran": name, "args": args }))
                 }),
                 greeting: Arc::new(|| json!({ "app": "luma-vault", "host": "TESTBOX", "folders": 1, "items": 7 })),
@@ -927,6 +993,40 @@ mod tests {
 
         fixture.sharing.stop();
         assert!(!fixture.sharing.is_sharing());
+    }
+
+    #[test]
+    fn a_panicking_request_costs_one_answer_and_not_the_server() {
+        // The reported failure, from the other end of it: the grid on the
+        // browsing machine stops updating and every filter change after it does
+        // nothing, with no error anywhere.
+        //
+        // The cause is here. There are eight workers, each parked in the accept
+        // loop; a panic used to unwind straight out of that loop and retire the
+        // thread. The listener lives in `Running`, not in the workers, so it
+        // stays bound after the last one has gone — connections are still
+        // accepted, and then nothing answers them. A client with no read
+        // timeout waits for ever, which is exactly what a frozen grid is.
+        //
+        // Expect panic output on stderr while this runs. It is the point.
+        let fixture = shared_library("open sesame");
+        let boom = r#"{"name":"panic","args":{}}"#;
+        let fine = r#"{"name":"query_media","args":{"limit":3}}"#;
+
+        // More panics than there are workers. Under the old behaviour this
+        // retires every one of them and the assertion below never returns.
+        for _ in 0..WORKERS * 2 {
+            let (status, _) = request(fixture.port, "POST", RPC_ROUTE, "open sesame", Some(boom));
+            // tiny_http answers 500 for a request dropped without a response,
+            // so the caller is told rather than left waiting.
+            assert_eq!(status, 500, "a panicking request still owes an answer");
+        }
+
+        let (status, body) = request(fixture.port, "POST", RPC_ROUTE, "open sesame", Some(fine));
+        assert_eq!(status, 200, "the server is still serving");
+        assert!(body.contains("\"ran\":\"query_media\""), "got: {body}");
+
+        fixture.sharing.stop();
     }
 
     #[test]

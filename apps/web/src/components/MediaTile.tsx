@@ -1,4 +1,13 @@
-import { fitWithin, formatDuration, isAnimatedImage, isFourK, type MediaItem } from '@luma/core'
+import {
+  displayPath,
+  effectiveRating,
+  fitWithin,
+  folderMatch,
+  formatDuration,
+  isAnimatedImage,
+  isFourK,
+  type MediaItem,
+} from '@luma/core'
 import { cn } from '@luma/ui'
 import { memo } from 'react'
 import { fileUrl } from '#/lib/native.ts'
@@ -41,6 +50,16 @@ interface MediaTileProps {
   size: number
   /** Drawn as picked. Only meaningful while the grid is selecting. */
   selected?: boolean
+  /**
+   * The folder-search term this tile is a result of, when the grid is in that
+   * mode. Empty otherwise, and the overlay is not drawn.
+   *
+   * A string rather than a precomputed label because the tile is memoized on
+   * its props: the term changes once per search, the derivation is a substring
+   * scan, and passing an object would give every tile a new prop identity on
+   * every render of the grid.
+   */
+  folderTerm?: string
 }
 
 /**
@@ -69,6 +88,7 @@ export const MediaTile = memo(function MediaTile({
   showBoxes,
   size,
   selected = false,
+  folderTerm = '',
 }: MediaTileProps) {
   const { ref, inView } = useInView()
 
@@ -97,6 +117,11 @@ export const MediaTile = memo(function MediaTile({
   const { width, height } = fitWithin(intrinsicWidth || 1, intrinsicHeight || 1, size)
 
   const verdict = item.verdict
+  const rating = effectiveRating(item)
+  // Why this tile is in these results. Only in folder-search mode, where the
+  // reason is in a path the tile otherwise shows nothing of — the picture and
+  // its filename both look the same whether the folder matched or not.
+  const folderHit = folderTerm ? folderMatch(item.path, folderTerm) : null
   const isVideo = item.kind === 'video'
   // The source's own size, never the thumbnail's — the badge is a claim about
   // the file, and every thumbnail in the library is 512px.
@@ -142,6 +167,24 @@ export const MediaTile = memo(function MediaTile({
               className="size-full object-cover"
               draggable={false}
             />
+          ) : null}
+
+          {/* Bottom-left, and only as wide as it needs to be: the picture is
+              what the grid is for, and a full-width bar over every tile at
+              once would cost more of it than the answer is worth. The matched
+              run is picked out inside the surrounding path, because the path
+              is context and the match is the point. */}
+          {folderHit ? (
+            <span
+              className="pointer-events-none absolute bottom-1 left-1 max-w-[calc(100%-0.5rem)] truncate rounded bg-black/75 px-1.5 py-0.5 font-mono text-[10px] leading-none text-zinc-300"
+              title={displayPath(item.path)}
+            >
+              {folderHit.text.slice(0, folderHit.from)}
+              <span className="rounded-sm bg-indigo-500/40 text-indigo-100">
+                {folderHit.text.slice(folderHit.from, folderHit.to)}
+              </span>
+              {folderHit.text.slice(folderHit.to)}
+            </span>
           ) : null}
 
           {showBoxes && verdict?.sexy
@@ -211,15 +254,19 @@ export const MediaTile = memo(function MediaTile({
             </span>
           ) : null}
 
-          {verdict?.rating === 'explicit' ? (
+          {/* The effective rating, so a correction made in the lightbox shows
+              on the tile too. Reading `verdict.rating` here would leave a
+              corrected picture wearing a red dot while the grid files it as
+              safe — the dot and the filter disagreeing about the same row. */}
+          {rating === 'explicit' ? (
             <span
               className="pointer-events-none absolute right-1.5 top-1.5 size-2 rounded-full bg-red-400"
-              title="explicit"
+              title={item.ratingOverride ? 'explicit — your correction' : 'explicit'}
             />
-          ) : verdict?.rating === 'suggestive' ? (
+          ) : rating === 'suggestive' ? (
             <span
               className="pointer-events-none absolute right-1.5 top-1.5 size-2 rounded-full bg-amber-400"
-              title="suggestive"
+              title={item.ratingOverride ? 'suggestive — your correction' : 'suggestive'}
             />
           ) : verdict === null ? (
             <span

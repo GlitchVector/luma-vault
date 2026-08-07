@@ -43,9 +43,12 @@ impl Rating {
         }
     }
 
-    /// Inverse of [`Rating::as_str`]. Used by the shared-vector tests, which
-    /// read rating names out of `contracts/classify-vectors.json`.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Inverse of [`Rating::as_str`]. Reads the rating names out of
+    /// `contracts/classify-vectors.json` for the shared-vector tests, and the
+    /// `rating_override` column for [`crate::db`].
+    ///
+    /// Unknown input is `Unrated`, which both callers treat as "no opinion"
+    /// rather than as a rating in its own right.
     pub fn parse(value: &str) -> Rating {
         match value {
             "sfw" => Rating::Sfw,
@@ -157,6 +160,19 @@ pub struct MediaItem {
     /// deleted, and getting that wrong leaves a link pointing at nothing.
     #[serde(default)]
     pub upscaled_to: Option<String>,
+    /// A person's correction of the model's rating, or `None` to trust it.
+    ///
+    /// Separate from the verdict for exactly the reason `stars` is separate:
+    /// the rerate phase rewrites every verdict whenever `RATING_VERSION` moves,
+    /// and a correction living inside one would be undone by the next
+    /// threshold change without anything saying so.
+    ///
+    /// `verdict.rating` therefore always reports what the detector concluded,
+    /// including on a corrected row — which is what lets the lightbox show the
+    /// correction *and* what it overruled, and what makes clearing it possible
+    /// without re-running the model.
+    #[serde(default)]
+    pub rating_override: Option<Rating>,
     /// Where this picture already is on DeviantArt, when it is.
     ///
     /// The only thing in the grid that is a fact about somewhere *else*. It is

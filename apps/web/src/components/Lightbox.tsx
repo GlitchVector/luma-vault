@@ -2,6 +2,7 @@ import {
   clampView,
   dirnameOf,
   displayPath,
+  effectiveRating,
   fitInside,
   fitView,
   isOverPicture,
@@ -13,6 +14,7 @@ import {
   zoomAbout,
   type MediaFrame,
   type MediaItem,
+  type Rating,
   type SourceOrigin,
   type View,
 } from '@luma/core'
@@ -30,9 +32,11 @@ import {
   mediaFrames,
   openExternal,
   revealInFileManager,
+  setRatingOverride,
   setStars,
   sourceOrigin,
 } from '#/lib/native.ts'
+import { RatingOverrideDialog } from '#/components/RatingOverrideDialog.tsx'
 import { askConfirm, showMessage } from '#/lib/dialogs.ts'
 import { preloadImages } from '#/lib/preload.ts'
 import { toast } from '#/lib/toasts.ts'
@@ -112,6 +116,14 @@ interface LightboxProps {
    * judgement into an errand.
    */
   onToggleSelect: (id: number) => void
+  /**
+   * The model's rating on this row was corrected by hand.
+   *
+   * The grid has to re-query rather than patch a row in place: a correction
+   * moves the picture between the rating pills and in or out of the sexy-only
+   * filter, so the list it belongs to may no longer be the list it is in.
+   */
+  onCorrected: () => void
   /**
    * Whether the row on screen is currently picked.
    *
@@ -208,6 +220,7 @@ export function Lightbox({
   onOpenId,
   onUpscale,
   onToggleSelect,
+  onCorrected,
   selected,
 }: LightboxProps) {
   const [fetched, setFetched] = useState<MediaItem | null>(null)
@@ -334,6 +347,29 @@ export function Lightbox({
   // looking at. Until it arrives the grid's copy carries the render, which is
   // what lets a step paint on the frame the key was pressed.
   const item = fetched?.id === mediaId ? fetched : seed?.id === mediaId ? seed : null
+
+  /**
+   * Correcting the detector on the row on screen.
+   *
+   * Applied locally before the write lands, like the star keys above it: the
+   * badge is the feedback, and a badge that waits for a round-trip reads as a
+   * click that missed. `onCorrected` tells the app so the grid re-queries —
+   * the correction moves the row between the rating filters, so leaving the
+   * grid on its old answer would show a picture the current filter excludes.
+   */
+  const [correcting, setCorrecting] = useState(false)
+  const applyCorrection = useCallback(
+    (rating: Exclude<Rating, 'unrated'> | null) => {
+      if (!item) return
+      setCorrecting(false)
+      setFetched({ ...item, ratingOverride: rating })
+      void setRatingOverride([item.id], rating).then(
+        () => onCorrected(),
+        (error: unknown) => void showMessage(String(error), { title: 'Could not correct' }),
+      )
+    },
+    [item, onCorrected],
+  )
 
   // Alt-wheel zooms. A native listener rather than React's `onWheel` because
   // this one has to `preventDefault`, and a passive listener cannot — without
@@ -599,6 +635,10 @@ export function Lightbox({
   const panelGeneration = panelItem.generation
 
   const verdict = item.verdict
+  // What this row is actually rated. `verdict.rating` stays the model's and is
+  // still shown — in the badge's tooltip and in the correction dialog — but
+  // nothing draws or decides from it directly.
+  const shownRating = effectiveRating(item)
   // Shown rather than the stored path: the index keeps Windows' canonical
   // extended-length form, which nobody can read and nobody can paste anywhere.
   const folder = dirnameOf(displayPath(item.path))
@@ -1265,17 +1305,39 @@ export function Lightbox({
         <div className="min-w-0 flex-1">
         {verdict ? (
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
-            <span
+            {/* The *effective* rating, which on a corrected row is the
+                person's. The badge is also the button that corrects it: the
+                thing you want to change is the thing you are looking at, and a
+                separate control elsewhere in the footer would be a second
+                place to look for one decision. */}
+            <button
+              type="button"
+              onClick={() => setCorrecting(true)}
+              // Labelled by what it does, not by what it reads. The text is
+              // the rating — "explicit" — which is a fine thing to *see* and a
+              // useless name for a control, because it says nothing about what
+              // pressing it will do.
+              aria-label="Correct the rating"
+              title={
+                item.ratingOverride
+                  ? `You corrected this to ${item.ratingOverride}; NudeNet rated it ${verdict.rating}. Click to change or restore it.`
+                  : `NudeNet rated this ${verdict.rating}. Click to correct it.`
+              }
               className={cn(
-                'rounded-full px-2 py-0.5 font-medium',
-                verdict.rating === 'explicit' && 'bg-red-500/20 text-red-300',
-                verdict.rating === 'suggestive' && 'bg-amber-500/20 text-amber-300',
-                verdict.rating === 'sfw' && 'bg-emerald-500/15 text-emerald-300',
-                verdict.rating === 'unrated' && 'bg-white/10 text-zinc-400',
+                'rounded-full px-2 py-0.5 font-medium transition-colors',
+                shownRating === 'explicit' && 'bg-red-500/20 text-red-300 hover:bg-red-500/30',
+                shownRating === 'suggestive' && 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30',
+                shownRating === 'sfw' && 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25',
+                shownRating === 'unrated' && 'bg-white/10 text-zinc-400 hover:bg-white/20',
+                // A correction is marked, not disguised. A row that silently
+                // read "sfw" would be indistinguishable from one the model got
+                // right, and the difference is the whole record.
+                item.ratingOverride && 'ring-1 ring-inset ring-white/40',
               )}
             >
-              {verdict.rating}
-            </span>
+              {shownRating}
+              {item.ratingOverride ? <span className="ml-1 opacity-60">·  yours</span> : null}
+            </button>
             {item.generation?.needsSourceImage ? (
               <span
                 className="rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-amber-200/90"
@@ -1395,6 +1457,17 @@ export function Lightbox({
           </div>
         ) : null}
       </footer>
+
+      {/* Last, so it stacks over the stage and the footer both. Mounted only
+          while open — it swallows every keystroke in the capture phase, and a
+          permanently-mounted one would take the lightbox's own keys with it. */}
+      {correcting ? (
+        <RatingOverrideDialog
+          item={item}
+          onApply={applyCorrection}
+          onCancel={() => setCorrecting(false)}
+        />
+      ) : null}
     </div>
   )
 }

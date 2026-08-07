@@ -25,6 +25,8 @@ export {
   fromSingleFrame,
   ratingAtLeast,
   maxRating,
+  effectiveRating,
+  ratingIsSexy,
 } from './classify.ts'
 export type { ClassifyOptions } from './classify.ts'
 
@@ -51,6 +53,7 @@ export {
   basenameOf,
   dirnameOf,
   displayPath,
+  folderMatch,
   hasRecycleBin,
   toParameterBlock,
   kindOf,

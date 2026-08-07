@@ -19,7 +19,8 @@ use serde_json::Value;
 use crate::db::{self, Db};
 use crate::types::{
     CharacterCount, DeviantArtAccount, DeviantArtDraft, DeviantArtSummary, Folder, LibraryStats,
-    MediaFrame, MediaItem, MediaPage, MediaQuery, ScanProgress, SourceOrigin, TimelineBucket,
+    MediaFrame, MediaItem, MediaPage, MediaQuery, Rating, ScanProgress, SourceOrigin,
+    TimelineBucket,
 };
 use crate::{imports, pipeline, thumbs, throttle, types, upscaler, video, AppState};
 
@@ -754,6 +755,34 @@ pub async fn deviantart_send(
         .deviantart
         .send(app, &drafts, publish, stack.as_deref())
         .await)
+}
+
+/// Correct the model's rating on a selection, or hand it back to the model.
+///
+/// `rating` is one of the three a person can mean — `sfw`, `suggestive`,
+/// `explicit` — or `None`, which clears the correction and restores whatever
+/// the stored verdict says. "unrated" is rejected rather than quietly treated
+/// as a clear: it is what a row says before anything has looked at it, and
+/// accepting it here would let the UI ask for a state it cannot mean.
+pub fn set_rating_override(
+    state: &AppState,
+    ids: Vec<i64>,
+    rating: Option<String>,
+) -> Result<usize, String> {
+    if ids.is_empty() {
+        return Err("nothing selected".to_string());
+    }
+    let parsed = match rating.as_deref() {
+        None => None,
+        Some(value) => match Rating::parse(value) {
+            Rating::Unrated => return Err(format!("{value} is not a rating anyone can choose")),
+            known => Some(known),
+        },
+    };
+    state
+        .db
+        .set_rating_override(&ids, parsed)
+        .map_err(|error| format!("{error:#}"))
 }
 
 /// Mark a selection as already on DeviantArt, or clear the mark.

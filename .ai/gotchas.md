@@ -26,6 +26,26 @@ genuinely order-independent, which is the property the tests pin.
 **An unknown label degrades to `neutral`, it does not throw.** A newer model
 revision adding a class should under-report, not fail every scan.
 
+**`verdict.rating` is the model's opinion, never the answer.** A person can
+correct a false positive, and the correction lives in `ratingOverride` — so
+`effectiveRating(item)` is what everything draws, filters and uploads from.
+Reading the verdict directly is the bug this arrangement exists to make
+visible: a tile would wear a red dot while the grid filed the picture as safe,
+and a corrected picture would still go to DeviantArt flagged mature.
+
+**A correction is a separate column for the same reason `stars` is.**
+`rerate_phase` rewrites every verdict whenever `RATING_VERSION` moves, so a
+correction stored inside one would be undone by the next threshold tweak —
+silently, and at exactly the moment a wrongly-explicit picture would be
+expected to change anyway. `update_verdict` therefore always writes
+`verdict_json` and skips `rating`/`is_sexy` on a corrected row. Keeping the
+verdict intact is also what makes "use the model's" cost no inference.
+
+**The effective rating is mirrored into `rating` and `is_sexy`.** Those two
+columns are what every filter, index and count reads, and they were not taught
+about corrections — a correction that only lived in `rating_override` would
+move the badge and nothing else. `set_rating_override` writes all three.
+
 ## Thumbnails
 
 **Every file gets a thumbnail, even when the source is smaller than the target.**
@@ -336,6 +356,31 @@ rather than reporting a bare rejection.
 marker onto the request queue, so with eight worker threads a stop unblocks one
 and the other seven sit in `recv` forever — holding the listener, and hanging any
 join that waits for them. `Sharing::stop` calls it once per worker.
+
+**A panic in a worker used to kill the whole shared library, silently.** The
+worker loop is `for request in server.incoming_requests()`, so an unwind retires
+that thread for good — and there are eight. The listener lives in `Running`, not
+in the workers, so after the last one has gone the port is *still bound* and
+connections are *still accepted*; nothing ever answers them. On the browsing
+machine that reads as a grid frozen mid-session: the rows it has stay, filter
+changes do nothing, and there is no error anywhere at either end. `answer` is
+wrapped in `catch_unwind` for this reason, and a test fires more panics than
+there are workers and then asks an ordinary question.
+
+**One panic used to be enough**, because `Db.conn` is a `Mutex` and a panic
+while holding it poisons the lock — after which every `lock()` panics, so all
+eight workers fall in a row. `Db::connection()` takes the guard back out of a
+poisoned lock rather than propagating. Sound here specifically: it guards a
+SQLite connection, an unfinished transaction rolls back when the guard drops,
+and this index is a rebuildable cache.
+
+**Every remote call needs its own timeout, and the client has no read timeout on
+purpose** — it also carries the upscale, which runs for minutes. So `Session::
+call` sets a per-request limit: `CALL_TIMEOUT` for ordinary operations, and a
+much larger one for the handful in `SLOW_OPERATIONS`. Without it, a peer that
+accepts a connection and never answers leaves the future pending for ever, and
+every later query queues behind it — a frozen window with an empty log. Add new
+long-running operations to that list or they will be cut off at 25 seconds.
 
 **A wildcard-bound server does not shut down on Windows without a knock.**
 tiny_http's `Drop` wakes its accept thread by connecting to the listener's own

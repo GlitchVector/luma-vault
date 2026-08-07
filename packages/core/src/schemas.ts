@@ -206,6 +206,22 @@ export const mediaItemSchema = z.object({
    * hundred tiles — a per-tile network answer would not be an answer.
    */
   deviantArt: deviantArtPostSchema.nullable().default(null),
+  /**
+   * A person's correction of the model's rating, or `null` to trust the model.
+   *
+   * The detector is wrong often enough that living with it is not an option —
+   * a bare shoulder reads as `FEMALE_BREAST_EXPOSED` at 0.4 and the picture is
+   * filed as explicit forever. This is the override, and it is a *separate
+   * field* for the same reason {@link MediaItem.stars} is: the pipeline
+   * rewrites a verdict whenever the rules change, and a correction stored in
+   * the verdict would be silently undone by the next threshold tweak.
+   *
+   * `verdict.rating` therefore stays whatever the model said, always. Read
+   * {@link effectiveRating} rather than either field alone — it is the one
+   * place that resolves the two, so nothing can filter by one and draw the
+   * other.
+   */
+  ratingOverride: ratingSchema.nullable().default(null),
 })
 export type MediaItem = z.infer<typeof mediaItemSchema>
 

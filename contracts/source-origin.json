@@ -44,7 +44,8 @@
       "dupeGroup": null,
       "upscaledFrom": null,
       "upscaledTo": null,
-      "deviantArt": null
+      "deviantArt": null,
+      "ratingOverride": null
     },
     "hops": 6,
     "reachedRoot": true,
@@ -77,7 +78,8 @@
       "dupeGroup": 5533,
       "upscaledFrom": null,
       "upscaledTo": null,
-      "deviantArt": null
+      "deviantArt": null,
+      "ratingOverride": null
     },
     "hops": 1,
     "reachedRoot": false,

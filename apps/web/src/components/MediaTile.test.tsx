@@ -56,6 +56,7 @@ const item: MediaItem = {
   upscaledFrom: null,
   upscaledTo: null,
   deviantArt: null,
+  ratingOverride: null,
 }
 
 afterEach(() => {
@@ -298,5 +299,68 @@ describe('MediaTile', () => {
       )
       expect(screen.getByText('4:07')).toBeTruthy()
     })
+  })
+})
+
+describe('the folder-path overlay', () => {
+  beforeEach(() => mockObserver(true))
+
+  const filed: MediaItem = {
+    ...item,
+    path: String.raw`\?\UNC\jebpot\devs\AI\characters\aqua-konosuba\best\00166.png`,
+    name: '00166.png',
+  }
+
+  it('says why the tile is in the results, in folder mode only', () => {
+    // The picture and the filename look identical whether the folder matched
+    // or not, so without this a folder search is a grid of unexplained hits.
+    const { unmount } = render(
+      <MediaTile
+        item={filed}
+        onOpen={() => {}}
+        showBoxes={false}
+        size={DEFAULT_TILE_SIZE}
+        folderTerm="aqua"
+      />,
+    )
+    // `textContent`, not `getByText`: the matched run is wrapped in its own
+    // element so the label is deliberately split across three nodes.
+    expect(document.body.textContent).toContain('aqua-konosuba')
+    unmount()
+
+    // Not in the ordinary mode: there the filename on the tile is already the
+    // reason, and a second label would only repeat it.
+    render(<MediaTile item={filed} onOpen={() => {}} showBoxes={false} size={DEFAULT_TILE_SIZE} />)
+    expect(document.body.textContent).not.toContain('aqua-konosuba')
+  })
+
+  it('shows the readable path, never the extended-length form', () => {
+    render(
+      <MediaTile
+        item={filed}
+        onOpen={() => {}}
+        showBoxes={false}
+        size={DEFAULT_TILE_SIZE}
+        folderTerm="jebpot"
+      />,
+    )
+    // The extended-length prefix spends the few characters there is room for
+    // on nothing anybody can read.
+    expect(document.body.textContent).not.toContain(String.raw`\\?\UNC`)
+    expect(document.body.textContent).toContain('jebpot')
+  })
+
+  it('stays silent on a row whose own path does not carry the term', () => {
+    // A variant stands in for an original filed elsewhere, so this is normal.
+    render(
+      <MediaTile
+        item={filed}
+        onOpen={() => {}}
+        showBoxes={false}
+        size={DEFAULT_TILE_SIZE}
+        folderTerm="moona"
+      />,
+    )
+    expect(document.body.textContent).not.toContain('konosuba')
   })
 })

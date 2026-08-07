@@ -30,6 +30,14 @@ interface MediaGridProps {
   tileSize: number
   /** Ids drawn as picked. Empty when the grid is not selecting. */
   selected: ReadonlySet<number>
+  /**
+   * The search term, when it is aimed at folder paths.
+   *
+   * Passed down so each tile can show the part of its folder that matched.
+   * Empty in the ordinary search mode, where the filename already on the tile
+   * is the reason the row is here and a second label would only repeat it.
+   */
+  folderTerm: string
 }
 
 /**
@@ -84,6 +92,7 @@ export function MediaGrid({
   groupDuplicates,
   tileSize,
   selected,
+  folderTerm,
 }: MediaGridProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const reachEndRef = useRef(onReachEnd)
@@ -158,6 +167,7 @@ export function MediaGrid({
                     showBoxes={showBoxes}
                     size={tileSize}
                     selected={selected.has(item.id)}
+                    folderTerm={folderTerm}
                   />
                 ))}
               </div>
@@ -174,6 +184,7 @@ export function MediaGrid({
               showBoxes={showBoxes}
               size={tileSize}
               selected={selected.has(item.id)}
+              folderTerm={folderTerm}
             />
           ))}
         </div>

@@ -12,6 +12,7 @@
  * wrong guess costs a keystroke, not a bad post.
  */
 
+import { effectiveRating } from './classify.ts'
 import { LABEL_WEIGHTS, isRatedLabel, type RatedLabel } from './labels.ts'
 import type { Generation, MediaItem, Rating } from './schemas.ts'
 
@@ -521,7 +522,12 @@ export interface DraftOptions {
  * correct, so the panel says so rather than hiding it.
  */
 export function describeForDeviantArt(item: MediaItem, options: DraftOptions = {}): DeviantArtDraft {
-  const rating: Rating = item.verdict?.rating ?? 'unrated'
+  // The effective rating, so a correction reaches the mature flags. This is
+  // the one consumer where reading the model's verdict directly would be worse
+  // than a cosmetic bug: a picture someone corrected to SFW would still go up
+  // flagged mature, and the whole point of correcting a false positive is that
+  // the picture is not what the detector called it.
+  const rating: Rating = effectiveRating(item)
   const topLabel = item.verdict?.topLabel ?? null
 
   const title =

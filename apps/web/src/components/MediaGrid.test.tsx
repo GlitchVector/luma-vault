@@ -69,6 +69,7 @@ function makeItem(id: number): MediaItem {
     upscaledFrom: null,
     upscaledTo: null,
     deviantArt: null,
+    ratingOverride: null,
   }
 }
 
@@ -85,6 +86,7 @@ function renderGrid(items: MediaItem[], onReachEnd: () => void) {
       groupDuplicates={false}
       tileSize={200}
       selected={new Set()}
+      folderTerm=""
     />,
   )
 }
@@ -129,6 +131,7 @@ describe('asking for the next page', () => {
         groupDuplicates={false}
         tileSize={200}
         selected={new Set()}
+        folderTerm=""
       />,
     )
 
@@ -153,6 +156,7 @@ describe('asking for the next page', () => {
         groupDuplicates={false}
         tileSize={200}
         selected={new Set()}
+        folderTerm=""
       />,
     )
 
