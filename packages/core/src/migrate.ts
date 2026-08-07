@@ -252,6 +252,126 @@ const NEGATIVE_CONFLICTS: ReadonlyArray<{ wants: string[]; suppressedBy: string[
   },
 ]
 
+/**
+ * Tags describing a side of the body the framing has turned away from.
+ *
+ * A prompt is a set of simultaneous claims, not a priority list. Ask for
+ * `from behind` while `cleavage, huge nipples, topless, navel` are still in the
+ * prompt and the model does not draw a back view missing those details — it
+ * satisfies the larger, louder group and **turns her back around**, so the one
+ * tag that was the whole point of the shot is the one that loses. No error, no
+ * warning, and a set of "different angles" that are all the same angle.
+ *
+ * This is the reason a tab-per-shot run cannot simply reuse one prompt: the
+ * framing decides which claims are still possible, and the impossible ones have
+ * to go rather than be outvoted.
+ */
+const FACING_CONFLICTS: ReadonlyArray<{ framing: string[]; hides: string[] }> = [
+  {
+    framing: ['from behind', 'ass focus', 'back focus'],
+    hides: [
+      'cleavage',
+      'nipples',
+      'huge nipples',
+      'large nipples',
+      'puffy nipples',
+      'inverted nipples',
+      'nipple slip',
+      'areolae',
+      'large areolae',
+      'navel',
+      'stomach',
+      'collarbone',
+      'underboob',
+      'between breasts',
+      'breast focus',
+      'bare breasts',
+      'naked breasts',
+      'breasts out',
+      'topless',
+      'cameltoe',
+    ],
+  },
+]
+
+/**
+ * Whether a prompt carries a tag, as a tag rather than as a substring.
+ *
+ * `ass` is inside `glass` and `bass`; `from behind` is not inside anything, but
+ * the check has to be the same one either way or the table's behaviour depends
+ * on which entry you are reading.
+ */
+function hasTag(text: string, tag: string): boolean {
+  return new RegExp(`(^|[^a-z])${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z]|$)`, 'i').test(
+    text,
+  )
+}
+
+/**
+ * The tags that turn the subject around, and what they have to be weighted to.
+ *
+ * Bare, they lose. Suppressing the front-only tags is necessary but not
+ * sufficient: what remains — `(huge breasts:1.7)`, `(wide hips:1.8)` — is still
+ * a front-facing description as far as the model's learned distribution is
+ * concerned, and two unweighted framing tags do not outrank it. 1.5 is the
+ * value measured to hold against body tags in that range; the wide rungs need
+ * 1.3 against the same pressure and this is the harder ask, because it is
+ * fighting what the *body* implies rather than only where the camera sits.
+ */
+const FACING_TAGS = ['from behind', 'ass focus', 'back focus']
+const FACING_WEIGHT = '1.5'
+
+/**
+ * Make a framing win: drop what it faces away from, and weight what turns the
+ * subject around.
+ *
+ * Both halves address the same failure — a framing tag outvoted by everything
+ * else in the prompt — and doing only one leaves it happening. Names everything
+ * it changed, because silently deleting or reweighting a tag someone chose is
+ * its own kind of wrong.
+ */
+export function enforceFraming(prompt: string): {
+  text: string
+  removed: string[]
+  weighted: string[]
+} {
+  const hidden = new Set<string>()
+  for (const { framing, hides } of FACING_CONFLICTS) {
+    if (!framing.some((tag) => hasTag(prompt, tag))) continue
+    for (const term of hides) hidden.add(term)
+  }
+  // `looking at viewer` is only a contradiction when nothing says she is looking
+  // over her shoulder. `from behind, looking back, looking at viewer` is one of
+  // the most common framings there is, and dropping the gaze from it would
+  // leave her facing away for no reason.
+  if (hasTag(prompt, 'from behind') && !hasTag(prompt, 'looking back')) {
+    hidden.add('looking at viewer')
+  }
+
+  const cleared = hidden.size > 0 ? dropTermsByLine(prompt, [...hidden]) : { text: prompt, removed: [] }
+  return { ...cleared, ...weightFacing(cleared.text) }
+}
+
+/** The weighting half of `enforceFraming`. */
+function weightFacing(text: string): { text: string; weighted: string[] } {
+  // Already weighted by hand somewhere — the author has an opinion about this
+  // exact thing, and a second one layered on top would fight it.
+  if (/\([^)]*(?:from behind|ass focus|back focus)[^)]*:\s*[\d.]+\s*\)/i.test(text)) {
+    return { text, weighted: [] }
+  }
+  const present = FACING_TAGS.filter((tag) => hasTag(text, tag))
+  if (present.length === 0) return { text, weighted: [] }
+  const dropped = dropTermsByLine(text, present)
+  // One group rather than a weight each: it is a single instruction about which
+  // way she is facing, and it goes to the front of the prompt for the same
+  // reason a reframe does — that is where weight is worth most.
+  const group = `(${present.join(', ')}:${FACING_WEIGHT})`
+  return {
+    text: dropped.text ? `${group},\n${dropped.text}` : group,
+    weighted: present,
+  }
+}
+
 /** What booru-trained SDXL models expect at the front of a prompt. */
 const XL_QUALITY = 'masterpiece, best quality, amazing quality, very aesthetic, absurdres'
 
@@ -918,6 +1038,27 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       notes.push(
         'Prompt replaced with the edited one. The rewrites above still ran — their output is what ' +
           'was shown for editing — but the text they produced is superseded by this.',
+      )
+    }
+  }
+
+  // Claims the framing has turned away from — see FACING_CONFLICTS. After the
+  // override, because an edited prompt can reintroduce them, and because the
+  // framing that decides this may itself have arrived in that edit.
+  {
+    const framed = enforceFraming(nextPrompt)
+    nextPrompt = framed.text
+    if (framed.removed.length > 0) {
+      notes.push(
+        `Dropped ${[...new Set(framed.removed)].join(', ')} — the framing faces away from them. ` +
+          'Left in, they outvote the framing and the model turns the subject back around.',
+      )
+    }
+    if (framed.weighted.length > 0) {
+      notes.push(
+        `Weighted the framing to (${framed.weighted.join(', ')}:${FACING_WEIGHT}) and moved it to ` +
+          'the front. Bare, it loses to the body tags, which describe a front view whatever the ' +
+          'camera was told.',
       )
     }
   }

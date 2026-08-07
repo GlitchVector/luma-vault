@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { facePrompt, migrateGeneration } from './migrate.ts'
+import { facePrompt, migrateGeneration, enforceFraming } from './migrate.ts'
 
 /**
  * These pin the three failures the migration exists to prevent, all of which
@@ -561,6 +561,118 @@ describe('migrateGeneration, the last look', () => {
     const prompt = proposed.block.split('\nNegative prompt:')[0]!
     const { notes } = migrateGeneration(BLOCK, { ...TO_XL, prompt })
     expect(notes.some((note) => note.includes('superseded'))).toBe(false)
+  })
+})
+
+describe('enforceFraming', () => {
+  it('drops front-only anatomy when the framing faces away', () => {
+    const { text, removed } = enforceFraming(
+      'cowboy shot, from behind, ass focus, looking back\nBREAK\n' +
+        '1girl, huge breasts, huge nipples, cleavage, navel, collarbone, (topless:1.2), wide hips',
+    )
+    for (const gone of ['huge nipples', 'cleavage', 'navel', 'collarbone', 'topless']) {
+      expect(text).not.toContain(gone)
+      expect(removed).toContain(gone)
+    }
+    // Not everything about the chest is front-only — from behind, size still
+    // reads as silhouette.
+    expect(text).toContain('huge breasts')
+    expect(text).toContain('wide hips')
+  })
+
+  it('leaves a front-facing prompt entirely alone', () => {
+    const prompt = '1girl, cowboy shot, looking at viewer, huge nipples, cleavage, navel, topless'
+    expect(enforceFraming(prompt)).toEqual({ text: prompt, removed: [], weighted: [] })
+  })
+
+  it('keeps the BREAK structure it edits through', () => {
+    const { text } = enforceFraming(
+      'from behind, ass focus\nBREAK\n1girl, cleavage, pink hair\nBREAK\noutdoors, navel, city',
+    )
+    expect(text.split('BREAK')).toHaveLength(3)
+    expect(text).toContain('pink hair')
+    expect(text).toContain('city')
+  })
+
+  // `from behind, looking back, looking at viewer` is one of the most common
+  // framings there is — dropping the gaze from it faces her away for no reason.
+  it('keeps looking at viewer when she is looking back, and drops it when she is not', () => {
+    const withBack = enforceFraming('from behind, looking back, looking at viewer, 1girl')
+    expect(withBack.text).toContain('looking at viewer')
+
+    const without = enforceFraming('from behind, ass focus, looking at viewer, 1girl')
+    expect(without.text).not.toContain('looking at viewer')
+    expect(without.removed).toContain('looking at viewer')
+  })
+
+  it('matches tags, not substrings', () => {
+    // `ass` lives inside `glass`; a substring check would fire on the window.
+    const { removed, weighted } = enforceFraming('1girl, stained glass, cleavage, bass guitar')
+    expect(removed).toHaveLength(0)
+    expect(weighted).toHaveLength(0)
+  })
+
+  // Suppressing the front-only tags is necessary but not sufficient: what is
+  // left still describes a front view as far as the model is concerned, and two
+  // bare framing tags do not outrank `(huge breasts:1.7), (wide hips:1.8)`.
+  it('weights the facing tags into one group at the front', () => {
+    const { text, weighted } = enforceFraming(
+      'cowboy shot, from behind, ass focus, looking back\nBREAK\n1girl, (huge breasts:1.7)',
+    )
+    expect(text.startsWith('(from behind, ass focus:1.5),')).toBe(true)
+    expect(weighted).toEqual(['from behind', 'ass focus'])
+    // Moved, not copied — two of the same instruction would fight.
+    expect(text.match(/from behind/g)).toHaveLength(1)
+    expect(text.match(/ass focus/g)).toHaveLength(1)
+    // Everything else keeps its place.
+    expect(text).toContain('cowboy shot')
+    expect(text).toContain('looking back')
+    expect(text).toContain('(huge breasts:1.7)')
+  })
+
+  it('leaves a hand-weighted framing alone', () => {
+    const prompt = 'cowboy shot, (from behind, ass focus:1.8), looking back\nBREAK\n1girl'
+    const { text, weighted } = enforceFraming(prompt)
+    expect(text).toBe(prompt)
+    expect(weighted).toHaveLength(0)
+  })
+
+  it('weights only the facing tags that are actually there', () => {
+    const { text, weighted } = enforceFraming('upper body, from behind, looking back\nBREAK\n1girl')
+    expect(text.startsWith('(from behind:1.5),')).toBe(true)
+    expect(weighted).toEqual(['from behind'])
+  })
+
+  it('does not weight a front-facing prompt', () => {
+    const prompt = 'cowboy shot, looking at viewer\nBREAK\n1girl, cleavage'
+    expect(enforceFraming(prompt)).toEqual({ text: prompt, removed: [], weighted: [] })
+  })
+})
+
+describe('migrateGeneration, a framing that faces away', () => {
+  it('clears the front-only tags the reframe made impossible, and says so', () => {
+    const { block, notes } = migrateGeneration(
+      'a girl, huge nipples, cleavage, navel, wide hips\nSteps: 20, Size: 512x768, Model: x',
+      { ...TO_XL, shot: 'cowboy shot', add: 'from behind, ass focus, looking back' },
+    )
+    const prompt = block.split('\nNegative prompt:')[0]!
+    expect(prompt).not.toContain('cleavage')
+    expect(prompt).not.toContain('huge nipples')
+    expect(prompt).toContain('wide hips')
+    expect(notes.some((note) => note.includes('faces away'))).toBe(true)
+  })
+
+  // The framing can arrive in the edit itself, which is why this runs after the
+  // override rather than beside the reframe.
+  it('applies to an edited prompt too', () => {
+    const { block } = migrateGeneration('a girl\nSteps: 20, Size: 512x768, Model: x', {
+      ...TO_XL,
+      prompt: 'cowboy shot, from behind, ass focus, looking back, 1girl, cleavage, huge nipples',
+    })
+    const prompt = block.split('\nNegative prompt:')[0]!
+    expect(prompt).not.toContain('cleavage')
+    expect(prompt).not.toContain('huge nipples')
+    expect(prompt).toContain('ass focus')
   })
 })
 

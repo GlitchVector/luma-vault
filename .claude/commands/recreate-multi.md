@@ -45,14 +45,17 @@ opening zero tabs in silence.
 
 ## 3. One run per shot
 
-**Four tabs at a time, ten seconds apart, then stop.** Open a batch of at most
-four, hand back to the user to render and close them, and only then open the
-next four. Say which batch this is and how many shots remain.
+**One tab at a time, each only after the previous one has finished loading.**
+Not on a timer. `.claude/shot-tags.md` has the measurements under "Opening the
+tabs"; the short version is that a Forge page's load handler runs on Gradio's
+queue, which drains one event at a time — so a fixed `sleep` is guessing about a
+queue it cannot see, and twelve tabs wedged identically at five seconds and at
+ten. Wait for the handler to log `Environment vars changed`, and stop rather
+than stack another tab behind a stuck one.
 
-`.claude/shot-tags.md` has the measurements under "Opening the tabs". The short
-version: twelve concurrent tabs wedge, the server is fine throughout, and the
-limit is how many sessions are *alive at once* — not how fast they are opened.
-Opening the whole set more slowly was tried twice and does not work.
+**Never open tabs while Forge is generating.** Renders hold that same queue.
+Check `/sdapi/v1/progress` first — a non-zero `job_count` means every tab you
+open now will sit on "Loading…".
 
 ```bash
 pnpm open-in-forge --model <m> --prompt "<per-shot>" --negative "<per-shot>" \
@@ -71,7 +74,17 @@ Per shot, exactly two things move:
   mistake in the other direction.
 
 Chunks 2, 3 and 4 are the text step 4 approved, byte for byte, in every tab.
-That is what makes the set a set.
+That is what makes the set a set — with one exception, below.
+
+**A back-facing tab loses its front-only tags, and gets its framing weighted.**
+`from behind` beside `cleavage, huge nipples, topless, navel` renders a *front*
+view: the framing is outvoted and the tab is wasted. Clearing them is only half
+of it — what remains still describes a front view, so the facing tags are
+weighted to `(from behind, ass focus:1.5)` and moved to the front. `open-in-forge` does
+both for you and reports what it changed, so you do not have to hand-edit each
+tab — but say what went in the report, because the user chose those tags and
+is entitled to know they are not in that render.
+
 
 `--adetailer-prompt` also does not vary: it is identity tags — character, hair,
 eyes, expression — and none of those are framing. Compose it once and pass the

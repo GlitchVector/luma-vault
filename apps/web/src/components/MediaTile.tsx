@@ -126,6 +126,9 @@ export const MediaTile = memo(function MediaTile({
   // The source's own size, never the thumbnail's — the badge is a claim about
   // the file, and every thumbnail in the library is 512px.
   const fourK = isFourK(item.width, item.height)
+  // Clamped rather than trusted: `stars` is a nullable number on the wire, and
+  // `'★'.repeat(n)` throws on a negative and hangs the tile on a large one.
+  const stars = Math.min(5, Math.max(0, Math.round(item.stars ?? 0)))
 
   return (
     <button
@@ -169,21 +172,54 @@ export const MediaTile = memo(function MediaTile({
             />
           ) : null}
 
-          {/* Bottom-left, and only as wide as it needs to be: the picture is
-              what the grid is for, and a full-width bar over every tile at
-              once would cost more of it than the answer is worth. The matched
-              run is picked out inside the surrounding path, because the path
-              is context and the match is the point. */}
-          {folderHit ? (
-            <span
-              className="pointer-events-none absolute bottom-1 left-1 max-w-[calc(100%-0.5rem)] truncate rounded bg-black/75 px-1.5 py-0.5 font-mono text-[10px] leading-none text-zinc-300"
-              title={displayPath(item.path)}
-            >
-              {folderHit.text.slice(0, folderHit.from)}
-              <span className="rounded-sm bg-indigo-500/40 text-indigo-100">
-                {folderHit.text.slice(folderHit.from, folderHit.to)}
-              </span>
-              {folderHit.text.slice(folderHit.to)}
+          {/* Bottom-left, stacked, and each part only as wide as it needs to
+              be: the picture is what the grid is for, and a full-width bar
+              over every tile at once would cost more of it than the answers
+              are worth. Stacked rather than side by side because the folder
+              path truncates to the tile width and would leave the score no
+              room at all. */}
+          {folderHit || stars ? (
+            <span className="pointer-events-none absolute bottom-1 left-1 flex max-w-[calc(100%-0.5rem)] flex-col items-start gap-1">
+              {/* The matched run is picked out inside the surrounding path,
+                  because the path is context and the match is the point. */}
+              {folderHit ? (
+                <span
+                  className="max-w-full truncate rounded bg-black/75 px-1.5 py-0.5 font-mono text-[10px] leading-none text-zinc-300"
+                  title={displayPath(item.path)}
+                >
+                  {folderHit.text.slice(0, folderHit.from)}
+                  <span className="rounded-sm bg-indigo-500/40 text-indigo-100">
+                    {folderHit.text.slice(folderHit.from, folderHit.to)}
+                  </span>
+                  {folderHit.text.slice(folderHit.to)}
+                </span>
+              ) : null}
+
+              {/* The score. Filled stars only, and nothing at all when unrated:
+                  drawing the empty ones would make it a widget on every tile in
+                  the grid, where what is wanted is a glance. A shadow rather
+                  than the black pill the other badges wear — the pill is what
+                  makes them read as badges, and this one should sit under the
+                  picture rather than on top of it. Indented past the selection
+                  tick, which shares this corner. */}
+              {stars > 0 ? (
+                <span
+                  className={cn(
+                    // 13px against the badges' 10px, which is not the
+                    // inconsistency it looks like: a star glyph carries far
+                    // less ink than a latin glyph at the same size, so matching
+                    // the number would leave it visibly smaller than everything
+                    // around it.
+                    'text-[13px] leading-none tracking-tight text-amber-300/85',
+                    '[text-shadow:0_1px_2px_rgb(0_0_0/0.95)]',
+                    selected && 'ml-5',
+                  )}
+                  aria-label={`${stars} of 5 stars`}
+                  title={`${stars} of 5 stars`}
+                >
+                  {'★'.repeat(stars)}
+                </span>
+              ) : null}
             </span>
           ) : null}
 
