@@ -53,6 +53,7 @@ export {
   basenameOf,
   dirnameOf,
   displayPath,
+  folderMatch,
   hasRecycleBin,
   toParameterBlock,
   kindOf,

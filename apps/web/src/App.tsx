@@ -967,6 +967,7 @@ export function App() {
                       groupDuplicates={query.duplicatesOnly}
                       tileSize={tileSize}
                       selected={selected}
+                      folderTerm={query.searchPaths ? query.search : ''}
                     />
                   )}
                 </div>

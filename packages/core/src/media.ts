@@ -113,6 +113,67 @@ export function displayPath(path: string): string {
   return path
 }
 
+/** Roughly how much of the folder path a tile's overlay can show. */
+const MATCH_WINDOW = 34
+
+/**
+ * The stretch of a file's folder path around what a search matched.
+ *
+ * For the grid, in folder-search mode. A tile shows a picture and its filename;
+ * neither says *why* it is in these results, and the whole point of a folder
+ * search is that the answer is somewhere in a path long enough that showing all
+ * of it would be unreadable. So this returns the part worth reading — the
+ * matched run with enough either side to place it — and marks where the match
+ * begins and ends so the caller can pick it out.
+ *
+ * Matching is case-insensitive and on the directory only, exactly as the index
+ * does it: the filename is what the ordinary search covers, and highlighting a
+ * hit there would claim the folder matched when it did not.
+ *
+ * `null` when nothing matches, which is normal rather than exceptional — an
+ * upscaled variant stands in for an original filed elsewhere, so a row in the
+ * results may genuinely not carry the term in its own path.
+ */
+export function folderMatch(
+  path: string,
+  term: string,
+): { text: string; from: number; to: number } | null {
+  const needle = term.trim().toLowerCase()
+  if (!needle) return null
+
+  const readable = displayPath(path)
+  const directory = dirnameOf(readable)
+  if (!directory) return null
+
+  // Every whitespace-separated word has to appear — the index ANDs them — but
+  // the window is drawn around the *first* one found, because a window around
+  // all of them is the whole path again on anything but a lucky ordering.
+  const words = needle.split(/\s+/).filter(Boolean)
+  const haystack = directory.toLowerCase()
+  if (!words.every((word) => haystack.includes(word))) return null
+
+  const hit = words
+    .map((word) => ({ at: haystack.indexOf(word), length: word.length }))
+    .filter((found) => found.at >= 0)
+    .sort((a, b) => a.at - b.at)[0]
+  if (!hit) return null
+
+  // Centred on the match, then clamped — so a hit near either end spends its
+  // whole budget on the side that actually has path to show.
+  const slack = Math.max(0, MATCH_WINDOW - hit.length)
+  let start = Math.max(0, hit.at - Math.floor(slack / 2))
+  let end = Math.min(directory.length, start + hit.length + slack)
+  start = Math.max(0, Math.min(start, end - hit.length - slack))
+
+  const head = start > 0 ? '…' : ''
+  const tail = end < directory.length ? '…' : ''
+  return {
+    text: `${head}${directory.slice(start, end)}${tail}`,
+    from: head.length + (hit.at - start),
+    to: head.length + (hit.at - start) + hit.length,
+  }
+}
+
 /**
  * Whether deleting this file could put it in a Recycle Bin.
  *
