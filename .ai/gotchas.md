@@ -337,6 +337,31 @@ marker onto the request queue, so with eight worker threads a stop unblocks one
 and the other seven sit in `recv` forever — holding the listener, and hanging any
 join that waits for them. `Sharing::stop` calls it once per worker.
 
+**A panic in a worker used to kill the whole shared library, silently.** The
+worker loop is `for request in server.incoming_requests()`, so an unwind retires
+that thread for good — and there are eight. The listener lives in `Running`, not
+in the workers, so after the last one has gone the port is *still bound* and
+connections are *still accepted*; nothing ever answers them. On the browsing
+machine that reads as a grid frozen mid-session: the rows it has stay, filter
+changes do nothing, and there is no error anywhere at either end. `answer` is
+wrapped in `catch_unwind` for this reason, and a test fires more panics than
+there are workers and then asks an ordinary question.
+
+**One panic used to be enough**, because `Db.conn` is a `Mutex` and a panic
+while holding it poisons the lock — after which every `lock()` panics, so all
+eight workers fall in a row. `Db::connection()` takes the guard back out of a
+poisoned lock rather than propagating. Sound here specifically: it guards a
+SQLite connection, an unfinished transaction rolls back when the guard drops,
+and this index is a rebuildable cache.
+
+**Every remote call needs its own timeout, and the client has no read timeout on
+purpose** — it also carries the upscale, which runs for minutes. So `Session::
+call` sets a per-request limit: `CALL_TIMEOUT` for ordinary operations, and a
+much larger one for the handful in `SLOW_OPERATIONS`. Without it, a peer that
+accepts a connection and never answers leaves the future pending for ever, and
+every later query queues behind it — a frozen window with an empty log. Add new
+long-running operations to that list or they will be cut off at 25 seconds.
+
 **A wildcard-bound server does not shut down on Windows without a knock.**
 tiny_http's `Drop` wakes its accept thread by connecting to the listener's own
 local address, which for a `0.0.0.0` bind *is* `0.0.0.0` — an address Windows

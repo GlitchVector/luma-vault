@@ -32,6 +32,30 @@ pub struct Db {
 }
 
 impl Db {
+    /// The index connection, taken even if a previous holder panicked.
+    ///
+    /// `Mutex::lock` returns `Err` **forever** once any thread has panicked
+    /// while holding it, so unwrapping that turns one failure into a permanent
+    /// one — every later call panics too, whatever it was going to do.
+    ///
+    /// On the LAN server that is fatal and completely silent. Its eight worker
+    /// threads take a request each, panic on the poisoned lock, and unwind out
+    /// of their accept loop one at a time until none are left. The listener
+    /// stays bound — `Running` still holds it — so the other machine's
+    /// connections are still accepted, and then nothing ever answers them. The
+    /// grid over there simply stops updating, with no error anywhere.
+    ///
+    /// Recovering is sound *here* specifically, and not as a general habit: the
+    /// guarded value is a SQLite connection, an unfinished transaction rolls
+    /// itself back when its guard drops, and this whole index is a rebuildable
+    /// cache of the filesystem rather than anything anyone would mourn. A
+    /// poisoned connection is still a connection.
+    fn connection(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -58,7 +82,7 @@ impl Db {
     fn migrate(&self) -> Result<()> {
         // `mut` for the one backfill below that needs a transaction: 155,000
         // single-statement updates in autocommit would each be their own fsync.
-        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let mut conn = self.connection();
 
         // WAL so a long classification transaction never blocks the grid's
         // reads; NORMAL synchronous because this is a rebuildable cache and
@@ -731,7 +755,7 @@ impl Db {
     // -----------------------------------------------------------------------
 
     pub fn add_folder(&self, path: &str, now: i64) -> Result<i64> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             "INSERT INTO folders (path, added_at) VALUES (?1, ?2)
              ON CONFLICT(path) DO NOTHING",
@@ -746,7 +770,7 @@ impl Db {
     }
 
     pub fn remove_folder(&self, id: i64) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         // ON DELETE CASCADE clears media and frames. Generated thumbnails are
         // left behind deliberately: they are content-addressed, so re-adding
         // the same folder reuses them instead of regenerating thousands of
@@ -756,7 +780,7 @@ impl Db {
     }
 
     pub fn list_folders(&self) -> Result<Vec<Folder>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare(
             "SELECT f.id, f.path, f.added_at, f.last_scan_at,
                     (SELECT COUNT(*) FROM media m WHERE m.folder_id = f.id)
@@ -780,7 +804,7 @@ impl Db {
     /// Absolute paths of every watched folder — the allowlist the `luma://`
     /// protocol handler checks before reading a file off disk.
     pub fn folder_paths(&self) -> Result<Vec<PathBuf>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare("SELECT path FROM folders")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         Ok(rows
@@ -791,7 +815,7 @@ impl Db {
     }
 
     pub fn mark_scanned(&self, folder_id: i64, now: i64) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             "UPDATE folders SET last_scan_at = ?2 WHERE id = ?1",
             params![folder_id, now],
@@ -835,7 +859,7 @@ impl Db {
     /// every rescan would blow away thumbnails and verdicts for an entire
     /// library because someone's backup tool rewrote the timestamps.
     pub fn insert_media_batch(&self, folder_id: i64, entries: &[ScannedFile], now: i64) -> Result<usize> {
-        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let mut conn = self.connection();
         let tx = conn.transaction()?;
         let mut inserted = 0_usize;
         {
@@ -940,7 +964,7 @@ impl Db {
 
     /// Rows in a folder whose file no longer exists, so the watcher can drop them.
     pub fn delete_media_by_path(&self, path: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute("DELETE FROM media WHERE path = ?1", params![path])?;
         Ok(())
     }
@@ -951,7 +975,7 @@ impl Db {
     /// the scan already computed, so hashing poster frames would be work with
     /// no question behind it.
     pub fn pending_hashes(&self, limit: i64) -> Result<Vec<PendingFile>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare(
             "SELECT id, path, kind, thumb_path, content_key FROM media
              WHERE (phash IS NULL OR colour_sig IS NULL)
@@ -974,7 +998,7 @@ impl Db {
     /// Stored as a signed integer because SQLite has no unsigned type. The bit
     /// pattern round-trips exactly, which is all the Hamming distance needs.
     pub fn set_fingerprint(&self, id: i64, hash: u64, colour: &[u8]) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             // Chroma alongside them rather than in a pass of its own: it is a
             // reduction of the signature being written on this very line, so
@@ -986,7 +1010,7 @@ impl Db {
     }
 
     pub fn all_fingerprints(&self) -> Result<Vec<(i64, u64, Vec<u8>)>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare(
             "SELECT id, phash, colour_sig FROM media
              WHERE phash IS NOT NULL AND colour_sig IS NOT NULL AND error IS NULL",
@@ -1009,7 +1033,7 @@ impl Db {
     /// videos can share, and it costs nothing because the scan already
     /// computed it.
     pub fn video_duplicates(&self) -> Result<Vec<(i64, i64)>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare(
             "SELECT MIN(id) OVER (PARTITION BY content_key), id FROM media
              WHERE kind = 'video' AND content_key IS NOT NULL AND error IS NULL
@@ -1028,7 +1052,7 @@ impl Db {
     /// Cleared first, so a row that stopped having a twin — because the other
     /// copy was deleted, or excluded — stops being shown as one.
     pub fn set_duplicate_groups(&self, pairs: &[(i64, i64)]) -> Result<()> {
-        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let mut conn = self.connection();
         let tx = conn.transaction()?;
         tx.execute("UPDATE media SET dupe_group = NULL WHERE dupe_group IS NOT NULL", [])?;
         {
@@ -1043,7 +1067,7 @@ impl Db {
 
     /// Folders the scanner must walk straight past, newest first.
     pub fn excluded_folders(&self) -> Result<Vec<String>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt =
             conn.prepare("SELECT path FROM excluded_folders ORDER BY added_at DESC")?;
         let rows = stmt.query_map([], |row| row.get(0))?;
@@ -1051,7 +1075,7 @@ impl Db {
     }
 
     pub fn add_excluded_folder(&self, path: &str, now: i64) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             "INSERT INTO excluded_folders (path, added_at) VALUES (?1, ?2)
              ON CONFLICT(path) DO NOTHING",
@@ -1061,7 +1085,7 @@ impl Db {
     }
 
     pub fn remove_excluded_folder(&self, path: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute("DELETE FROM excluded_folders WHERE path = ?1", params![path])?;
         Ok(())
     }
@@ -1076,7 +1100,7 @@ impl Db {
     /// were the last owner of — a key shared with a file elsewhere must keep
     /// its derived data, which is why this cannot just delete by row.
     pub fn delete_media_under(&self, prefix: &str) -> Result<Vec<String>> {
-        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let mut conn = self.connection();
         let tx = conn.transaction()?;
         let keys: Vec<String> = {
             let mut stmt = tx.prepare(
@@ -1115,7 +1139,7 @@ impl Db {
     where
         F: Fn(&str) -> bool,
     {
-        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let mut conn = self.connection();
         let tx = conn.transaction()?;
 
         let doomed: Vec<(String, Option<String>)> = {
@@ -1155,7 +1179,7 @@ impl Db {
 
     /// Whether any row still uses this content key. See [`Db::delete_media_under`].
     pub fn content_key_is_orphaned(&self, key: &str) -> Result<bool> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         Ok(conn.query_row(
             "SELECT COUNT(*) FROM media WHERE content_key = ?1",
             params![key],
@@ -1164,7 +1188,7 @@ impl Db {
     }
 
     pub fn media_paths_in_folder(&self, folder_id: i64) -> Result<Vec<String>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare("SELECT path FROM media WHERE folder_id = ?1")?;
         let rows = stmt.query_map(params![folder_id], |row| row.get(0))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -1178,7 +1202,7 @@ impl Db {
     /// first version did — leaves `thumb_path` NULL and spins forever on the
     /// first unreadable file. Anything that gives up on a row must set `error`.
     pub fn pending_thumbnails(&self, limit: i64) -> Result<Vec<PendingFile>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         // Images first, then videos — the `kind = 'video'` sort key.
         //
         // One image thumbnail takes a fraction of a second; one video takes an
@@ -1219,7 +1243,7 @@ impl Db {
     /// fills in first — the part of the library you are actually looking at
     /// while a big scan runs.
     pub fn pending_classification(&self, limit: i64) -> Result<Vec<PendingFile>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         // Images first here too: an image is one classifier call, a video is 25.
         let mut stmt = conn.prepare(
             "SELECT id, path, kind, thumb_path, content_key FROM media
@@ -1249,12 +1273,12 @@ impl Db {
     /// Stored in SQLite's own `user_version` rather than a settings table: it
     /// is one integer, it needs no schema, and it travels with the file.
     pub fn rating_version(&self) -> Result<i64> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
     }
 
     pub fn set_rating_version(&self, version: i64) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         // PRAGMA will not take a bound parameter.
         conn.execute_batch(&format!("PRAGMA user_version = {version}"))?;
         Ok(())
@@ -1266,7 +1290,7 @@ impl Db {
     /// be re-rated without running the model again, so they are left alone and
     /// keep whatever verdict they have.
     pub fn rows_with_frames(&self) -> Result<Vec<PendingFile>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare(
             "SELECT m.id, m.path, m.kind, m.thumb_path, m.content_key FROM media m
              WHERE m.error IS NULL
@@ -1298,7 +1322,7 @@ impl Db {
     /// was not; the queues are `IS NULL` predicates and finished rows never
     /// come back. This makes the display say what the index already knows.
     pub fn completed_in_phase(&self, phase: PhaseQueue) -> Result<i64> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let sql = match phase {
             PhaseQueue::Dimensions => {
                 "SELECT COUNT(*) FROM media WHERE width > 0 AND content_key IS NOT NULL"
@@ -1336,7 +1360,7 @@ impl Db {
     /// Newest first, matching every other queue — the part of the library on
     /// screen settles first.
     pub fn pending_anime(&self, limit: i64) -> Result<Vec<PendingFile>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare(
             "SELECT id, path, kind, thumb_path, content_key FROM media
              WHERE anime_at IS NULL
@@ -1369,7 +1393,7 @@ impl Db {
     }
 
     pub fn setting(&self, key: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         Ok(conn
             .query_row(
                 "SELECT value FROM settings WHERE key = ?1",
@@ -1380,7 +1404,7 @@ impl Db {
     }
 
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -1395,7 +1419,7 @@ impl Db {
     /// the JSON, so searching for a prompt cannot also match a model hash or a
     /// seed that happens to contain the same digits.
     pub fn set_generation(&self, id: i64, generation: Option<&Generation>) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
 
         // The Extras era wrote no distinguishing metadata — old A1111 copied
         // the ORIGINAL's block into the upscale — so the path is the signal.
@@ -1459,7 +1483,7 @@ impl Db {
         query: &MediaQuery,
         limit: i64,
     ) -> Result<Vec<crate::types::CharacterCount>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         // The same predicates the grid runs, range included -- the leaderboard
         // describes what is on screen, and a filter added to one and not the
         // other breaks that silently. Same argument as the timeline, except
@@ -1491,7 +1515,7 @@ impl Db {
         let Some(key) = outputs_match_key(path) else {
             return Ok(false);
         };
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let changed = conn.execute(
             "UPDATE media SET stars = (SELECT stars FROM imported_stars WHERE match_key = ?2)
              WHERE id = ?1
@@ -1513,7 +1537,7 @@ impl Db {
         size_bytes: i64,
         modified_at: i64,
     ) -> Result<bool> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         Ok(conn
             .query_row(
                 "SELECT 1 FROM imported_databases
@@ -1533,7 +1557,7 @@ impl Db {
         staged: i64,
         now: i64,
     ) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             "INSERT INTO imported_databases (path, size_bytes, modified_at, imported_at, staged)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -1557,7 +1581,7 @@ impl Db {
         source: &str,
         now: i64,
     ) -> Result<usize> {
-        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let mut conn = self.connection();
         let tx = conn.transaction()?;
         let mut stored = 0;
         {
@@ -1583,7 +1607,7 @@ impl Db {
     /// Returns how many rows gained a rating. Runs as one statement rather
     /// than a row-by-row loop because the join is what SQLite is for.
     pub fn apply_all_imported_stars(&self) -> Result<usize> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare("SELECT id, path FROM media WHERE stars IS NULL")?;
         let rows: Vec<(i64, String)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
@@ -1607,7 +1631,7 @@ impl Db {
     /// Set or clear a row's star rating. The one place a person's judgement
     /// is written; nothing in the pipeline calls this.
     pub fn set_stars(&self, id: i64, stars: Option<i64>) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             "UPDATE media SET stars = ?2 WHERE id = ?1",
             params![id, stars.filter(|s| (1..=5).contains(s))],
@@ -1623,7 +1647,7 @@ impl Db {
     /// impossible to report on sensibly. Here it is also atomic, so a rating
     /// applied to a selection either lands on all of it or on none.
     pub fn set_stars_many(&self, ids: &[i64], stars: Option<i64>) -> Result<usize> {
-        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let mut conn = self.connection();
         let value = stars.filter(|s| (1..=5).contains(s));
         let tx = conn.transaction()?;
         let mut changed = 0;
@@ -1643,7 +1667,7 @@ impl Db {
     /// document is a document whether or not anything has rated it, and the
     /// generator metadata sits in the file itself.
     pub fn pending_labels(&self, limit: i64) -> Result<Vec<PendingFile>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare(
             "SELECT id, path, kind, thumb_path, content_key FROM media
              WHERE labelled_at IS NULL AND error IS NULL
@@ -1672,7 +1696,7 @@ impl Db {
     /// Replace rather than insert, so re-running the pass after a rule change
     /// corrects a row instead of accumulating both answers.
     pub fn set_tags(&self, id: i64, tags: &[String], now: i64) -> Result<()> {
-        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let mut conn = self.connection();
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM media_tags WHERE media_id = ?1", params![id])?;
         {
@@ -1696,7 +1720,7 @@ impl Db {
     /// Stamped even when the tagger found nothing, so a file it has no opinion
     /// about leaves the queue instead of being re-examined on every launch.
     pub fn mark_anime_done(&self, id: i64, now: i64) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute("UPDATE media SET anime_at = ?2 WHERE id = ?1", params![id, now])?;
         Ok(())
     }
@@ -1709,7 +1733,7 @@ impl Db {
     /// takes a header read per file rather than a decode, so the layout settles
     /// long before the thumbnails do.
     pub fn pending_dimensions(&self, limit: i64) -> Result<Vec<PendingFile>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         // Newest first, matching the grid's default sort: the tiles the user is
         // actually looking at stop moving first.
         let mut stmt = conn.prepare(
@@ -1748,7 +1772,7 @@ impl Db {
         duration_sec: Option<f64>,
         content_key: Option<&str>,
     ) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             // `COALESCE(content_key, ?5)`, not the other way round: the key
             // already on the row wins.
@@ -1774,7 +1798,7 @@ impl Db {
 
     /// The content key recorded for a path, if the measure phase reached it.
     pub fn content_key_for_path(&self, path: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare("SELECT content_key FROM media WHERE path = ?1")?;
         let mut rows = stmt.query(params![path])?;
         match rows.next()? {
@@ -1788,7 +1812,7 @@ impl Db {
     /// Content addressing means duplicates share one derived file, so this is
     /// what makes deleting them safe: zero means the last referent is gone.
     pub fn rows_with_content_key(&self, key: &str) -> Result<i64> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         Ok(conn.query_row(
             "SELECT COUNT(*) FROM media WHERE content_key = ?1",
             params![key],
@@ -1798,7 +1822,7 @@ impl Db {
 
     /// Swap a video's provisional poster for the frame the rollup chose.
     pub fn update_poster(&self, id: i64, thumb_path: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             "UPDATE media SET thumb_path = ?2 WHERE id = ?1",
             params![id, thumb_path],
@@ -1807,7 +1831,7 @@ impl Db {
     }
 
     pub fn update_thumbnail(&self, id: i64, update: &ThumbnailUpdate) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             "UPDATE media
              SET thumb_path = ?2, thumb_width = ?3, thumb_height = ?4,
@@ -1854,7 +1878,7 @@ impl Db {
     /// The message is kept so the UI can explain a missing tile rather than
     /// silently omitting the file.
     pub fn mark_failed(&self, id: i64, message: &str, now: i64) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             "UPDATE media
              SET error = ?2, classified_at = ?3, rating = 'unrated'
@@ -1872,7 +1896,7 @@ impl Db {
     /// unmounted share or a missing ffmpeg fails everything it touches, and
     /// after fixing that the user needs a way to say "try again".
     pub fn clear_errors(&self, folder_id: Option<i64>) -> Result<usize> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let cleared = match folder_id {
             Some(id) => conn.execute(
                 "UPDATE media SET error = NULL, classified_at = NULL
@@ -1889,7 +1913,7 @@ impl Db {
 
 
     pub fn replace_frames(&self, media_id: i64, frames: &[NewFrame]) -> Result<()> {
-        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let mut conn = self.connection();
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM media_frames WHERE media_id = ?1", params![media_id])?;
         {
@@ -1921,7 +1945,7 @@ impl Db {
     /// The detail panel's answer to "what else is in this picture" — the
     /// verdict names one label, and this is the rest of what was found.
     pub fn labels_for_media(&self, media_id: i64) -> Result<Vec<(String, f64)>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare(
             "SELECT label, score FROM media_labels WHERE media_id = ?1 ORDER BY score DESC",
         )?;
@@ -1932,7 +1956,7 @@ impl Db {
     }
 
     pub fn frames_for_media(&self, media_id: i64) -> Result<Vec<MediaFrame>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare(
             "SELECT id, media_id, frame_index, timestamp_sec, path, verdict_json
              FROM media_frames WHERE media_id = ?1 ORDER BY frame_index ASC",
@@ -1966,7 +1990,7 @@ impl Db {
     /// original behind an upscaled variant, which no list contains and so no
     /// id is to hand for.
     pub fn media_by_path(&self, path: &str) -> Result<Option<MediaItem>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let item = conn
             .query_row(
                 &format!("SELECT {MEDIA_COLUMNS} FROM media WHERE path = ?1"),
@@ -1978,7 +2002,7 @@ impl Db {
     }
 
     pub fn media_by_id(&self, id: i64) -> Result<Option<MediaItem>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let item = conn
             .query_row(
                 &format!("SELECT {MEDIA_COLUMNS} FROM media WHERE id = ?1"),
@@ -2007,7 +2031,7 @@ impl Db {
         url: Option<&str>,
         published: bool,
     ) -> Result<()> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.execute(
             "INSERT INTO deviantart_posts (path, item_id, deviation_id, url, published, posted_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -2038,7 +2062,7 @@ impl Db {
     /// wrongly. Marking by hand knows the picture is up but not where, so the
     /// url stays null and the badge has no link — which is honest.
     pub fn set_deviantart_posted(&self, ids: &[i64], posted: bool) -> Result<usize> {
-        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let mut conn = self.connection();
         let transaction = conn.transaction()?;
         let mut changed = 0;
         for id in ids {
@@ -2281,7 +2305,7 @@ impl Db {
     }
 
     pub fn query_media(&self, query: &MediaQuery) -> Result<MediaPage> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
 
         let (where_parts, binds) = Self::media_filter(query, true);
         let where_sql = if where_parts.is_empty() {
@@ -2359,7 +2383,7 @@ impl Db {
         const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
         const EPOCH_TO_MONDAY_MS: i64 = 3 * 24 * 60 * 60 * 1000;
 
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let (mut where_parts, binds) = Self::media_filter(query, false);
         // A file with no sensible mtime — 0 is what a broken copy tool writes —
         // would otherwise put a 1970 bar on the axis and flatten five decades
@@ -2403,7 +2427,7 @@ impl Db {
     /// where their colour signatures come from.
     pub fn source_origin(&self, id: i64) -> Result<Option<(MediaItem, crate::origin::Origin)>> {
         let origin = {
-            let conn = self.conn.lock().expect("index mutex poisoned");
+            let conn = self.connection();
 
             // Only what the walk compares on. The colour signatures stay out:
             // 155,000 of them is 30MB of blob to answer a question about a
@@ -2469,7 +2493,7 @@ impl Db {
             }
         }
         {
-            let conn = self.conn.lock().expect("index mutex poisoned");
+            let conn = self.connection();
             for name in &candidates {
                 let sql = format!(
                     "SELECT {MEDIA_COLUMNS} FROM media
@@ -2493,7 +2517,7 @@ impl Db {
         // picture at two sizes, which the duplicate grouping detects — for
         // extras whose filename kept nothing of the source.
         let Some(group) = row.dupe_group else { return Ok(None) };
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let sql = format!(
             "SELECT {MEDIA_COLUMNS} FROM media
              WHERE dupe_group = ?1 AND id != ?2
@@ -2512,7 +2536,7 @@ impl Db {
     /// Newest files across every folder — the strip pinned above the grid once
     /// a scan finishes.
     pub fn recent_media(&self, limit: i64) -> Result<Vec<MediaItem>> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         let mut stmt = conn.prepare(&format!(
             "SELECT {MEDIA_COLUMNS} FROM media
              WHERE thumb_path IS NOT NULL
@@ -2524,7 +2548,7 @@ impl Db {
     }
 
     pub fn stats(&self) -> Result<LibraryStats> {
-        let conn = self.conn.lock().expect("index mutex poisoned");
+        let conn = self.connection();
         conn.query_row(
             "SELECT
                 (SELECT COUNT(*) FROM folders),

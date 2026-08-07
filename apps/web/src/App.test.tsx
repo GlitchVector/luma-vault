@@ -2534,3 +2534,38 @@ describe('remote mode', () => {
     expect(screen.getByRole('button', { name: 'Stop sharing' })).toBeTruthy()
   })
 })
+
+describe('leaving folder-path search', () => {
+  it('keeps answering filter changes after the term is cleared and the mode turned off', async () => {
+    // Reported: search in folder mode, delete the term, untoggle the folder
+    // button — the grid stops updating, and every filter change after it does
+    // nothing. This walks that exact sequence and asserts the backend is still
+    // being asked, which is the half a fake backend can actually settle.
+    library = [makeItem(1)]
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+
+    const search = screen.getByPlaceholderText(/search/i)
+    screen.getByRole('button', { name: 'Search folder paths' }).click()
+    fireEvent.change(search, { target: { value: 'moona' } })
+    await waitFor(() => {
+      const sent = queries.at(-1) as { search?: string; searchPaths?: boolean }
+      expect(sent.search).toBe('moona')
+      expect(sent.searchPaths).toBe(true)
+    })
+
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: '' } })
+    await waitFor(() => expect((queries.at(-1) as { search?: string }).search).toBe(''))
+
+    screen.getByRole('button', { name: 'Search folder paths' }).click()
+    await waitFor(() =>
+      expect((queries.at(-1) as { searchPaths?: boolean }).searchPaths).toBe(false),
+    )
+
+    // And now the part that is reported broken: an ordinary filter afterwards.
+    const before = queries.length
+    screen.getByRole('button', { name: 'Videos' }).click()
+    await waitFor(() => expect(queries.length).toBeGreaterThan(before))
+    expect((queries.at(-1) as { kind?: string | null }).kind).toBe('video')
+  })
+})
