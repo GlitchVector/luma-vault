@@ -25,6 +25,7 @@ import { UpscaleResults } from '#/components/UpscaleResults.tsx'
 import { askConfirm, showMessage } from '#/lib/dialogs.ts'
 import {
   deleteMedia,
+  deviantArtMark,
   forgeStatus,
   isTauri,
   onUpscaleProgress,
@@ -304,6 +305,27 @@ export function App() {
     }
     setPublishing(picked)
   }, [items, selected])
+
+  /**
+   * Mark the selection as already on DeviantArt, or clear the mark.
+   *
+   * The escape hatch for what this app did not upload itself — pictures posted
+   * from the website, or posted before it recorded anything. Toggles on the
+   * whole selection: if any of it is unmarked, marking is the obvious intent.
+   */
+  const allSelectedPosted =
+    selected.size > 0 &&
+    !items.some((item) => selected.has(item.id) && item.deviantArt === null)
+
+  const markDeviantArt = useCallback(() => {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    const posted = items.some((item) => selected.has(item.id) && item.deviantArt === null)
+    void deviantArtMark(ids, posted).then(
+      () => library.reload(),
+      (error: unknown) => void showMessage(String(error), { title: 'Could not mark' }),
+    )
+  }, [items, selected, library])
 
   /** Upscale everything picked, then show what came out. */
   const runUpscale = useCallback(() => {
@@ -813,6 +835,8 @@ export function App() {
           <SearchBar
             value={query.search}
             onChange={(search) => setQuery({ search })}
+            searchPaths={query.searchPaths}
+            onSearchPathsChange={(searchPaths) => setQuery({ searchPaths })}
             matches={library.total}
             loading={library.loading}
           />
@@ -856,6 +880,23 @@ export function App() {
                 className="mr-2 rounded-full bg-white/5 px-3 py-1 text-[11px] font-medium text-zinc-300 hover:bg-white/10 hover:text-zinc-100 disabled:cursor-default disabled:bg-white/5 disabled:text-zinc-600"
               >
                 DeviantArt…
+              </button>
+
+              {/* Marking by hand, for what this app did not upload itself.
+                  Deliberately next to the upload button and deliberately not
+                  looking like it: one posts, the other only records. */}
+              <button
+                type="button"
+                disabled={selected.size === 0 || upscaling !== null}
+                onClick={markDeviantArt}
+                title={
+                  allSelectedPosted
+                    ? 'Clear the DeviantArt mark from these — this only forgets the record, it does not take anything down'
+                    : 'Record these as already on DeviantArt, without uploading anything'
+                }
+                className="mr-2 rounded-full bg-emerald-500/15 px-3 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200 disabled:cursor-default disabled:bg-emerald-500/5 disabled:text-emerald-300/30"
+              >
+                {allSelectedPosted ? 'Unmark d' : 'Mark as posted'}
               </button>
 
               <button

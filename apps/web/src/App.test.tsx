@@ -47,6 +47,7 @@ function makeItem(id: number): MediaItem {
     dupeGroup: null,
     upscaledFrom: null,
     upscaledTo: null,
+    deviantArt: null,
   }
 }
 
@@ -1634,12 +1635,55 @@ describe('choosing pose tags from the first picture', () => {
     }
   })
 
-  it('groups the batch into a named stack so Studio can merge it', async () => {
-    // DeviantArt's API cannot make a multi-image deviation. Studio can merge one
-    // out of a selection, and a stack is what makes that selection findable.
+  it('groups the batch into a stack named after the batch title', async () => {
+    // DeviantArt's API cannot make a multi-image deviation — `stash/publish`
+    // takes exactly one `itemid` and `deviation/edit` cannot attach a second.
+    // Studio can merge one out of a selection, and a stack is what makes that
+    // selection findable. It follows the title rather than the first filename,
+    // which is a counter and a seed: a stack called `image-320` is no easier to
+    // pick out of Studio than the twenty loose files would have been.
+    await openPanelOverTwo()
+    fireEvent.change(screen.getByPlaceholderText(/title each from its own prompt/), {
+      target: { value: 'Sister of the Halberd' },
+    })
+    await sentTags()
+    expect(deviantArtSends[0]!.stack).toBe('Sister of the Halberd')
+  })
+
+  it('titles every submission from the batch title', async () => {
+    await openPanelOverTwo()
+    fireEvent.change(screen.getByPlaceholderText(/title each from its own prompt/), {
+      target: { value: 'Sister of the Halberd' },
+    })
+    screen.getByRole('button', { name: 'Upload 2 to Sta.sh' }).click()
+    await waitFor(() => expect(deviantArtSends).toHaveLength(1))
+    const titles = (deviantArtSends[0]!.drafts as Array<{ title: string }>).map((d) => d.title)
+    expect(titles).toEqual(['Sister of the Halberd', 'Sister of the Halberd'])
+  })
+
+  it('uploads the chosen poster first, whatever order the grid picked', async () => {
+    // The upload order *is* the stack order, and the stack order is what a
+    // Studio merge turns into image 1, 2, 3. Nothing else in the batch can say
+    // "this is the one people will see".
+    await openPanelOverTwo()
+    const [, second] = screen.getAllByRole('button', { name: 'make poster' })
+    // The first row is already the poster, so only the second offers the button.
+    fireEvent.click(second ?? screen.getByRole('button', { name: 'make poster' }))
+    screen.getByRole('button', { name: 'Upload 2 to Sta.sh' }).click()
+    await waitFor(() => expect(deviantArtSends).toHaveLength(1))
+    const order = (deviantArtSends[0]!.drafts as Array<{ mediaId: number }>).map((d) => d.mediaId)
+    expect(order[0]).toBe(nth(1))
+  })
+
+  it('asks for original resolution rather than DeviantArt’s downscaled default', async () => {
+    // Their default draws a 2627x3840 upload at 1280 wide, which throws away
+    // the reason for uploading a 4K render.
     await openPanelOverTwo()
     await sentTags()
-    expect(deviantArtSends[0]!.stack).toBe(`image-${nth(0)}`)
+    const shown = (deviantArtSends[0]!.drafts as Array<{ displayResolution: number }>).map(
+      (draft) => draft.displayResolution,
+    )
+    expect(shown).toEqual([0, 0])
   })
 })
 
@@ -2325,6 +2369,57 @@ describe('timeline and search together', () => {
       screen.getByRole('button', { name: 'Drag to move the selection' }),
     ).toBeTruthy()
     expect(screen.getByRole('button', { name: 'clear' })).toBeTruthy()
+  })
+})
+
+describe('the folder-path search toggle', () => {
+  it('aims the term already typed, without disturbing it', async () => {
+    // The whole promise of a mode rather than a second box: type once, and if
+    // the answer is not in the names, click once to ask the folders the same
+    // question. A toggle that cleared the field — or that only took effect on
+    // the next keystroke — would be no faster than a separate input.
+    library = [makeItem(1)]
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+
+    const search = screen.getByPlaceholderText(/search/i)
+    fireEvent.change(search, { target: { value: 'moona' } })
+    await waitFor(() => {
+      const sent = queries.at(-1) as { search?: string; searchPaths?: boolean }
+      expect(sent.search).toBe('moona')
+      expect(sent.searchPaths).toBe(false)
+    })
+
+    screen.getByRole('button', { name: 'Search folder paths' }).click()
+    await waitFor(() => {
+      const sent = queries.at(-1) as { search?: string; searchPaths?: boolean }
+      expect(sent.searchPaths).toBe(true)
+      expect(sent.search, 'the term must survive the mode change').toBe('moona')
+    })
+    expect((screen.getByPlaceholderText(/search/i) as HTMLInputElement).value).toBe('moona')
+
+    // And back, because a mode you cannot leave is a trap — the grid would
+    // stay narrowed to nothing with no visible reason why.
+    screen.getByRole('button', { name: 'Search folder paths' }).click()
+    await waitFor(() =>
+      expect((queries.at(-1) as { searchPaths?: boolean }).searchPaths).toBe(false),
+    )
+  })
+
+  it('says which mode it is in, in the field and on the button', async () => {
+    // The one thing that makes an unexpected empty grid explicable rather than
+    // a bug report: a search that found nothing has to say what it searched.
+    library = [makeItem(1)]
+    render(<App />)
+    await screen.findByTitle('image-1.png')
+
+    const toggle = screen.getByRole('button', { name: 'Search folder paths' })
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByPlaceholderText(/filenames and prompts/i)).toBeTruthy()
+
+    toggle.click()
+    await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'))
+    expect(screen.getByPlaceholderText(/folder paths/i)).toBeTruthy()
   })
 })
 

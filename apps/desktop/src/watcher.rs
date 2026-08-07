@@ -281,6 +281,7 @@ mod tests {
             dupe_group: None,
             upscaled_from: Some("/out/00021.png".to_string()),
             upscaled_to: None,
+            deviant_art: None,
         }
     }
 

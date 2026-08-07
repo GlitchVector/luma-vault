@@ -18,6 +18,7 @@ export const DEFAULT_QUERY: MediaQuery = {
   rating: null,
   sexyOnly: false,
   search: '',
+  searchPaths: false,
   tag: null,
   minStars: null,
   unstarred: false,

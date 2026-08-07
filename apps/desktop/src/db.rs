@@ -21,9 +21,10 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::generated::Generation;
+use crate::pipeline::now_ms;
 use crate::types::{
-    Folder, LibraryStats, MediaFrame, MediaItem, MediaKind, MediaPage, MediaQuery, MediaVerdict,
-    Rating, SortOrder,
+    DeviantArtPost, Folder, LibraryStats, MediaFrame, MediaItem, MediaKind, MediaPage, MediaQuery,
+    MediaVerdict, Rating, SortOrder,
 };
 
 pub struct Db {
@@ -145,6 +146,26 @@ impl Db {
                 PRIMARY KEY (media_id, label)
             );
             CREATE INDEX IF NOT EXISTS labels_by_label ON media_labels(label, score);
+
+            /* What has already gone to DeviantArt.
+             *
+             * Keyed on the **path**, not on `media.id`, and with no foreign key
+             * to cascade. A media row's id does not survive the index being
+             * rebuilt — which is a thing that happens deliberately here — and
+             * losing this would silently un-post pictures that are demonstrably
+             * public, sending someone to upload them a second time. The path
+             * survives a rebuild of the same tree; it does not survive the
+             * files being moved, which is the trade, and the far rarer half. */
+            CREATE TABLE IF NOT EXISTS deviantart_posts (
+                path         TEXT PRIMARY KEY,
+                item_id      INTEGER,
+                deviation_id TEXT,
+                url          TEXT,
+                /* Staged in Sta.sh but not posted is a real state, and the one
+                 * the badge has to distinguish — it means "go finish this". */
+                published    INTEGER NOT NULL DEFAULT 0,
+                posted_at    INTEGER NOT NULL
+            );
 
             CREATE INDEX IF NOT EXISTS tags_by_tag       ON media_tags(tag, media_id);
             CREATE INDEX IF NOT EXISTS media_folder      ON media(folder_id);
@@ -304,7 +325,33 @@ impl Db {
              WHERE phash IS NULL AND thumb_path IS NOT NULL AND kind = 'image'",
         )?;
 
-        // Full-text search over filenames and prompts.
+        // The folder a file sits in, so the search index can hold it as a
+        // column of its own — see `fts_expression`.
+        //
+        // Generated rather than written at insert: `name` is always the tail of
+        // `path`, so a stored copy would be a third spelling of a fact already
+        // recorded twice, and one more thing every writer of `path` would have
+        // to remember. VIRTUAL because `ALTER TABLE` cannot add a STORED
+        // generated column, and because nothing reads this except the index.
+        //
+        // Checked with `table_xinfo`, **not** `table_info`. The latter lists
+        // only columns whose hidden flag is zero and a generated column's is
+        // two, so this is never found, the ALTER runs on every launch, and the
+        // second one fails with "duplicate column name" — taking every
+        // migration below it down with it.
+        let has_dir = conn
+            .prepare("PRAGMA table_xinfo(media)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|name| name == "dir");
+        if !has_dir {
+            conn.execute_batch(
+                "ALTER TABLE media ADD COLUMN dir TEXT
+                 GENERATED ALWAYS AS (substr(path, 1, length(path) - length(name))) VIRTUAL",
+            )?;
+        }
+
+        // Full-text search over filenames, prompts and folder paths.
         //
         // **Trigram, not the default tokenizer.** The default indexes whole
         // words, and a booru prompt is full of `1girl`, `2girls`,
@@ -314,27 +361,55 @@ impl Db {
         //
         // Measured on this library, 160,901 rows: `LIKE` needs 183-230ms for a
         // count, which is far too slow to type against. Trigram answers the
-        // same queries in 0-7ms and builds once in 2.4s.
+        // same queries in 0-7ms and builds once in 2.4s. The folder search is
+        // in here for that reason and no other — `path LIKE '%moona%'` is the
+        // obvious implementation and it is the slow one.
+        //
+        // Three columns, and every query names which of them it means. A bare
+        // MATCH searches all three, which would silently fold folder names into
+        // the ordinary search the moment `dir` was added.
         //
         // `content='media'` so the text is not stored twice; the triggers below
         // are what an external-content table requires to stay in step.
+        //
+        // Read the version before the table is created, because on an upgrade
+        // it decides whether the existing one is thrown away.
+        let built: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key = 'fts_version'", [], |row| row.get(0))
+            .optional()?;
+        let stale = built.as_deref() != Some(FTS_VERSION);
+        if stale {
+            // `IF NOT EXISTS` cannot add a column to an index that already
+            // exists, and the triggers are `IF NOT EXISTS` too — so an upgraded
+            // library would keep a two-column index, keep writing two columns
+            // into it, and answer every folder search with nothing. Both go;
+            // the rebuild below refills the new shape.
+            conn.execute_batch(
+                "DROP TRIGGER IF EXISTS media_fts_insert;
+                 DROP TRIGGER IF EXISTS media_fts_delete;
+                 DROP TRIGGER IF EXISTS media_fts_update;
+                 DROP TABLE IF EXISTS media_fts;",
+            )?;
+        }
         conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS media_fts USING fts5(
-                 name, prompt, content='media', content_rowid='id', tokenize='trigram'
+                 name, prompt, dir, content='media', content_rowid='id', tokenize='trigram'
              )",
         )?;
         conn.execute_batch(
             "CREATE TRIGGER IF NOT EXISTS media_fts_insert AFTER INSERT ON media BEGIN
-                 INSERT INTO media_fts(rowid, name, prompt) VALUES (new.id, new.name, new.prompt);
+                 INSERT INTO media_fts(rowid, name, prompt, dir)
+                 VALUES (new.id, new.name, new.prompt, new.dir);
              END;
              CREATE TRIGGER IF NOT EXISTS media_fts_delete AFTER DELETE ON media BEGIN
-                 INSERT INTO media_fts(media_fts, rowid, name, prompt)
-                 VALUES ('delete', old.id, old.name, old.prompt);
+                 INSERT INTO media_fts(media_fts, rowid, name, prompt, dir)
+                 VALUES ('delete', old.id, old.name, old.prompt, old.dir);
              END;
              CREATE TRIGGER IF NOT EXISTS media_fts_update AFTER UPDATE ON media BEGIN
-                 INSERT INTO media_fts(media_fts, rowid, name, prompt)
-                 VALUES ('delete', old.id, old.name, old.prompt);
-                 INSERT INTO media_fts(rowid, name, prompt) VALUES (new.id, new.name, new.prompt);
+                 INSERT INTO media_fts(media_fts, rowid, name, prompt, dir)
+                 VALUES ('delete', old.id, old.name, old.prompt, old.dir);
+                 INSERT INTO media_fts(rowid, name, prompt, dir)
+                 VALUES (new.id, new.name, new.prompt, new.dir);
              END;",
         )?;
         // Backfill once, recorded by a flag rather than by inspecting the table.
@@ -348,10 +423,7 @@ impl Db {
         //
         // The version lets a tokenizer or column change force one rebuild
         // later; rebuilding every launch would cost 3.7s on this library.
-        let built: Option<String> = conn
-            .query_row("SELECT value FROM settings WHERE key = 'fts_version'", [], |row| row.get(0))
-            .optional()?;
-        if built.as_deref() != Some(FTS_VERSION) {
+        if stale {
             conn.execute_batch("INSERT INTO media_fts(media_fts) VALUES ('rebuild')")?;
             conn.execute(
                 "INSERT INTO settings(key, value) VALUES ('fts_version', ?1)
@@ -1918,6 +1990,83 @@ impl Db {
     }
 
     // -----------------------------------------------------------------------
+    // DeviantArt
+    // -----------------------------------------------------------------------
+
+    /// Record that a picture has gone to DeviantArt.
+    ///
+    /// Upsert rather than insert: uploading the same picture again is a thing
+    /// people do — a better crop, a retitle — and the second attempt's result
+    /// is the one worth keeping. Publishing a previously-staged item therefore
+    /// upgrades the row rather than colliding with it.
+    pub fn record_deviantart_post(
+        &self,
+        path: &str,
+        item_id: Option<i64>,
+        deviation_id: Option<&str>,
+        url: Option<&str>,
+        published: bool,
+    ) -> Result<()> {
+        let conn = self.conn.lock().expect("index mutex poisoned");
+        conn.execute(
+            "INSERT INTO deviantart_posts (path, item_id, deviation_id, url, published, posted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(path) DO UPDATE SET
+                 item_id      = COALESCE(excluded.item_id, item_id),
+                 deviation_id = COALESCE(excluded.deviation_id, deviation_id),
+                 url          = COALESCE(excluded.url, url),
+                 -- Never demote. A row that is public stays public even if a
+                 -- later staging of the same file reports otherwise.
+                 published    = MAX(published, excluded.published),
+                 posted_at    = excluded.posted_at",
+            params![
+                path,
+                item_id,
+                deviation_id,
+                url,
+                i64::from(published),
+                now_ms()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Mark or unmark rows by hand.
+    ///
+    /// The escape hatch for everything this app did not do itself: pictures
+    /// posted before it could record them, posted from the website, or recorded
+    /// wrongly. Marking by hand knows the picture is up but not where, so the
+    /// url stays null and the badge has no link — which is honest.
+    pub fn set_deviantart_posted(&self, ids: &[i64], posted: bool) -> Result<usize> {
+        let mut conn = self.conn.lock().expect("index mutex poisoned");
+        let transaction = conn.transaction()?;
+        let mut changed = 0;
+        for id in ids {
+            let path: Option<String> = transaction
+                .query_row("SELECT path FROM media WHERE id = ?1", params![id], |row| {
+                    row.get(0)
+                })
+                .optional()?;
+            let Some(path) = path else { continue };
+            changed += if posted {
+                transaction.execute(
+                    "INSERT INTO deviantart_posts (path, published, posted_at)
+                     VALUES (?1, 1, ?2)
+                     ON CONFLICT(path) DO UPDATE SET published = 1",
+                    params![path, now_ms()],
+                )?
+            } else {
+                transaction.execute(
+                    "DELETE FROM deviantart_posts WHERE path = ?1",
+                    params![path],
+                )?
+            };
+        }
+        transaction.commit()?;
+        Ok(changed)
+    }
+
+    // -----------------------------------------------------------------------
     // Query
     // -----------------------------------------------------------------------
 
@@ -1991,7 +2140,13 @@ impl Db {
             // A term the index cannot answer yields nothing rather than
             // everything: typing "ab" should show an empty grid, not the whole
             // library, because the next keystroke is about to make it useful.
-            match fts_expression(query.search.trim()) {
+            //
+            // Which columns is the whole of the folder-search mode: the same
+            // term, the same index, aimed at the directory instead. Nothing
+            // else about the query changes, so a folder search still composes
+            // with the rating pills and the timeline the way any other does.
+            let columns = if query.search_paths { PATH_COLUMNS } else { TEXT_COLUMNS };
+            match fts_expression(query.search.trim(), columns) {
                 Some(expression) => {
                     let at = binds.len() + 1;
                     where_parts.push(format!(
@@ -2396,17 +2551,34 @@ impl Db {
     }
 }
 
-/// An FTS5 MATCH expression for text a person typed.
+/// What the search box means by default: the filename and the prompt.
+///
+/// Named explicitly rather than left to a bare MATCH, which searches every
+/// column there is. `dir` is a column now, so "every column" and "what this
+/// field promises" are no longer the same set.
+const TEXT_COLUMNS: &str = "{name prompt}";
+
+/// The folder-search mode: the directory, without the filename on the end of
+/// it. See [`crate::types::MediaQuery::search_paths`] for why it replaces the
+/// default rather than adding to it.
+const PATH_COLUMNS: &str = "{dir}";
+
+/// An FTS5 MATCH expression for text a person typed, restricted to `columns`.
 ///
 /// Everything is quoted, so `(` `"` `*` and `-` are searched for rather than
 /// parsed as query syntax — typing `(wide hips:1.3)` should find that text, not
 /// raise "fts5: syntax error near". Terms are ANDed, so word order does not
 /// matter but every word must appear.
 ///
+/// The column filter wraps the whole conjunction rather than each term, because
+/// FTS5 applies a bare `{cols} : x AND y` to `x` only — which would leave the
+/// second word of a two-word folder search matching filenames and prompts as
+/// well, and the mode leaking exactly where a search is most specific.
+///
 /// Returns `None` for input the trigram tokenizer cannot answer: it indexes
 /// three-character sequences, so nothing shorter than three characters can be
 /// looked up.
-fn fts_expression(input: &str) -> Option<String> {
+fn fts_expression(input: &str, columns: &str) -> Option<String> {
     let terms: Vec<String> = input
         .split_whitespace()
         .filter(|term| term.chars().count() >= 3)
@@ -2415,7 +2587,7 @@ fn fts_expression(input: &str) -> Option<String> {
     if terms.is_empty() {
         return None;
     }
-    Some(terms.join(" AND "))
+    Some(format!("{columns} : ({})", terms.join(" AND ")))
 }
 
 /// Bumping this rebuilds the search index once, on the next launch. Change it
@@ -2474,7 +2646,7 @@ fn rebuild_labels<'a>(
     Ok(())
 }
 
-const FTS_VERSION: &str = "1-trigram-name-prompt";
+const FTS_VERSION: &str = "2-trigram-name-prompt-dir";
 
 /// Bump when what an upscaled variant inherits from its original changes.
 ///
@@ -2512,7 +2684,7 @@ const ANIMATED_EXTENSIONS: [&str; 3] = [".gif", ".webp", ".avif"];
 
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
-                             duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to";
+                             duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to, \n                             (SELECT p.url FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_url, \n                             (SELECT p.published FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_published, \n                             (SELECT p.posted_at FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_posted_at";
 
 fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
     let kind: String = row.get(4)?;
@@ -2548,6 +2720,16 @@ fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
         dupe_group: row.get(18)?,
         upscaled_from: row.get(19)?,
         upscaled_to: row.get(20)?,
+        // Absent unless there is a row in `deviantart_posts`, which is what the
+        // grid's badge reads. `posted_at` carries the presence, because it is
+        // the one column of the three that is never null.
+        deviant_art: row
+            .get::<_, Option<i64>>(23)?
+            .map(|posted_at| DeviantArtPost {
+                url: row.get(21).unwrap_or(None),
+                published: row.get::<_, Option<i64>>(22).unwrap_or(None).unwrap_or(0) != 0,
+                posted_at,
+            }),
     })
 }
 
@@ -2696,6 +2878,7 @@ mod tests {
             rating: None,
             sexy_only: false,
             search: String::new(),
+            search_paths: false,
             tag: None,
             min_stars: None,
             unstarred: false,
@@ -3696,6 +3879,120 @@ mod tests {
     }
 
     #[test]
+    fn a_posted_picture_carries_its_deviantart_row() {
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(folder, &[file("/out/00242.png", MediaKind::Image, 300)], 1)
+            .expect("insert");
+
+        assert!(db.media_by_path("/out/00242.png").unwrap().unwrap().deviant_art.is_none());
+
+        // Staged, then published — the two calls `send` makes for one file.
+        db.record_deviantart_post("/out/00242.png", Some(88), None, None, false)
+            .expect("stage");
+        let staged = db.media_by_path("/out/00242.png").unwrap().unwrap();
+        let staged = staged.deviant_art.expect("a row after staging");
+        assert!(!staged.published, "staging is not posting");
+        assert_eq!(staged.url, None);
+
+        db.record_deviantart_post(
+            "/out/00242.png",
+            Some(88),
+            Some("abc-123"),
+            Some("https://www.deviantart.com/jebaz/art/x-1"),
+            true,
+        )
+        .expect("publish");
+        let posted = db.media_by_path("/out/00242.png").unwrap().unwrap();
+        let posted = posted.deviant_art.expect("a row after publishing");
+        assert!(posted.published);
+        assert_eq!(posted.url.as_deref(), Some("https://www.deviantart.com/jebaz/art/x-1"));
+    }
+
+    #[test]
+    fn a_second_staging_never_un_posts_something_public() {
+        // Re-uploading a picture that is already public — a better crop, a
+        // retitle — stages first, and that staging reports `published: false`.
+        // Taking it at its word would clear the badge on a deviation that is
+        // demonstrably still up, which is the one direction that misleads.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(folder, &[file("/out/00242.png", MediaKind::Image, 300)], 1)
+            .expect("insert");
+
+        db.record_deviantart_post("/out/00242.png", Some(1), None, Some("https://d/1"), true)
+            .expect("publish");
+        db.record_deviantart_post("/out/00242.png", Some(2), None, None, false)
+            .expect("stage again");
+
+        let row = db.media_by_path("/out/00242.png").unwrap().unwrap();
+        let row = row.deviant_art.expect("still recorded");
+        assert!(row.published, "a public deviation must not be demoted");
+        assert_eq!(row.url.as_deref(), Some("https://d/1"), "nor lose its link");
+    }
+
+    #[test]
+    fn marking_by_hand_sets_and_clears_the_badge() {
+        // The back-fill path: pictures posted before anything recorded them.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/out/00242.png", MediaKind::Image, 300),
+                file("/out/00239.png", MediaKind::Image, 200),
+            ],
+            1,
+        )
+        .expect("insert");
+        let ids: Vec<i64> = ["/out/00242.png", "/out/00239.png"]
+            .iter()
+            .map(|path| db.media_by_path(path).unwrap().unwrap().id)
+            .collect();
+
+        assert_eq!(db.set_deviantart_posted(&ids, true).expect("mark"), 2);
+        for path in ["/out/00242.png", "/out/00239.png"] {
+            let row = db.media_by_path(path).unwrap().unwrap();
+            let post = row.deviant_art.expect("marked");
+            assert!(post.published);
+            // Marked by hand knows the picture is up but not where. A link it
+            // cannot know is worse than no link.
+            assert_eq!(post.url, None);
+        }
+
+        assert_eq!(db.set_deviantart_posted(&ids[..1], false).expect("unmark"), 1);
+        assert!(db.media_by_path("/out/00242.png").unwrap().unwrap().deviant_art.is_none());
+        assert!(db.media_by_path("/out/00239.png").unwrap().unwrap().deviant_art.is_some());
+    }
+
+    #[test]
+    fn the_deviantart_record_outlives_the_row_it_was_made_for() {
+        // Keyed on the path and not on `media.id`, because the id does not
+        // survive the index being rebuilt — and losing this would silently
+        // un-post pictures that are demonstrably public.
+        let path = tempfile::tempdir().unwrap().path().join("index.db");
+        {
+            let db = Db::open(&path).unwrap();
+            let folder = db.add_folder("/out", 1).unwrap();
+            db.insert_media_batch(folder, &[file("/out/00242.png", MediaKind::Image, 300)], 1)
+                .unwrap();
+            let id = db.media_by_path("/out/00242.png").unwrap().unwrap().id;
+            db.set_deviantart_posted(&[id], true).unwrap();
+            db.delete_media_by_path("/out/00242.png").unwrap();
+        }
+
+        // Re-indexed from scratch: new folder, new row, new id.
+        let db = Db::open(&path).unwrap();
+        let folder = db.add_folder("/out2", 1).unwrap();
+        db.insert_media_batch(folder, &[file("/out/00242.png", MediaKind::Image, 300)], 1)
+            .unwrap();
+        assert!(
+            db.media_by_path("/out/00242.png").unwrap().unwrap().deviant_art.is_some(),
+            "the badge must survive a rebuild",
+        );
+    }
+
+    #[test]
     fn the_hidden_original_is_still_reachable_by_path() {
         // It is in no list, so `media_by_path` is the only way the lightbox can
         // offer it. If this stops working the footer label goes nowhere.
@@ -3824,11 +4121,14 @@ mod tests {
         // and raises "fts5: syntax error near", which reaches the UI as a red
         // toast for a perfectly reasonable search.
         assert_eq!(
-            fts_expression("(wide hips:1.3)").as_deref(),
-            Some(r#""(wide" AND "hips:1.3)""#)
+            fts_expression("(wide hips:1.3)", TEXT_COLUMNS).as_deref(),
+            Some(r#"{name prompt} : ("(wide" AND "hips:1.3)")"#)
         );
         // A quote in the input must not end the quoted term.
-        assert_eq!(fts_expression(r#"say "hi""#).as_deref(), Some(r#""say" AND """hi""""#));
+        assert_eq!(
+            fts_expression(r#"say "hi""#, TEXT_COLUMNS).as_deref(),
+            Some(r#"{name prompt} : ("say" AND """hi""")"#)
+        );
     }
 
     #[test]
@@ -3836,9 +4136,24 @@ mod tests {
         // Trigram indexes three-character sequences, so a shorter term matches
         // nothing at all — silently returning zero results for `a girl` would
         // be worse than searching for `girl`.
-        assert_eq!(fts_expression("a girl").as_deref(), Some(r#""girl""#));
-        assert_eq!(fts_expression("of"), None);
-        assert_eq!(fts_expression("   "), None);
+        assert_eq!(
+            fts_expression("a girl", TEXT_COLUMNS).as_deref(),
+            Some(r#"{name prompt} : ("girl")"#)
+        );
+        assert_eq!(fts_expression("of", TEXT_COLUMNS), None);
+        assert_eq!(fts_expression("   ", TEXT_COLUMNS), None);
+    }
+
+    #[test]
+    fn the_column_filter_covers_every_term_not_only_the_first() {
+        // FTS5 binds `{cols} : x AND y` to `x` alone, so an unparenthesised
+        // expression would leave the second word of a two-word folder search
+        // matching filenames and prompts — the mode leaking on exactly the
+        // searches specific enough to be typed deliberately.
+        assert_eq!(
+            fts_expression("art moona", PATH_COLUMNS).as_deref(),
+            Some(r#"{dir} : ("art" AND "moona")"#)
+        );
     }
 
     /// How many rows the grid's search finds for `text`.
@@ -3885,6 +4200,126 @@ mod tests {
         assert_eq!(found(&db, "hoshinova beach"), 0);
         // Punctuation from a real prompt must not be parsed as query syntax.
         assert_eq!(found(&db, "(wide hips:1.3)"), 0);
+    }
+
+    /// How many rows the folder-search mode finds for `text`.
+    fn found_by_path(db: &Db, text: &str) -> i64 {
+        let q = MediaQuery { search: text.to_string(), search_paths: true, ..query() };
+        db.query_media(&q).unwrap().total
+    }
+
+    #[test]
+    fn the_folder_mode_searches_the_directory_and_only_the_directory() {
+        // A library filed by character, which is the layout this mode is for:
+        // the term is in the path of every file in the folder and in the
+        // prompt of most of them, so "did it match" is not enough to tell the
+        // two modes apart. Each assertion below is one that fails if the
+        // column filter is dropped or applied to the wrong set.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(
+            folder,
+            &[
+                file("/media/aqua/00166-3997412987.png", MediaKind::Image, 1),
+                file("/media/moona/00200-1234567890.png", MediaKind::Image, 2),
+                // The name carries "moona" while the folder does not. This is
+                // the row that catches a folder search still reading filenames.
+                file("/media/misc/moona-wallpaper.png", MediaKind::Image, 3),
+            ],
+            1,
+        )
+        .expect("insert");
+        // And a prompt naming a folder nothing is filed under, for the other
+        // direction: the prompt must not answer a folder search either.
+        let id = db
+            .query_media(&MediaQuery { search: "00166".to_string(), ..query() })
+            .unwrap()
+            .items[0]
+            .id;
+        db.set_generation(
+            id,
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".into(),
+                prompt: Some("moona hoshinova, 1girl".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("set generation");
+
+        assert_eq!(found_by_path(&db, "aqua"), 1, "a folder name matches");
+        // Two of the three rows say "moona" somewhere; exactly one says it in
+        // its folder.
+        assert_eq!(found(&db, "moona"), 2, "filename and prompt, as ever");
+        assert_eq!(found_by_path(&db, "moona"), 1, "the folder, and nothing else");
+        assert_eq!(found_by_path(&db, "wallpaper"), 0, "the filename is not the folder");
+        assert_eq!(found_by_path(&db, "hoshinova"), 0, "and neither is the prompt");
+        // A path fragment rather than one component, which is the point of
+        // matching a substring of the whole directory.
+        assert_eq!(found_by_path(&db, "media/moona"), 1, "a run of the path");
+        // The default mode must not have quietly gained a third column.
+        assert_eq!(found(&db, "misc"), 0, "the folder stays out of the plain search");
+    }
+
+    #[test]
+    fn a_library_indexed_before_folder_search_gains_it_on_the_next_open() {
+        // The upgrade every existing library takes, and the one nothing else
+        // here covers: the in-memory cases all start at the current shape.
+        //
+        // `CREATE VIRTUAL TABLE IF NOT EXISTS` cannot widen an index that
+        // already exists, and `CREATE TRIGGER IF NOT EXISTS` cannot widen what
+        // feeds it. Without the version bump doing the dropping, an upgraded
+        // library keeps a two-column index, keeps writing two columns into it,
+        // and answers every folder search with nothing — while looking
+        // completely healthy from the outside.
+        let file = tempfile::NamedTempFile::new().expect("temp");
+        let path = file.path().to_path_buf();
+        drop(file);
+
+        {
+            let db = Db::open(&path).expect("open");
+            let folder = db.add_folder("/media", 1).expect("add folder");
+            db.insert_media_batch(
+                folder,
+                // Qualified, because the temp-file binding above shadows the
+                // helper's name for the rest of this block.
+                &[super::tests::file("/media/moona/00166.png", MediaKind::Image, 1)],
+                1,
+            )
+            .expect("insert");
+
+            // Rewound to exactly what the previous version left behind: no
+            // `dir` column, a two-column index over it, and its own version
+            // recorded so this open looks like the last one it did.
+            let conn = db.conn.lock().unwrap();
+            conn.execute_batch(
+                "DROP TRIGGER media_fts_insert;
+                 DROP TRIGGER media_fts_delete;
+                 DROP TRIGGER media_fts_update;
+                 DROP TABLE media_fts;
+                 ALTER TABLE media DROP COLUMN dir;
+                 CREATE VIRTUAL TABLE media_fts USING fts5(
+                     name, prompt, content='media', content_rowid='id', tokenize='trigram');
+                 CREATE TRIGGER media_fts_insert AFTER INSERT ON media BEGIN
+                     INSERT INTO media_fts(rowid, name, prompt)
+                     VALUES (new.id, new.name, new.prompt);
+                 END;
+                 INSERT INTO media_fts(media_fts) VALUES ('rebuild');
+                 UPDATE settings SET value = '1-trigram-name-prompt'
+                  WHERE key = 'fts_version';",
+            )
+            .expect("rewind to the previous shape");
+        }
+
+        let db = Db::open(&path).expect("reopen");
+        assert_eq!(found_by_path(&db, "moona"), 1, "searchable without a rescan");
+        assert_eq!(found(&db, "00166"), 1, "and the old search still answers");
+
+        // Twice, because the "does this column exist" check is the trap: read
+        // with `table_info` it never finds a generated column, and this open is
+        // the one that would fail on a duplicate `dir`.
+        drop(db);
+        let db = Db::open(&path).expect("third open");
+        assert_eq!(found_by_path(&db, "moona"), 1);
     }
 
     #[test]

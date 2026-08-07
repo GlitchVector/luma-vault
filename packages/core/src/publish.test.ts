@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DISPLAY_ORIGINAL,
   MAX_TAGS,
   MAX_TITLE,
   POSE_TAGS,
@@ -49,6 +50,7 @@ function item(overrides: Partial<MediaItem> = {}): MediaItem {
     dupeGroup: null,
     upscaledFrom: null,
     upscaledTo: null,
+    deviantArt: null,
     ...overrides,
   }
 }
@@ -133,6 +135,44 @@ describe('describeForDeviantArt', () => {
 
   it('falls back to Untitled rather than inventing one', () => {
     expect(describeForDeviantArt(item()).title).toBe('Untitled')
+  })
+
+  it('does not title an upscaled variant "Upscaled 4k"', () => {
+    // The failure this exists for, and it was not an edge case: the grid shows
+    // variants *in place of* their originals, so a selection is normally all
+    // variants — and every one of them came out with this same title, because
+    // the suffix is the only thing in the name that survives the digit strip.
+    const draft = describeForDeviantArt(
+      item({
+        name: '00242-3753124055_upscaled_4k.png',
+        generation: generation({ prompt: '1girl, blue hair, nun, halberd' }),
+      }),
+    )
+    expect(draft.title).toBe('1girl, Blue Hair, Nun, Halberd')
+  })
+
+  it('titles every draft the same when one is given for the batch', () => {
+    const draft = describeForDeviantArt(item({ name: 'winter_market_study.png' }), {
+      title: '  Sister of the Halberd  ',
+    })
+    expect(draft.title).toBe('Sister of the Halberd')
+  })
+
+  it('leaves the description empty rather than naming the checkpoint', () => {
+    // A public page does not need to say which model made the picture. The
+    // checkpoint still goes out as a tag, which is browsable and removable.
+    const draft = describeForDeviantArt(item({ generation: generation() }))
+    expect(draft.description).toBe('')
+  })
+
+  it('shows at original resolution, not DeviantArt’s downscaled default', () => {
+    expect(describeForDeviantArt(item()).displayResolution).toBe(DISPLAY_ORIGINAL)
+  })
+
+  it('does not claim no-AI-training over a generated library', () => {
+    // Opt-in: asserting it is a claim the owner has to actually want to make.
+    expect(describeForDeviantArt(item({ generation: generation() })).noai).toBe(false)
+    expect(describeForDeviantArt(item(), { noai: true }).noai).toBe(true)
   })
 
   it('sends the 18+ tier and both classifications for explicit anatomy', () => {

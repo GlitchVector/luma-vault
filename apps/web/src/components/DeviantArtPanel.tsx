@@ -1,5 +1,7 @@
 import { Button, Spinner } from '@luma/ui'
 import {
+  DISPLAY_ORIGINAL,
+  DISPLAY_RESOLUTIONS,
   MAX_TAGS,
   POSE_TAGS,
   describeForDeviantArt,
@@ -8,6 +10,7 @@ import {
   type DeviantArtAccount,
   type DeviantArtDraft,
   type DeviantArtSummary,
+  type DisplayResolution,
   type MatureClassification,
   type MediaItem,
   type Pose,
@@ -84,6 +87,21 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
       return { item, draft, tagText: draft.tags.join(', ') }
     }),
   )
+  /**
+   * One title for the batch, which is nearly always what is wanted.
+   *
+   * A set selected together is one shoot, and DeviantArt's own merge makes it
+   * one deviation — so per-picture titles are the exception. Typing here
+   * overwrites every row's title, and each row's own field still edits it back.
+   */
+  const [batchTitle, setBatchTitle] = useState('')
+  /**
+   * Which picture leads. Uploaded first, so it is first in the Sta.sh stack and
+   * therefore index 0 — the poster — of a multi-image deviation merged from it.
+   */
+  const [posterId, setPosterId] = useState<number | null>(() => items[0]?.id ?? null)
+  /** How large the deviation page draws it. Original, unless told otherwise. */
+  const [displayResolution, setDisplayResolution] = useState<DisplayResolution>(DISPLAY_ORIGINAL)
   /** Merged into every row on send — a series name, a signature. */
   const [sharedTags, setSharedTags] = useState('')
   /**
@@ -99,7 +117,13 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
    */
   const pose: Pose | null = items[0] ? poseOf(items[0]) : null
   const [poseChoice, setPoseChoice] = useState<PoseChoice>('auto')
-  const [stack, setStack] = useState(() => items[0]?.name.replace(/\.[^.]+$/, '') ?? '')
+  /**
+   * Empty rather than seeded from the first filename, which is a counter and a
+   * seed — a stack called `00242-3753124055` is no easier to find in Studio
+   * than the files themselves. Falls back to the batch title, which is the name
+   * the person actually chose for this set.
+   */
+  const [stack, setStack] = useState('')
   const [progress, setProgress] = useState<DeviantArtProgress | null>(null)
   const [summary, setSummary] = useState<DeviantArtSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -153,6 +177,7 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
    */
   const { drafts, dropped } = useMemo(() => {
     const lost: string[] = []
+    const title = batchTitle.trim()
     const kept = rows.map((row) => {
       const all = [...common, ...parseTags(row.tagText)].filter(
         (tag, index, entries) => entries.indexOf(tag) === index,
@@ -160,16 +185,27 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
       for (const tag of all.slice(MAX_TAGS)) {
         if (!lost.includes(tag)) lost.push(tag)
       }
-      return { ...row.draft, tags: all.slice(0, MAX_TAGS) }
+      return {
+        ...row.draft,
+        title: title || row.draft.title,
+        tags: all.slice(0, MAX_TAGS),
+        displayResolution,
+      }
     })
-    return { drafts: kept, dropped: lost }
-  }, [rows, common])
+    // The poster goes first, because the upload order *is* the stack order and
+    // the stack order is what a Studio merge turns into image 1, 2, 3. Nothing
+    // else about the batch can express "this is the one people will see".
+    const leader = kept.findIndex((draft) => draft.mediaId === posterId)
+    const ordered =
+      leader > 0 ? [kept[leader]!, ...kept.slice(0, leader), ...kept.slice(leader + 1)] : kept
+    return { drafts: ordered, dropped: lost }
+  }, [rows, common, batchTitle, displayResolution, posterId])
 
   const send = (publish: boolean) => {
     setError(null)
     setProgress({ phase: 'uploading', done: 0, total: drafts.length, current: null })
     void onDeviantArtProgress(setProgress).then((unlisten) =>
-      deviantArtSend(drafts, publish, stack.trim() || null).then(
+      deviantArtSend(drafts, publish, stack.trim() || batchTitle.trim() || null).then(
         (result) => {
           unlisten()
           setProgress(null)
@@ -185,6 +221,8 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
   }
 
   const unrated = rows.filter((row) => (row.item.verdict?.rating ?? 'unrated') === 'unrated').length
+  const posterName =
+    rows.find((row) => row.draft.mediaId === posterId)?.item.name ?? 'the first picture'
 
   return (
     <div className="fixed inset-0 z-[95] flex flex-col bg-black/92 backdrop-blur-sm">
@@ -224,6 +262,35 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
         <Results summary={summary} onClose={onClose} />
       ) : (
         <>
+          <div className="flex flex-wrap items-center gap-3 border-b border-white/5 px-4 py-2 text-sm">
+            <label className="flex min-w-64 flex-1 items-center gap-2">
+              <span className="shrink-0 text-zinc-500">Title for all</span>
+              <input
+                value={batchTitle}
+                onChange={(event) => setBatchTitle(event.target.value)}
+                placeholder="leave empty to title each from its own prompt"
+                className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-zinc-200 outline-none focus:border-indigo-400/60"
+              />
+            </label>
+            <label className="flex items-center gap-2">
+              <span className="shrink-0 text-zinc-500">Shown at</span>
+              <select
+                value={displayResolution}
+                onChange={(event) =>
+                  setDisplayResolution(Number(event.target.value) as DisplayResolution)
+                }
+                title="How wide the deviation page draws the image. DeviantArt's own default downscales to 1280, which throws away the point of uploading a 4K render."
+                className="rounded border border-white/10 bg-black/30 px-1 py-1 text-zinc-300 outline-none focus:border-indigo-400/60"
+              >
+                {DISPLAY_RESOLUTIONS.map((choice) => (
+                  <option key={choice.value} value={choice.value}>
+                    {choice.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
           <div className="flex flex-wrap items-center gap-3 border-b border-white/5 px-4 py-2 text-sm">
             <label className="flex min-w-64 flex-1 items-center gap-2">
               <span className="shrink-0 text-zinc-500">Tags on all</span>
@@ -293,16 +360,21 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
               <input
                 value={stack}
                 onChange={(event) => setStack(event.target.value)}
-                placeholder="leave empty to upload them loose"
+                placeholder={batchTitle.trim() || 'leave empty to upload them loose'}
                 className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-zinc-200 outline-none focus:border-indigo-400/60"
               />
             </label>
             {/* The reason this field exists. DeviantArt's API cannot make a
-                multi-image deviation, but Studio can merge one out of a
-                selection — and a named stack is what makes that selection two
-                clicks instead of hunting twenty files out of a flat list. */}
+                multi-image deviation — `stash/publish` takes exactly one
+                `itemid` and `deviation/edit` cannot attach a second — but
+                Studio can merge one out of a selection, and a named stack is
+                what makes that selection two clicks instead of hunting twenty
+                files out of a flat list. */}
             <span className="text-zinc-500">
-              so Studio can merge them into one multi-image deviation
+              One deviation per picture is all the API can post. Uploading them
+              under one name is what makes{' '}
+              <span className="text-zinc-400">Studio → Merge into multi-image deviation</span> a
+              selection instead of a hunt — {posterName} goes first, so it lands as the poster.
             </span>
           </div>
 
@@ -312,6 +384,8 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
                 key={row.draft.mediaId}
                 row={row}
                 common={common}
+                isPoster={row.draft.mediaId === posterId}
+                onPoster={() => setPosterId(row.draft.mediaId)}
                 onDraft={update}
                 onTagText={(text) =>
                   setRows((previous) =>
@@ -367,11 +441,14 @@ interface DraftRowProps {
   row: Row
   /** Shared and pose tags, which count against this row's budget too. */
   common: string[]
+  /** Uploaded first, and so the poster of anything merged out of the stack. */
+  isPoster: boolean
+  onPoster: () => void
   onDraft: (mediaId: number, patch: Partial<DeviantArtDraft>) => void
   onTagText: (text: string) => void
 }
 
-function DraftRow({ row, common, onDraft, onTagText }: DraftRowProps) {
+function DraftRow({ row, common, isPoster, onPoster, onDraft, onTagText }: DraftRowProps) {
   const { item, draft } = row
   const id = draft.mediaId
   const tags = parseTags(row.tagText)
@@ -385,14 +462,32 @@ function DraftRow({ row, common, onDraft, onTagText }: DraftRowProps) {
   ).length
 
   return (
-    <article className="flex gap-3 border-b border-white/5 px-4 py-3">
-      <img
-        src={fileUrl(item.thumbPath ?? item.path)}
-        alt={item.name}
-        loading="lazy"
-        decoding="async"
-        className="h-32 w-32 shrink-0 rounded-md bg-zinc-800/80 object-cover"
-      />
+    <article className="group/row flex gap-3 border-b border-white/5 px-4 py-3">
+      <div className="relative shrink-0">
+        <img
+          src={fileUrl(item.thumbPath ?? item.path)}
+          alt={item.name}
+          loading="lazy"
+          decoding="async"
+          className="h-32 w-32 rounded-md bg-zinc-800/80 object-cover"
+        />
+        <button
+          type="button"
+          onClick={onPoster}
+          title={
+            isPoster
+              ? 'Uploaded first, so it is the poster of a multi-image deviation merged from this batch'
+              : 'Upload this one first, so it becomes the poster'
+          }
+          className={
+            isPoster
+              ? 'absolute bottom-1 left-1 rounded bg-indigo-500 px-1.5 py-0.5 text-[10px] font-semibold text-white'
+              : 'absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-zinc-400 opacity-0 transition-opacity hover:text-zinc-100 focus-visible:opacity-100 group-hover/row:opacity-100'
+          }
+        >
+          {isPoster ? 'poster' : 'make poster'}
+        </button>
+      </div>
 
       <div className="min-w-0 flex-1 space-y-1.5 text-sm">
         <input

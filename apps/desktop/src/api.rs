@@ -756,6 +756,20 @@ pub async fn deviantart_send(
         .await)
 }
 
+/// Mark a selection as already on DeviantArt, or clear the mark.
+///
+/// For everything the app did not upload itself — posted from the website,
+/// posted before this recorded anything, or recorded wrongly.
+pub fn deviantart_mark(state: &AppState, ids: Vec<i64>, posted: bool) -> Result<usize, String> {
+    if ids.is_empty() {
+        return Err("nothing selected".to_string());
+    }
+    state
+        .db
+        .set_deviantart_posted(&ids, posted)
+        .map_err(|error| format!("{error:#}"))
+}
+
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------

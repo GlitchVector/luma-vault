@@ -154,6 +154,22 @@ async function run(dom, { tick, between }) {
         // The checkpoint and VAE are set over HTTP, because Forge's paste
         // cannot set them. Captured rather than sent.
         fetch: (url, options) => {
+            // The busy check is a GET with no options; everything else is a
+            // POST carrying a body. Modelling only the second shape made the
+            // stub throw the moment the extension learned to ask whether a
+            // batch was running.
+            if (!options) {
+                dom.fetches.push({ url })
+                return Promise.resolve({
+                    ok: true,
+                    status: 200,
+                    json: () =>
+                        Promise.resolve({
+                            progress: dom.busy ? 0.4 : 0,
+                            state: { job_count: dom.busy ? 4 : 0 },
+                        }),
+                })
+            }
             dom.fetches.push({ url, body: JSON.parse(options.body) })
             return Promise.resolve({
                 ok: true,
@@ -289,7 +305,10 @@ const BLOCK_PLAIN = 'a girl by a pool\nNegative prompt: lowres\nSteps: 30, Seed:
     const dom = makeDom({ hash: `#luma_params=${encodeURIComponent(REAL)}` })
     await run(dom, { tick: 12 })
 
-    const sent = Object.fromEntries(dom.fetches.map((f) => [f.url, f.body.name]))
+    // POSTs only: the busy check is a bodyless GET and carries no name.
+    const sent = Object.fromEntries(
+        dom.fetches.filter((f) => f.body).map((f) => [f.url, f.body.name]),
+    )
     assert.equal(
         sent['/luma/v1/checkpoint'],
         'aniversev20-revAnimatedv122-50p-hll3vtubers',
@@ -301,6 +320,36 @@ const BLOCK_PLAIN = 'a girl by a pool\nNegative prompt: lowres\nSteps: 30, Seed:
         'and the VAE from `VAE`, not `VAE hash`',
     )
     console.log('ok  sets the checkpoint and VAE the block names')
+}
+
+// The checkpoint is a global setting and `modules/processing.py` reloads the
+// model *inside* the batch loop, so switching mid-run changes the model under
+// a running batch and the rest of it comes out in another style — no error,
+// just images that are not what was asked for. The scripts that open these
+// tabs refuse to switch while busy; without the same guard here, this would
+// put the switch straight back a second later.
+{
+    const BLOCK =
+        'a girl\nNegative prompt: lowres\n' +
+        'Steps: 28, Size: 832x1216, Model: hassakuXLIllustrious_v12Style'
+    const dom = makeDom({ hash: `#luma_params=${encodeURIComponent(BLOCK)}` })
+    dom.busy = true
+    await run(dom, { tick: 4 })
+
+    const posted = dom.fetches.filter((f) => f.body).map((f) => f.url)
+    assert.ok(
+        !posted.includes('/luma/v1/checkpoint'),
+        'no checkpoint switch while a batch is running',
+    )
+    assert.ok(
+        dom.logs.some((line) => line.includes('holding')),
+        'and it says the switch is being held rather than failing silently',
+    )
+    // The block still lands: a tab sitting empty for the length of a batch
+    // reads as broken, so it pastes onto whatever model is loaded and the
+    // right one arrives when the GPU is free.
+    assert.ok(dom.clicks.includes('paste'), 'the block still pastes immediately')
+    console.log('ok  holds the checkpoint switch while a batch is running')
 }
 
 {

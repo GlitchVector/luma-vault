@@ -197,11 +197,69 @@
     // None of this makes the dropdown *display* the checkpoint. That value is
     // read once when Gradio builds the page, so a checkpoint set afterwards
     // shows as blank until a reload — while being the model that generates.
+    /** Whether Forge is generating right now. Unreachable counts as idle. */
+    function generating() {
+        return fetch('/sdapi/v1/progress?skip_current_image=true')
+            .then((response) => (response.ok ? response.json() : null))
+            .then((body) => {
+                const job = (body && body.state) || {}
+                return Number(job.job_count || 0) > 0 || Number((body && body.progress) || 0) > 0
+            })
+            .catch(() => false)
+    }
+
+    /**
+     * Apply the checkpoint once the batch running now has finished.
+     *
+     * The checkpoint is a **global** setting, and `modules/processing.py` calls
+     * `forge_model_reload()` *inside* the batch loop — every iteration
+     * re-resolves the model from it. Switching mid-run therefore changes the
+     * model out from under the batch and the rest of it comes out in another
+     * style, with no error anywhere. Images quietly not being what was asked
+     * for is the worst shape a bug can take here, because it reads as the model
+     * being moody.
+     *
+     * The scripts that open these tabs already refuse to switch while busy, but
+     * that closes only half of it: this runs in the browser a second later and
+     * would put the switch straight back.
+     *
+     * Deferred rather than waited on, so the block still pastes immediately —
+     * a tab sitting empty for the length of a batch reads as broken. It lands
+     * on whatever model is loaded, and the right one arrives when the GPU is
+     * free. Ten minutes is the limit: past that the tab has been abandoned, and
+     * a checkpoint changing under whatever is happening by then would be a
+     * surprise rather than a service.
+     */
+    function laterWhenIdle(name, waited) {
+        const POLL_MS = 3000
+        const GIVE_UP_MS = 10 * 60 * 1000
+        void generating().then((busy) => {
+            if (!busy) {
+                void send('checkpoint', name).then(() =>
+                    console.log('[luma-vault] batch finished; applied %s', name),
+                )
+                return
+            }
+            if (waited >= GIVE_UP_MS) {
+                console.warn('[luma-vault] still generating after 10min; left the checkpoint alone')
+                return
+            }
+            setTimeout(() => laterWhenIdle(name, waited + POLL_MS), POLL_MS)
+        })
+    }
+
     function applyCheckpoint(params) {
         const name = settingsField(params, 'Model')
         if (!name) return Promise.resolve()
 
-        return send('checkpoint', name).then((result) => {
+        return generating()
+            .then((busy) => {
+                if (!busy) return send('checkpoint', name)
+                console.log('[luma-vault] Forge is generating — holding %s until it finishes', name)
+                laterWhenIdle(name, 0)
+                return null
+            })
+            .then((result) => {
             const preset = result && result.preset
             if (!preset) return
             // `all` shows every control for every architecture, so it is never

@@ -208,11 +208,14 @@ ADetailer settings keeps them untouched.
 
 Staying on the same architecture changes only the model and the seed.
 
-## Hassaku, and Illustrious checkpoints generally
+## Illustrious checkpoints — `hassaku`, `deliberate`, `illustrious`
 
-Pass `hassaku`. Both commands then send what the Illustrious guidance asks for:
+`hassaku`, `perfectdeliberate` and `waiNSFWIllustrious` are **all Illustrious
+checkpoints**, so all three get the same treatment — the split that used to put
+`deliberate` on the generic XL defaults was an accident of its name, not a fact
+about the model. Both commands send what the Illustrious guidance asks for:
 
-| | Hassaku / Illustrious | the plain XL default |
+| | Illustrious | the plain XL default |
 |---|---|---|
 | Quality | `masterpiece, best quality, amazing quality, very aesthetic, **newest**, absurdres` | same without `newest` |
 | Negative | adds **`bad quality`** beside `worst quality` | `worst quality` only |
@@ -231,8 +234,24 @@ Neither is the creator — Civitai moved the model behind a host that cannot be
 read — so the commands send 5, which is inside both. Try `--cfg 7` for the
 other reading.
 
-`perfectdeliberate` is an Illustrious checkpoint too, and its own card asks for
-CFG 5-8, so `--cfg 6` is worth a try there when a render looks flat.
+**Shortcut: `illu`.** `--model` is a substring match, so `illu` finds every
+Illustrious checkpoint installed and takes the newest by file date. Name one
+specifically — `hassaku`, `deliberate`, `wai` — when you want that one rather
+than the latest.
+
+**Switching between them needs no new command.** Because every Illustrious
+checkpoint gets the same quality tags, negative, sampler, CFG and steps, a
+block written for one is already correct for all of them: change Forge's
+Checkpoint dropdown and generate again. Nothing else in the tab has to move.
+
+That does *not* hold across families. `noob` wants different quality tags,
+`aniverse` needs its trigger and a different sampler and CFG — so switching to
+either means re-running the command rather than swapping the dropdown. And the
+checkpoint is global in Forge, so the dropdown moves it for every tab, not just
+the one in front of you.
+
+`perfectdeliberate`'s own card asks for CFG 5-8 where the Illustrious guides say
+4.5-5, so `--cfg 6` is worth a try there when a render looks flat.
 
 ## AniVerse
 
@@ -304,6 +323,21 @@ The notes will say whether it did. On a same-architecture move they are noise.
   `pnpm setup:forge` and reload the tab).
 - **"Apply settings" reverts the checkpoint** to whatever the Settings page was
   built with. Re-run this, or re-select the model, after using it.
+
+
+### While a batch is running
+
+Both scripts **refuse to switch the checkpoint** if Forge is mid-generation,
+and say so. This is not politeness: the checkpoint is a global setting and
+`modules/processing.py` calls `forge_model_reload()` *inside* the batch loop,
+so every iteration re-resolves the model from that global. Selecting one while
+a batch runs changes the model out from under it and the rest of the batch
+comes out in another style — no error, just images quietly not being what was
+asked for.
+
+The tab still opens either way. Its block names the model, so the switch
+happens when that tab generates, which is after the batch anyway. Say so when
+reporting: the dropdown will show the running batch's model until then.
 
 ## Requirements
 

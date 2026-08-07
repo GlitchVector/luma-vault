@@ -21,6 +21,11 @@ export const MIN_TILE_SIZE = 140
 /** How large. Past this a "grid" is a single column of pictures. */
 export const MAX_TILE_SIZE = 480
 
+/** The date on the DeviantArt badge's tooltip. Locale order, no time of day. */
+function formatPostedAt(postedAt: number): string {
+  return new Date(postedAt).toLocaleDateString()
+}
+
 interface MediaTileProps {
   item: MediaItem
   /**
@@ -148,7 +153,11 @@ export const MediaTile = memo(function MediaTile({
             : null}
 
           {/* One row, so a 4K video does not stack two badges on one corner. */}
-          {isVideo || fourK || item.generation?.needsSourceImage || item.generation?.postprocessed ? (
+          {isVideo ||
+          fourK ||
+          item.generation?.needsSourceImage ||
+          item.generation?.postprocessed ||
+          item.deviantArt ? (
             <span className="pointer-events-none absolute left-1.5 top-1.5 flex gap-1">
               {isVideo ? (
                 <span className="rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-zinc-100">
@@ -177,6 +186,26 @@ export const MediaTile = memo(function MediaTile({
                   title="Upscaled in the Extras tab — an existing image, resized"
                 >
                   e
+                </span>
+              ) : null}
+              {/* Already on DeviantArt. Solid green once it is public; hollow
+                  while it is only staged, which means there is something
+                  waiting in Studio rather than something finished. */}
+              {item.deviantArt ? (
+                <span
+                  className={cn(
+                    'rounded px-1 py-0.5 text-[10px] font-semibold tracking-wide',
+                    item.deviantArt.published
+                      ? 'bg-emerald-500/90 text-black'
+                      : 'bg-black/70 text-emerald-300 ring-1 ring-inset ring-emerald-400/60',
+                  )}
+                  title={
+                    item.deviantArt.published
+                      ? `Posted to DeviantArt on ${formatPostedAt(item.deviantArt.postedAt)}`
+                      : `Uploaded to Sta.sh on ${formatPostedAt(item.deviantArt.postedAt)} — not posted yet, it is waiting in your Studio`
+                  }
+                >
+                  d
                 </span>
               ) : null}
             </span>

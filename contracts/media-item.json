@@ -42,7 +42,12 @@
     },
     "dupeGroup": 1,
     "upscaledFrom": "/Volumes/vault/Images/holiday.png",
-    "upscaledTo": null
+    "upscaledTo": null,
+    "deviantArt": {
+      "url": "https://www.deviantart.com/jebaz/art/Sister-of-the-Halberd-1234567890",
+      "published": true,
+      "postedAt": 1754400000000
+    }
   },
   {
     "id": 2,
@@ -76,7 +81,12 @@
     "generation": null,
     "dupeGroup": 1,
     "upscaledFrom": null,
-    "upscaledTo": "/Volumes/vault/Images/holiday_upscaled_4k.png"
+    "upscaledTo": "/Volumes/vault/Images/holiday_upscaled_4k.png",
+    "deviantArt": {
+      "url": null,
+      "published": false,
+      "postedAt": 1754400500000
+    }
   },
   {
     "id": 3,
@@ -99,6 +109,7 @@
     "generation": null,
     "dupeGroup": null,
     "upscaledFrom": null,
-    "upscaledTo": null
+    "upscaledTo": null,
+    "deviantArt": null
   }
 ]

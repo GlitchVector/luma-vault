@@ -689,15 +689,15 @@ describe('facePrompt and brackets', () => {
   })
 })
 
-describe('the Hassaku / Illustrious family', () => {
-  const TO_HASSAKU = {
+describe('the Illustrious family', () => {
+  const TO_ILLUSTRIOUS = {
     architecture: 'xl',
     checkpoint: 'hassakuXLIllustrious_v12Style',
-    family: 'hassaku',
+    family: 'illustrious',
   } as const
 
   it('uses Euler a at the settings Illustrious models ask for', () => {
-    const settings = migrateGeneration(SD15, TO_HASSAKU).block.split('\n').at(-1)!
+    const settings = migrateGeneration(SD15, TO_ILLUSTRIOUS).block.split('\n').at(-1)!
     expect(settings).toContain('Sampler: Euler a')
     // 5 is inside both readings the sources give: a Hassaku page says 7, the
     // Illustrious guides call 4.5-5 the sweet spot in a usable 3-7.
@@ -706,7 +706,7 @@ describe('the Hassaku / Illustrious family', () => {
   })
 
   it('adds the recency tag Illustrious learned and plain SDXL never saw', () => {
-    const { block } = migrateGeneration(SD15, TO_HASSAKU)
+    const { block } = migrateGeneration(SD15, TO_ILLUSTRIOUS)
     expect(block).toContain('newest')
     expect(block).toContain('amazing quality')
   })
@@ -714,14 +714,14 @@ describe('the Hassaku / Illustrious family', () => {
   it('states bad quality as well as worst quality', () => {
     // Separate learned tags rather than synonyms, and these models are
     // described as reading the negative about as strongly as the prompt.
-    const { block } = migrateGeneration(SD15, TO_HASSAKU)
+    const { block } = migrateGeneration(SD15, TO_ILLUSTRIOUS)
     const negative = block.split('\n').find((line) => line.startsWith('Negative prompt:'))!
     expect(negative).toContain('bad quality')
     expect(negative).toContain('worst quality')
   })
 
   it('carries no AniVerse trigger, which belongs to another family', () => {
-    expect(migrateGeneration(SD15, TO_HASSAKU).block).not.toContain('4n1v3rs3')
+    expect(migrateGeneration(SD15, TO_ILLUSTRIOUS).block).not.toContain('4n1v3rs3')
   })
 })
 

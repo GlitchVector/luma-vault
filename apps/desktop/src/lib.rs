@@ -331,6 +331,15 @@ async fn deviantart_send(
     api::deviantart_send(&app, &state, drafts, publish, stack).await
 }
 
+#[tauri::command(async)]
+async fn deviantart_mark(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+    posted: bool,
+) -> Result<usize, String> {
+    api::deviantart_mark(&state, ids, posted)
+}
+
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
@@ -749,6 +758,7 @@ pub fn run() {
             deviantart_connect,
             deviantart_disconnect,
             deviantart_send,
+            deviantart_mark,
             remote_status,
             remote_connect,
             remote_disconnect,

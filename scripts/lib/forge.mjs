@@ -75,7 +75,11 @@ export function architectureOf(file) {
  */
 export function familyOf(name) {
   if (/noob/i.test(name)) return 'noob'
-  if (/hassaku/i.test(name)) return 'hassaku'
+  // Every Illustrious checkpoint installed here, by the names they ship under.
+  // PerfectDeliberate is one too — its Civitai page lists it as an Illustrious
+  // checkpoint — and treating it as generic XL was an accident of the name not
+  // containing the word, not a fact about the model.
+  if (/hassaku|illustrious|perfectdeliberate/i.test(name)) return 'illustrious'
   if (/aniverse/i.test(name)) return 'aniverse'
   return undefined
 }
@@ -102,7 +106,7 @@ export function settingsFor(family, architecture) {
   if (family === 'aniverse') {
     return { cfg: 5.5, steps: 30, sampler: 'DPM++ 2M', schedule: 'Karras', trigger: '4n1v3rs3' }
   }
-  if (family === 'hassaku') {
+  if (family === 'illustrious') {
     // CFG is the one the sources disagree about — 7 on a Hassaku-specific
     // page, 4.5-5 in the Illustrious guides, usable range 3-7. 5 is inside
     // both, and `--cfg 7` tries the other reading.
@@ -155,14 +159,56 @@ export async function resolveModel(wanted) {
   return matches[0]
 }
 
-/** Select the checkpoint in Forge — before any tab opens, or its dropdown
- *  renders empty over a correctly loaded model. */
+/**
+ * Whether Forge is generating right now.
+ *
+ * Unreachable counts as idle: a Forge that is not running cannot be disturbed,
+ * and refusing to work because the status call failed would be worse than the
+ * thing being guarded against.
+ */
+export async function isGenerating() {
+  try {
+    const progress = await forge('/sdapi/v1/progress')
+    const job = progress?.state ?? {}
+    return Number(job.job_count ?? 0) > 0 || Number(progress?.progress ?? 0) > 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Select the checkpoint in Forge — before any tab opens, or its dropdown
+ * renders empty over a correctly loaded model.
+ *
+ * **Refused while a generation is running, and that is not politeness.** The
+ * checkpoint is a global setting, and `modules/processing.py` calls
+ * `forge_model_reload()` *inside* the batch loop — every iteration re-resolves
+ * the model from that global. So selecting one here while a batch is going
+ * changes the model out from under it, and the rest of the batch comes out in
+ * a different style with nothing to explain why. It is not an error anyone
+ * sees; it is images quietly not being what was asked for.
+ *
+ * The tab still opens when this refuses. Its block names the model, so the
+ * switch happens when that tab generates — after the batch, which is when it
+ * was wanted anyway.
+ *
+ * @returns whether the checkpoint was actually selected.
+ */
 export async function selectCheckpoint(name) {
+  if (await isGenerating()) {
+    console.error(
+      `note: Forge is mid-generation, so ${name} was NOT selected — switching now would change\n` +
+        '  the model under the running batch and the rest of it would come out in another style.\n' +
+        '  The tab still opens and its block names the model, so it switches when you generate there.',
+    )
+    return false
+  }
   await forge('/luma/v1/checkpoint', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   })
+  return true
 }
 
 /** Open Forge with a parameter block in the fragment, for the prefill

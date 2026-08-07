@@ -68,6 +68,7 @@ function makeItem(id: number): MediaItem {
     dupeGroup: null,
     upscaledFrom: null,
     upscaledTo: null,
+    deviantArt: null,
   }
 }
 

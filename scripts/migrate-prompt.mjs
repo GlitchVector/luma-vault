@@ -321,6 +321,11 @@ if (isImg2img) {
 
 // Selecting first is the difference between a dropdown that shows the model and
 // one that renders empty over a correctly loaded model.
-await selectCheckpoint(target.name)
+const selected = await selectCheckpoint(target.name)
 openWithBlock(migrated)
-console.log('\nopened Forge with the migrated parameters.')
+console.log(
+  selected
+    ? '\nopened Forge with the migrated parameters.'
+    : '\nopened Forge with the migrated parameters. The dropdown still shows the running ' +
+        `batch’s model; generating from this tab switches to ${target.name}.`,
+)

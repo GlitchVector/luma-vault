@@ -49,7 +49,7 @@ export interface MigrationTarget {
    * which are genuinely different words rather than a preference — see
    * {@link NOOB_QUALITY}. Anything else uses the common XL set.
    */
-  family?: 'noob' | 'aniverse' | 'hassaku'
+  family?: 'noob' | 'aniverse' | 'illustrious'
   /**
    * How the picture is rendered: flat anime, semi-real, or photoreal.
    *
@@ -285,14 +285,14 @@ const ANIVERSE_QUALITY = 'masterpiece, best quality, more details, (hyperdetaile
 const ANIVERSE_TRIGGER = '4n1v3rs3'
 
 /**
- * What Hassaku XL and the Illustrious models generally ask for.
+ * What the Illustrious checkpoints ask for.
  *
  * `masterpiece, best quality, amazing quality` in front is the part the guides
  * are emphatic about, with `very aesthetic` and `newest` after — so this is the
  * common XL set plus `newest`, which Illustrious learned as a recency tag and
  * the plain SDXL merges never saw.
  */
-const HASSAKU_QUALITY =
+const ILLUSTRIOUS_QUALITY =
   'masterpiece, best quality, amazing quality, very aesthetic, newest, absurdres'
 
 /**
@@ -303,7 +303,7 @@ const HASSAKU_QUALITY =
  * models are described as responding to the negative about as strongly as to
  * the prompt, which is why it is worth stating fully rather than thinly.
  */
-const HASSAKU_NEGATIVE = [
+const ILLUSTRIOUS_NEGATIVE = [
   'worst quality',
   'bad quality',
   'low quality',
@@ -320,7 +320,7 @@ const HASSAKU_NEGATIVE = [
 ]
 
 /**
- * Hassaku's own sampling, as far as the sources agree.
+ * Illustrious sampling, as far as the sources agree.
  *
  * `Euler a` is named repeatedly as the best sampler for Illustrious models, at
  * around 28 steps. **CFG is where the sources disagree**: one Hassaku-specific
@@ -330,7 +330,7 @@ const HASSAKU_NEGATIVE = [
  * matches the other Illustrious checkpoint here. `--cfg 7` tries the other
  * reading.
  */
-const HASSAKU_SETTINGS = { cfg: '5', steps: '28', sampler: 'Euler a', schedule: 'Automatic' }
+const ILLUSTRIOUS_SETTINGS = { cfg: '5', steps: '28', sampler: 'Euler a', schedule: 'Automatic' }
 
 const ANIVERSE_NEGATIVE = [
   'worst quality',
@@ -767,8 +767,8 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
           ? NOOB_QUALITY
           : target.family === 'aniverse'
             ? ANIVERSE_QUALITY
-            : target.family === 'hassaku'
-              ? HASSAKU_QUALITY
+            : target.family === 'illustrious'
+              ? ILLUSTRIOUS_QUALITY
               : XL_QUALITY
       nextPrompt = `${quality},\n${nextPrompt}`
       notes.push(
@@ -796,8 +796,8 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
         ? NOOB_NEGATIVE
         : target.family === 'aniverse'
           ? ANIVERSE_NEGATIVE
-          : target.family === 'hassaku'
-            ? HASSAKU_NEGATIVE
+          : target.family === 'illustrious'
+            ? ILLUSTRIOUS_NEGATIVE
             : XL_NEGATIVE
     for (const term of baseline) {
       if (!new RegExp(`(^|[^a-z])${term}([^a-z]|$)`).test(already)) keptNegative.push(term)
@@ -1003,8 +1003,8 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
     const tuned =
       target.family === 'aniverse'
         ? ANIVERSE_SETTINGS
-        : target.family === 'hassaku'
-          ? HASSAKU_SETTINGS
+        : target.family === 'illustrious'
+          ? ILLUSTRIOUS_SETTINGS
           : null
     if (tuned) {
       next.set('CFG scale', tuned.cfg)

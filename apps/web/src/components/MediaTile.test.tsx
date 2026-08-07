@@ -55,6 +55,7 @@ const item: MediaItem = {
   dupeGroup: null,
   upscaledFrom: null,
   upscaledTo: null,
+  deviantArt: null,
 }
 
 afterEach(() => {
@@ -208,6 +209,42 @@ describe('MediaTile', () => {
         />,
       )
       expect(screen.getByTitle(/Upscaled in the Extras tab/)).toBeTruthy()
+    })
+
+    it('badges a posted picture with d, and says when', () => {
+      render(
+        <MediaTile
+          item={{
+            ...item,
+            deviantArt: { url: 'https://d/1', published: true, postedAt: 1754400000000 },
+          }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+      expect(screen.getByText('d')).toBeTruthy()
+      expect(screen.getByTitle(/Posted to DeviantArt on/)).toBeTruthy()
+    })
+
+    it('distinguishes staged-but-not-posted from posted', () => {
+      // Two genuinely different states. Staged means there is something waiting
+      // in Studio to go finish — a badge that read the same for both would say
+      // "done" about work that is not.
+      render(
+        <MediaTile
+          item={{ ...item, deviantArt: { url: null, published: false, postedAt: 1754400000000 } }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+      expect(screen.getByTitle(/waiting in your Studio/)).toBeTruthy()
+    })
+
+    it('leaves an unposted picture without the d badge', () => {
+      render(<MediaTile item={item} onOpen={() => {}} showBoxes={false} size={DEFAULT_TILE_SIZE} />)
+      expect(screen.queryByText('d')).toBeNull()
     })
 
     it('leaves a txt2img generation without the i2i badge', () => {

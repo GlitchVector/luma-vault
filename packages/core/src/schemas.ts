@@ -123,6 +123,27 @@ export const generationSchema = z.object({
 })
 export type Generation = z.infer<typeof generationSchema>
 
+/**
+ * A picture's existing DeviantArt submission.
+ *
+ * Recorded at *staging*, before the publish is attempted — the file is on their
+ * servers either way, which is already enough to stop it going up twice.
+ */
+export const deviantArtPostSchema = z.object({
+  /**
+   * The deviation page.
+   *
+   * Null while it is only staged in Sta.sh, and on rows marked by hand — which
+   * know the picture is up but not where, and say so by having no link.
+   */
+  url: z.string().nullable().default(null),
+  /** Posted publicly, as against staged and waiting in Studio. */
+  published: z.boolean(),
+  /** Unix ms. */
+  postedAt: z.number(),
+})
+export type DeviantArtPost = z.infer<typeof deviantArtPostSchema>
+
 export const mediaItemSchema = z.object({
   id: z.number(),
   folderId: z.number(),
@@ -177,6 +198,14 @@ export const mediaItemSchema = z.object({
    * ever seen in the lightbox, where it is the way back to the variant.
    */
   upscaledTo: z.string().nullable().default(null),
+  /**
+   * Where this picture already is on DeviantArt, when it is.
+   *
+   * The one field on a row that is a fact about somewhere else. Carried rather
+   * than fetched because "have I posted this?" is asked while scrolling past a
+   * hundred tiles — a per-tile network answer would not be an answer.
+   */
+  deviantArt: deviantArtPostSchema.nullable().default(null),
 })
 export type MediaItem = z.infer<typeof mediaItemSchema>
 
@@ -350,6 +379,22 @@ export const mediaQuerySchema = z.object({
   rating: ratingSchema.nullable().default(null),
   sexyOnly: z.boolean().default(false),
   search: z.string().default(''),
+  /**
+   * Run `search` against the folder path instead of the filename and prompt.
+   *
+   * A mode on the one field rather than a second box. The question is the same
+   * — *where does this word appear* — and two boxes would mean choosing which
+   * one holds the answer before knowing it. It is also why the term is not
+   * matched against *both*: a library organised into `\aqua\`, `\moona\` folders
+   * has the character's name in the path of every file and in the prompt of
+   * most of them, so an either-way match answers "the folder" with the whole
+   * library and the toggle would do nothing visible.
+   *
+   * The path here is the directory only — the filename is what the default
+   * mode already searches, and a term matching it in both modes would make the
+   * toggle look broken on exactly the searches people try first.
+   */
+  searchPaths: z.boolean().default(false),
   /** Show only items carrying this structural tag. */
   tag: z.string().nullable().default(null),
   /** Show only items rated at least this many stars. `1` means "rated at all". */
@@ -512,6 +557,12 @@ export const deviantArtDraftSchema = z.object({
   matureClassification: z.array(matureClassificationSchema),
   isAiGenerated: z.boolean(),
   noai: z.boolean(),
+  /**
+   * `display_resolution`: how wide the deviation page draws the image, 0-8 with
+   * 0 meaning original. Defaulted so an older payload still parses — and the
+   * value it lands on is the one this app wants anyway.
+   */
+  displayResolution: z.number().int().min(0).max(8).default(0),
 })
 export type DeviantArtDraftWire = z.infer<typeof deviantArtDraftSchema>
 
