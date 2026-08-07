@@ -34,6 +34,15 @@ interface FilterBarProps {
  */
 const BIG_EDGE = 1000
 
+/**
+ * The top of "not one of the good ones".
+ *
+ * Three rather than a number of its own, because the bar's ★4+ pill already
+ * splits the scale there — one boundary, read from both sides, so the two
+ * filters cannot come to disagree about where good starts.
+ */
+const LOW_STARS = 3
+
 /** Everything either model can put a name to, for the "found" picker. */
 const DETECTABLE = [...NUDENET_LABELS, ...ANIME_LABELS]
 
@@ -106,6 +115,7 @@ export function FilterBar({
     (query.label ? 1 : 0) +
     (query.animated !== null ? 1 : 0) +
     (query.greyscale !== null ? 1 : 0) +
+    (query.maxStars !== null ? 1 : 0) +
     (query.minLongestEdge !== null ? 1 : 0)
 
   return (
@@ -169,11 +179,11 @@ export function FilterBar({
         // applying.
         const next = () => {
           if (only && tag.triage === true && !query.unstarred) {
-            // `minStars` goes with it: nothing is both unstarred and 4+, and
-            // the two star pills already replace each other for the same
-            // reason. A filter combination that can only ever be empty is not
-            // worth being able to express.
-            return { unstarred: true, minStars: null }
+            // Both star filters go with it: nothing is unstarred *and* rated,
+            // whichever end the rating filter is reading from. A filter
+            // combination that can only ever be empty is not worth being able
+            // to express.
+            return { unstarred: true, minStars: null, maxStars: null }
           }
           if (only) return { tag: null, unstarred: false, hideTags: [...without, tag.value] }
           if (hidden) return { hideTags: without, unstarred: false }
@@ -271,7 +281,7 @@ export function FilterBar({
       <Pill
         active={query.minStars === 4}
         title="Only pictures you rated 4 stars or better, including ratings imported from an Image Browser database"
-        onClick={() => onChange({ minStars: query.minStars === 4 ? null : 4 })}
+        onClick={() => onChange({ minStars: query.minStars === 4 ? null : 4, maxStars: null })}
       >
         ★ 4+
       </Pill>
@@ -284,7 +294,7 @@ export function FilterBar({
         active={query.minStars === 5}
         ariaLabel="Favourites only"
         title="Favourites — only the pictures you rated 5 stars. Rate one with 5 in the lightbox."
-        onClick={() => onChange({ minStars: query.minStars === 5 ? null : 5 })}
+        onClick={() => onChange({ minStars: query.minStars === 5 ? null : 5, maxStars: null })}
       >
         ♥
       </Pill>
@@ -413,6 +423,35 @@ export function FilterBar({
 
           <span className="mx-1 h-4 w-px bg-white/10" />
 
+          {/* The other end of the ★4+ pill on the bar above. Down here because
+              it answers a rarer question — what did I look at and not think
+              much of — and that is a pass you make occasionally, not a view you
+              keep.
+
+              **Rated below four, not "less than four".** An unstarred picture
+              is not a bad one, and lumping the unjudged in here would bury the
+              handful you actually rated 1-3 under everything you have not
+              reached yet. `unstarred` is the pill for that question. */}
+          <span className="text-[11px] text-zinc-500">Rating</span>
+          <Pill
+            active={query.maxStars === LOW_STARS}
+            title={`Only pictures you rated ${LOW_STARS} stars or fewer. Ones nobody has rated are not included — they are not low-rated, just unjudged.`}
+            onClick={() =>
+              onChange(
+                query.maxStars === LOW_STARS
+                  ? { maxStars: null }
+                  : // Nothing is both 4+ and 3-, and nothing is both unrated and
+                    // rated at all, so both are cleared rather than left to
+                    // produce a grid that can only ever be empty.
+                    { maxStars: LOW_STARS, minStars: null, unstarred: false },
+              )
+            }
+          >
+            ★ &lt;4
+          </Pill>
+
+          <span className="mx-1 h-4 w-px bg-white/10" />
+
           <span className="text-[11px] text-zinc-500">Colour</span>
           {/* Read from the colour signature the duplicate finder already
               stores, so this costs no decoding. Sepia and other tints score
@@ -466,6 +505,7 @@ export function FilterBar({
                   label: null,
                   animated: null,
                   greyscale: null,
+                  maxStars: null,
                   minLongestEdge: null,
                 })
               }

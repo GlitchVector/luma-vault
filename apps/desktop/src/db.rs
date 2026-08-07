@@ -2259,6 +2259,14 @@ impl Db {
             where_parts.push(format!("stars >= ?{}", binds.len() + 1));
             binds.push(Box::new(min));
         }
+        if let Some(max) = query.max_stars {
+            // NULL fails this comparison, so an unrated row is left out without
+            // saying so anywhere — which is the wanted reading. "Rated below
+            // four" is a judgement someone made; "nobody has judged it" is the
+            // `unstarred` question and has its own filter.
+            where_parts.push(format!("stars <= ?{}", binds.len() + 1));
+            binds.push(Box::new(max));
+        }
         if query.unstarred {
             // `stars` is NULL until somebody rates a row, and `0` is not used —
             // clearing a rating writes NULL back. So this is the triage queue:
@@ -3006,6 +3014,7 @@ mod tests {
             search_paths: false,
             tag: None,
             min_stars: None,
+            max_stars: None,
             unstarred: false,
             has_prompt: None,
             img2img: None,
@@ -4332,6 +4341,35 @@ mod tests {
 
         // And the filter absent means the filter is absent.
         assert_eq!(db.query_media(&query()).unwrap().total, 3);
+    }
+
+    #[test]
+    fn rated_below_four_is_rated_first_and_below_second() {
+        // The pass where you go back through what you already judged and throw
+        // out the misses. An unstarred row is not a miss — nobody has said
+        // anything about it — and letting NULL through here would bury the
+        // handful rated 1-3 under everything nobody has reached yet.
+        let (db, _folder) = seeded();
+        let ids: Vec<i64> = db.query_media(&query()).expect("q").items.iter().map(|i| i.id).collect();
+        db.set_stars(ids[0], Some(5)).expect("stars");
+        db.set_stars(ids[1], Some(2)).expect("stars");
+        // ids[2] is left unrated.
+
+        let low = db
+            .query_media(&MediaQuery { max_stars: Some(3), ..query() })
+            .expect("query");
+        assert_eq!(
+            low.items.iter().map(|item| item.id).collect::<Vec<_>>(),
+            vec![ids[1]],
+            "the 2-star one, and neither the 5-star nor the unrated one"
+        );
+
+        // And it is the other side of the same boundary the 4+ pill reads, so
+        // the two together are the whole rated library and never overlap.
+        let high = db
+            .query_media(&MediaQuery { min_stars: Some(4), ..query() })
+            .expect("query");
+        assert_eq!(high.items.iter().map(|item| item.id).collect::<Vec<_>>(), vec![ids[0]]);
     }
 
     #[test]

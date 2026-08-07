@@ -2284,7 +2284,15 @@ describe('the Prompt filter', () => {
 describe('the More filters panel', () => {
   const sent = () =>
     queries.at(-1) as
-      | { greyscale?: boolean | null; animated?: boolean | null; label?: string | null; minLongestEdge?: number | null }
+      | {
+          greyscale?: boolean | null
+          animated?: boolean | null
+          label?: string | null
+          minLongestEdge?: number | null
+          minStars?: number | null
+          maxStars?: number | null
+          unstarred?: boolean
+        }
       | undefined
 
   async function openMore() {
@@ -2302,6 +2310,33 @@ describe('the More filters panel', () => {
 
     screen.getByRole('button', { name: /^More/ }).click()
     expect(await screen.findByRole('button', { name: 'B&W' })).toBeTruthy()
+  })
+
+  it('asks for what was rated below four, and not for what nobody rated', async () => {
+    // The pass where you go back through the misses. An unstarred picture is
+    // not a miss, so the filter is an upper bound on a rating that exists —
+    // which is a claim the backend makes, and this pins the half that decides
+    // to send it at all.
+    await openMore()
+    queries.length = 0
+    screen.getByRole('button', { name: '★ <4' }).click()
+    await waitFor(() => expect(sent()?.maxStars).toBe(3))
+    expect(sent()?.unstarred).toBe(false)
+
+    screen.getByRole('button', { name: '★ <4' }).click()
+    await waitFor(() => expect(sent()?.maxStars).toBeNull())
+  })
+
+  it('never leaves both ends of the rating filter on at once', async () => {
+    // Nothing is both 4+ and 3-, so a bar that could express it would be a bar
+    // that can empty the grid with two clicks and nothing saying why.
+    await openMore()
+    screen.getByRole('button', { name: '★ <4' }).click()
+    await waitFor(() => expect(sent()?.maxStars).toBe(3))
+
+    screen.getByRole('button', { name: '★ 4+' }).click()
+    await waitFor(() => expect(sent()?.minStars).toBe(4))
+    expect(sent()?.maxStars).toBeNull()
   })
 
   it('asks the index for black and white', async () => {

@@ -344,6 +344,10 @@ pub struct MediaQuery {
     /// "anything I have rated at all".
     #[serde(default)]
     pub min_stars: Option<i64>,
+    /// Show only rows rated at most this many stars — and *rated*. An unstarred
+    /// row is not a low-rated one, and `unstarred` is the field that asks that.
+    #[serde(default)]
+    pub max_stars: Option<i64>,
     /// Show only rows nobody has starred yet — the triage queue.
     ///
     /// A separate field rather than `min_stars: Some(0)`, which under an
