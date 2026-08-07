@@ -107,12 +107,31 @@ export interface MigrationTarget {
   /**
    * An explicit canvas — `832x1216`. Wins over the bucket rule.
    *
-   * The person choosing a shape, usually because the source was square and the
-   * picture is not. Snapped to the nearest SDXL bucket when the target is XL:
-   * the aspect is what was asked for, the pixel count is what the model was
-   * trained at.
+   * The caller choosing a shape rather than inheriting the source's. `/sdxl`
+   * passes `832x1216` on every run: what these prompts are for is a standing
+   * figure, and the source's aspect is an accident of whatever it was made
+   * from — a square init image is not a request for a square picture. Snapped
+   * to the nearest SDXL bucket when the target is XL: the aspect is what was
+   * asked for, the pixel count is what the model was trained at.
    */
   size?: string
+  /**
+   * The positive prompt, replaced wholesale after every rewrite has run.
+   *
+   * The last look. `/sdxl` migrates and opens a tab in one movement, so the
+   * only text the person ever saw was the one they asked for — and once the
+   * tab is open the prompt is in Forge's box, where fixing it means retyping
+   * it by hand. `--dry-run` prints the migrated block, and whatever comes back
+   * through here supersedes it.
+   *
+   * Deliberately applied *late*: the rewrites still run, because their output
+   * is what was shown for editing, and everything downstream that reads the
+   * prompt back — the negative-conflict pass, the ADetailer face prompt — then
+   * reads the approved text rather than the proposed one. An edit that renames
+   * the character would otherwise leave the face pass repainting a head from a
+   * description nobody agreed to.
+   */
+  prompt?: string
 }
 
 export interface Migration {
@@ -890,6 +909,19 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
     }
   }
 
+  // The last look — see `MigrationTarget.prompt`. Before the two passes that
+  // read the prompt back, so both see what was approved.
+  if (target.prompt !== undefined) {
+    const edited = target.prompt.trim()
+    if (edited && edited !== nextPrompt.trim()) {
+      nextPrompt = edited
+      notes.push(
+        'Prompt replaced with the edited one. The rewrites above still ran — their output is what ' +
+          'was shown for editing — but the text they produced is superseded by this.',
+      )
+    }
+  }
+
   // Negatives that cancel what the prompt asks for. An SD1.5 negative often
   // carried `fat, chubby` to fight that model's doughiness; on a booru model it
   // deletes the body type the prompt just requested.
@@ -924,6 +956,10 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
 
   // --- settings -----------------------------------------------------------
   const next = new Map(fields)
+  // The canvas the original was made at, read before anything rewrites it. Both
+  // the bucket rule and an explicit canvas need it, and they run far apart.
+  const originalSize = (get('Size') ?? '').match(/(\d+)x(\d+)/)
+  const originalHeight = originalSize ? Number(originalSize[2]) : 0
   next.set('Model', target.checkpoint)
   // Always random: see the doc comment.
   next.set('Seed', '-1')
@@ -947,31 +983,17 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
   }
 
   if (crossing) {
-    const size = (get('Size') ?? '').match(/(\d+)x(\d+)/)
     // An explicit canvas is applied below and would only overwrite this, note
     // and all — two lines about the size, one of them already wrong.
-    if (size && !target.size) {
-      const width = Number(size[1])
-      const height = Number(size[2])
-      const [bucketWidth, bucketHeight] = nearestBucket(width, height)
+    if (originalSize && !target.size) {
+      const width = Number(originalSize[1])
+      const [bucketWidth, bucketHeight] = nearestBucket(width, originalHeight)
       next.set('Size', `${bucketWidth}x${bucketHeight}`)
       notes.push(
-        `Size ${width}x${height} → ${bucketWidth}x${bucketHeight}. SDXL was trained at about a ` +
-          'megapixel; an SD1.5 canvas produces distorted anatomy rather than a smaller picture.',
+        `Size ${width}x${originalHeight} → ${bucketWidth}x${bucketHeight}. SDXL was trained at ` +
+          'about a megapixel; an SD1.5 canvas produces distorted anatomy rather than a smaller ' +
+          'picture.',
       )
-
-      // Preserve the final resolution the original aimed at, so a hires pass
-      // keeps its purpose instead of inheriting a factor that no longer fits.
-      const upscale = Number(get('Hires upscale') ?? '0')
-      if (upscale > 1) {
-        const wanted = (height * upscale) / bucketHeight
-        const clamped = Math.max(1.1, Math.min(2, Math.round(wanted * 20) / 20))
-        next.set('Hires upscale', String(clamped))
-        notes.push(
-          `Hires upscale ${upscale} → ${clamped}, keeping the final height near the original ` +
-            `${Math.round(height * upscale)}px.`,
-        )
-      }
     }
 
     // A VAE belongs to an architecture. An SD1.5 VAE handed to an SDXL model
@@ -1068,6 +1090,34 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
           ? `Canvas set to ${finalWidth}x${finalHeight}.`
           : `Canvas ${width}x${height} → ${finalWidth}x${finalHeight}, the nearest SDXL bucket. ` +
             'The shape is what was asked for; the pixel count is what the model was trained at.',
+      )
+    }
+  }
+
+  // A hires factor is a *multiple* of the canvas, so any canvas change drags
+  // the final resolution along with it — silently. This used to live beside the
+  // bucket rule and so never ran for an explicit canvas, which is now the
+  // ordinary path: `/sdxl` always asks for portrait. A 512x768 block at 2x
+  // aimed at 1536px tall and would have inherited 1216x2 = 2432 instead.
+  const upscale = Number(get('Hires upscale') ?? '0')
+  const canvas = (next.get('Size') ?? '').match(/(\d+)x(\d+)/)
+  if (upscale > 1 && originalHeight > 0 && canvas && Number(canvas[2]) !== originalHeight) {
+    const finalHeight = Number(canvas[2])
+    const wanted = (originalHeight * upscale) / finalHeight
+    const clamped = Math.max(1.1, Math.min(2, Math.round(wanted * 20) / 20))
+    if (clamped !== upscale) {
+      next.set('Hires upscale', String(clamped))
+      const aimed = Math.round(originalHeight * upscale)
+      notes.push(
+        // A landscape source forced portrait routinely wants a factor below the
+        // 1.1 floor, and the note must not then claim a height it does not
+        // reach — the whole value of these lines is that they are true.
+        wanted < 1.1 || wanted > 2
+          ? `Hires upscale ${upscale} → ${clamped}, as close to the original ${aimed}px as the ` +
+            `1.1-2x range reaches on this canvas — the pass ends at ` +
+            `${Math.round(finalHeight * clamped)}px.`
+          : `Hires upscale ${upscale} → ${clamped}, keeping the final height near the original ` +
+            `${aimed}px.`,
       )
     }
   }

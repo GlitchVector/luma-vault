@@ -19,6 +19,9 @@
 
 import {
   DEFAULT_MODEL,
+  PORTRAIT,
+  PORTRAIT_WIDTH,
+  PORTRAIT_HEIGHT,
   familyOf,
   settingsFor,
   warnAboutVPrediction,
@@ -27,23 +30,21 @@ import {
   openWithBlock,
   resolveModel,
   selectCheckpoint,
+  unescapeNewlines,
 } from './lib/forge.mjs'
 
-// A literal backslash-n becomes a real newline. pnpm on Windows cannot carry
-// raw newlines through an argument — they arrive as the two characters
-// backslash-n, which the tokenizer would read as text and which break BREAK,
-// a keyword that must stand alone between whitespace. Callers therefore write
-// backslash-n and this expands it, so multiline and BREAK-structured prompts
-// survive the shell.
-function unescape(value) {
-  // Two passes: pnpm on Windows also doubles backslashes when re-quoting, so
-  // the sequence can arrive as backslash-backslash-n. Expand first, then drop
-  // any backslash left stranded against the newline it used to escape.
-  return value == null ? value : value.replaceAll('\\n', '\n').replace(/\\+\n/g, '\n')
-}
+const unescape = unescapeNewlines
 
 function parseArgs(argv) {
-  const args = { model: DEFAULT_MODEL, width: 832, height: 1216, cfg: 5, dryRun: false }
+  // Portrait regardless of the attached image's shape — see PORTRAIT. The
+  // caller is not meant to derive a canvas from what it was handed.
+  const args = {
+    model: DEFAULT_MODEL,
+    width: PORTRAIT_WIDTH,
+    height: PORTRAIT_HEIGHT,
+    cfg: 5,
+    dryRun: false,
+  }
   for (let at = 0; at < argv.length; at++) {
     const flag = argv[at]
     if (flag === '--dry-run') args.dryRun = true
@@ -71,7 +72,8 @@ if (!args.prompt) {
   fail(
     'usage: pnpm open-in-forge --prompt "..." [--negative "..."] [--model substring] [--width N --height N]',
     '',
-    '  --model defaults to ' + DEFAULT_MODEL + '; --width/--height to 832x1216.',
+    '  --model defaults to ' + DEFAULT_MODEL + `; the canvas is ${PORTRAIT} unless overridden,`,
+    '  whatever shape the source image was — it is not read off the attachment.',
     '  --dry-run prints the parameter block without touching Forge.',
   )
 }

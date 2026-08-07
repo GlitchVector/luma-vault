@@ -1,19 +1,58 @@
 ---
-description: Turn an attached image into a danbooru prompt, tune the body shape, and open it prefilled in Forge
-argument-hint: [model — defaults to deliberate]
+description: Turn an image — attached, or already in the vault — into a danbooru prompt, tune the body shape, and open it prefilled in Forge
+argument-hint: [image name — optional; attach an image instead]
 ---
 
-# Recreating an attached image as a prompt
+# Recreating a picture as a prompt
 
-The user attaches an image found somewhere — the web, another gallery — and
-wants a prompt that would generate something like it on a modern booru-trained
-checkpoint. There is no parameter block to migrate; **you are the extractor**.
-Look at the image, write the tags, ask about body proportions, then hand the
-result to the script.
+Someone wants a prompt that would generate something like a picture they
+already have, on a modern booru-trained checkpoint. **Two ways in, and they
+meet in the same place:**
 
-If no image is attached, ask for one — nothing else here works without it.
+- **An attached image** — found on the web, in another gallery. There is no
+  parameter block anywhere, so **you are the extractor**: look at it, write the
+  tags, ask the questions, hand the result to the script.
+- **An image name as the argument** — `/recreate 00489`, a picture already in
+  this vault. `/sdxl`'s input running `/recreate`'s flow. It *has* a parameter
+  block, and reading it is most of the extraction already done — so here the
+  original prompt is the spine and the answers below **adjust** it, rather than
+  a prompt being written from nothing.
+
+If neither is given, ask which — nothing else here works without a picture.
+
+**The argument is an image name, not a model.** The model used to live in that
+slot; it is now the first question you ask (step 2), because it is a choice
+worth putting in front of someone rather than defaulting silently. If the name
+finds nothing in the index, say so — do not quietly reinterpret it as a
+checkpoint.
 
 ## 1. Read the image into danbooru tags
+
+### When a name was given, look it up first
+
+```bash
+pnpm migrate-prompt <name> --show
+```
+
+Prints the file's **path**, its parameter block, and — for an img2img — what it
+was made from and that one's prompt. It opens nothing and never contacts Forge,
+so it works with Forge closed. The name is a substring: `00489` finds it.
+
+**Then open the file it names and look at it.** The block is evidence, not a
+description. An img2img keeps its subject in the *init image*, which no PNG
+carries, so a twelve-word prompt about hair and eyes routinely belongs to a
+picture of a named character in a full outfit — and the ancestor's prompt that
+`--show` prints can just as confidently name someone who was replaced two
+passes ago. Read both against what you can actually see; take what the picture
+confirms, drop what it does not.
+
+Now derive the tags below **from the picture, with the original prompt as the
+spine**: what it already says stays, in its own words and in front where its
+weight is, and what the picture shows that the prompt never said goes behind
+it. The output is that prompt adjusted by the answers in step 2 — not a
+replacement written over the top of it.
+
+### Either way, the vocabulary
 
 Booru models learned *exact tag strings*, so near-misses carry nothing —
 "large ass" produces less than `huge ass` because only one of them is a tag.
@@ -39,11 +78,32 @@ Derive, in this order:
 - **Style**: `realistic` for semi-real rendering, `anime coloring` the other
   way; photographic sources usually want `realistic, photorealistic`.
 
-## 2. Ask about body shape and the shot — always, and before composing
+## 2. Ask — always, and before composing
 
-Use the AskUserQuestion tool. This is the point of the skill: the user tunes
-proportions and framing away from the source image, and "as seen" is a real
-answer on every axis. **First call, four questions**, single-select:
+Use the AskUserQuestion tool. This is the point of the command: the user tunes
+the checkpoint, the proportions and the framing away from the source image, and
+"as seen" is a real answer on every body axis. **Three calls**, all
+single-select — the tool caps a call at four questions, and the boosts in the
+last one need the room.
+
+### Call 1 — the model, on its own and first
+
+| Question | Options |
+|---|---|
+| Model | `deliberate` (Recommended) · `wai` · `aniverse` · `noob` |
+
+All four are substrings, matched against the checkpoints actually installed,
+newest first — so is anything typed under Other, which is how you reach a
+checkpoint not on this list. `deliberate` is the script's own default and stays
+the recommendation; `wai` (waiNSFWIllustrious) has by far the best record on
+this vault's own 4+ ratings, so it is worth offering rather than burying.
+
+`deliberate`, `wai` and `hassaku` are all Illustrious and take identical
+settings; `aniverse` and `noob` each need their own tuning, which the script
+applies from the checkpoint rather than from what was typed. Pass the answer
+through as `--model <answer>`.
+
+### Call 2 — the four body axes
 
 | Question | Options |
 |---|---|
@@ -64,8 +124,10 @@ The combo already argues the thighs at 2, so when maximum is picked, drop
 whatever the thighs question answered rather than doubling the tag — one
 term per concept, never a tug of war.
 
-Ass and breasts have real rungs, so boosting is a **second call**, which
-always happens because it also carries the shot:
+### Call 3 — the shot, the boosts and the style
+
+Ass and breasts have real rungs, so boosting waits for this call, which always
+happens because it also carries the shot and the style:
 
 | Question | Options |
 |---|---|
@@ -75,7 +137,8 @@ always happens because it also carries the shot:
 
 Boosts apply as `(huge ass:1.3)`; `:2` is the tested ceiling — past it the
 weight warps anatomy without adding size. Axes answered "as seen" get no
-boost question. "As-is" keeps the framing you read off the image in step 1. The
+boost question. "As-is" keeps the framing you read off the picture — and, when
+a name was given, whatever framing rung its own prompt already carried. The
 ladder has more rungs than the four buttons — `close-up`, `portrait`,
 `upper body`, `lower body`, `very wide shot` — and any of them typed under
 Other is a valid answer too. A shot pick *replaces* the rung you extracted —
@@ -98,7 +161,7 @@ gigantic hips is to fill the frame with them. Four moves, all of them:
 it, unweighted.
 
 
-### The third question in that second call: the style
+#### The style question, in that same third call
 
 Ask it every time, alongside the shot. It is the axis with the largest visible
 effect on the result and the least obvious controls:
@@ -130,6 +193,13 @@ gloss. The flag applies the checked set and clears whatever competing rendering
 tag the prompt already had.
 
 ## 3. Compose
+
+"The original prompt is the spine" means its *content words* — the character,
+the outfit, the setting it names. Its structure is not preserved: the quality
+block below is written verbatim whatever the original opened with, the chunks
+are rebuilt, and each tag moves to the group it belongs in. Its own quality
+words (`ultra-detailed`, `Pretty Face`, `illustration`) are dropped rather than
+stacked on top — they are SD1.5 vocabulary, and two quality blocks argue.
 
 Structure the prompt with `BREAK` between concept groups. CLIP encodes 75
 tokens per chunk, and these prompts run past that — without BREAK the second
@@ -174,10 +244,66 @@ composition — after the shot answer — is `full body` or wider; they are the
 backstop against the model drifting tight. If results still crop at the
 thighs, add `cowboy shot` too.
 
-## 4. Open Forge
+**When a name was given, the original's negative is not pasted through.** Start
+from the baseline above and carry over only terms that state something it does
+not — `censored`, a specific unwanted object. Two kinds never come across:
+
+- **Terms that fight the answers.** SD1.5 negatives routinely carry `fat,
+  chubby, curvy` against that model's doughiness. Left in beside a body answer
+  asking for `gigantic ass` the negative usually wins, and the render comes
+  back slim with nothing saying why.
+- **SD1.5 embeddings** — `EasyNegative`, `bad-hands-5`, `badhandv4`. On an XL
+  model they are not embeddings, they are the literal words, which is the
+  opposite of what they were doing.
+
+## 4. Show it, and offer the last look
+
+**Nothing has been sent yet, and this is the only moment it is still free to
+change.** Once the tab is open the prompt is in Forge's box, and fixing it there
+means retyping it by hand — the extension fills the field once and the command
+would have to be re-run to fill it again.
+
+So print the composed prompt first, chunk by chunk and labelled, then make a
+**fourth AskUserQuestion call**. Three questions, single-select, each carrying
+that chunk's composed text in the option `preview` so the user is judging the
+real thing rather than a description of it:
+
+| Question | Options |
+|---|---|
+| Character & body — chunk 2 | Keep as composed · Soften the body tags one rung |
+| Outfit & pose — chunk 3 | Keep as composed · Simplify to the main garment |
+| Setting & light — chunk 4 | Keep as composed · `simple background` instead |
+
+Phrase each question so the escape is obvious — "…or choose Other and type the
+chunk you want." **Free text replaces that chunk verbatim.** Do not tidy it, do
+not re-order it into the house style, do not re-add a tag you think they
+dropped: someone editing this chunk is overruling the extraction, which is
+exactly the disagreement this step exists to settle. The one thing worth saying
+back is if what they typed is not a danbooru tag — say it once, in the report
+afterwards, and send it anyway.
+
+**Chunk 1 is not offered, and that is deliberate.** Quality, style and framing
+are not descriptions to taste — they are decided by the checkpoint family, the
+style answer and the shot answer, and the rewrite rules that keep them from
+fighting. Hand-editing them is how a prompt ends up carrying two framing rungs
+that cancel, or a quality tag from a vocabulary this model never learned. A
+framing change is the shot question in call 3, asked again.
+
+Two things follow an accepted edit rather than being asked about separately:
+
+- **Rebuild `--adetailer-prompt`** if the edit changed identity tags — the
+  character, hair, eyes or expression. It is derived from those words, and left
+  stale it repaints the head from a description that no longer matches.
+- **Re-check the negative** against the edited body chunk. An edit that softens
+  the body can leave `close-up, cropped, portrait, upper body` in the negative
+  arguing for a width nothing now asks for.
+
+Skip the whole call only when the user has already said to just send it.
+
+## 5. Open Forge
 
 ```bash
-pnpm open-in-forge --prompt "..." --negative "..."   --adetailer-prompt "..." --width W --height H
+pnpm open-in-forge --prompt "..." --negative "..."   --adetailer-prompt "..."
 ```
 
 Always pass `--adetailer-prompt`: a short face pass in ADetailer's own jargon —
@@ -188,19 +314,32 @@ inside it re-argues the body in a space where it cannot win. The script adds
 the rest — Hires fix (1.5x, 30 steps, 4xUltrasharp, denoise 0.4) and the
 ADetailer model — to every block, and the extension turns both toggles on.
 
-- Canvas from the **attached image's aspect**: portrait → `832 1216`,
-  landscape → `1216 832`, square → `1024 1024`.
-- Pass `--model $ARGUMENTS` only when the user named one; the script defaults
-  to `deliberate` on its own.
+- **The canvas is always `832x1216`, and you do not pass it.** Do not read it
+  off the source. The shape of what someone happened to send, or of what an
+  img2img chain happened to pass through, is not a request for that shape, and
+  a body-tuned prompt on a landscape canvas crops at the waist and throws away
+  everything the body questions just asked for. The script's default is
+  portrait; leave `--width`/`--height` off entirely unless the *user* asks for
+  another canvas in words.
+- Pass `--model <the call 1 answer>`. `$ARGUMENTS` is the *image name* here and
+  never goes to this flag; the script still defaults to `deliberate` on its own
+  if the question somehow went unanswered.
 - The script resolves the newest matching checkpoint, warns if it is not XL,
   selects it in Forge *before* the tab opens, and fills everything via the
   prefill extension. Settings are fixed at the booru-XL tuning (CFG 5,
   28 steps, clip skip 2, random seed), with Hires fix and an ADetailer face
   pass always in the block.
 
-Then show the user the prompt you composed, with one line on anything you
-were unsure of — a character you almost recognised, an outfit detail you had
-to approximate. Those are the lines they will want to edit.
+The prompt itself was already shown in step 4, so the report afterwards is the
+things the prompt does not say: anything you were unsure of — a character you
+almost recognised, an outfit detail you had to approximate — and any tag from a
+free-text edit that is not in the tagger's vocabulary. Those are what someone
+would otherwise only discover from a render that came back wrong.
+
+When a name was given, say what *moved*: which of the original prompt's words
+you kept, what the picture made you add, and which rung each answer replaced.
+That diff is the whole point of running `/recreate` on a picture that already
+had a prompt, and none of it is visible in the tab.
 
 ## Illustrious checkpoints — `hassaku`, `deliberate`, `illustrious`
 
@@ -273,7 +412,7 @@ is flatter and closer to 2D.
 
 ## When the model is NoobAI
 
-If the user names `noob` (`--model noob`), the checkpoint is NoobAI-XL and the
+When call 1 answered `noob` (`--model noob`), the checkpoint is NoobAI-XL and the
 quality block above is the wrong vocabulary. Swap it:
 
 Positive, still verbatim and still first:

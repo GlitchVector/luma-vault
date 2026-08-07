@@ -34,6 +34,7 @@ import { migrateGeneration } from '../packages/core/src/migrate.ts'
 import { walkToOrigin } from '../packages/core/src/origin.ts'
 import {
   DEFAULT_MODEL,
+  PORTRAIT,
   familyOf,
   warnAboutVPrediction,
   inspectCheckpoint,
@@ -42,6 +43,7 @@ import {
   openWithBlock,
   resolveModel,
   selectCheckpoint,
+  unescapeNewlines,
 } from './lib/forge.mjs'
 
 // --- the index --------------------------------------------------------------
@@ -206,25 +208,42 @@ function switchFlag(name) {
 // prompt frequently does not describe the picture — see `/sdxl`, step 1 — and
 // the only way to find that out is to open the file.
 const show = switchFlag('--show')
+// The last look. Migrate and print, select nothing and open nothing — so the
+// prompt can be read and argued with while it is still free to change. Once the
+// tab is open the text is in Forge's box and fixing it there means retyping it.
+const dryRun = switchFlag('--dry-run')
+// What came back from that look. Replaces the migrated prompt wholesale — see
+// the option's doc comment in migrate.ts for why it lands late.
+const editedPrompt = unescapeNewlines(flag('--prompt'))
 const shot = flag('--shot')
 const body = flag('--body')
 // What the picture shows and its prompt never said. An img2img block keeps its
 // subject in the init image, which the PNG does not carry — see the option's
 // doc comment in migrate.ts.
 const add = flag('--add')
-const size = flag('--size')
+// Portrait unless told otherwise, whatever shape the source was. The source's
+// aspect is an accident of whatever it happened to be made from — an img2img
+// chain that passed through a square crop is not a request for a square
+// picture — and what these prompts are for is a standing figure. Inheriting the
+// shape produced landscape and square canvases nobody had asked for.
+const size = flag('--size') ?? PORTRAIT
 const style = flag('--style')
-if (size && !/^\d+\s*x\s*\d+$/.test(size)) fail(`--size takes WxH, e.g. --size 832x1216 (got "${size}")`)
+if (!/^\d+\s*x\s*\d+$/.test(size)) fail(`--size takes WxH, e.g. --size ${PORTRAIT} (got "${size}")`)
 const [imageName, targetName = DEFAULT_MODEL] = argv
 if (!imageName) {
   fail(
     'usage: pnpm migrate-prompt <image-name> [target-model] [--shot "full body"]',
-    '       [--body "(gigantic ass:2)"] [--add "black dress, demon horns"] [--size 832x1216]',
+    '       [--body "(gigantic ass:2)"] [--add "black dress, demon horns"] [--size WxH]',
+    '       [--dry-run] [--prompt "<the edited prompt>"]',
     '',
-    `  pnpm migrate-prompt 00166-3997412987            # onto ${DEFAULT_MODEL}`,
+    `  pnpm migrate-prompt 00166-3997412987            # onto ${DEFAULT_MODEL}, at ${PORTRAIT}`,
     '  pnpm migrate-prompt 00166-3997412987 illustrious',
     '  pnpm migrate-prompt 00166-3997412987 --shot "wide shot" --body "(huge breasts:1.5)"',
-    '  pnpm migrate-prompt 00489 --add "black dress, garter straps" --size 832x1216',
+    '  pnpm migrate-prompt 00489 --add "black dress, garter straps" --size 1216x832',
+    '  pnpm migrate-prompt 00489 wai --dry-run         # print the block, open nothing',
+    '  pnpm migrate-prompt 00489 wai --prompt "..."    # send that prompt instead',
+    '',
+    `  the canvas is ${PORTRAIT} whatever shape the source was; --size overrides it.`,
   )
 }
 
@@ -306,6 +325,7 @@ const { block: migrated, notes } = migrateGeneration(block, {
   add,
   size,
   style,
+  prompt: editedPrompt,
 })
 
 console.log(`from  ${row.name}`)
@@ -317,6 +337,13 @@ if (notes.length === 0) console.log('  - Same architecture: model and seed chang
 if (isImg2img) {
   console.log('')
   reportOrigin(row.id)
+}
+
+if (dryRun) {
+  console.log('')
+  console.log(migrated)
+  console.log('\ndry run: nothing selected, nothing opened.')
+  process.exit(0)
 }
 
 // Selecting first is the difference between a dropdown that shows the model and
