@@ -21,6 +21,7 @@ export const DEFAULT_QUERY: MediaQuery = {
   searchPaths: false,
   tag: null,
   minStars: null,
+  maxStars: null,
   unstarred: false,
   hasPrompt: null,
   img2img: null,
@@ -334,6 +335,7 @@ export function useLibrary() {
             tag: null,
             sexyOnly: false,
             minStars: null,
+            maxStars: null,
             unstarred: false,
             offset: 0,
           }

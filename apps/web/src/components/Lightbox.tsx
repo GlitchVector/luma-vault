@@ -1,4 +1,5 @@
 import {
+  ancestorsOf,
   clampView,
   dirnameOf,
   displayPath,
@@ -38,7 +39,7 @@ import {
   sourceOrigin,
 } from '#/lib/native.ts'
 import { RatingOverrideDialog } from '#/components/RatingOverrideDialog.tsx'
-import { askConfirm, showMessage } from '#/lib/dialogs.ts'
+import { askConfirm, askToEdit, showMessage } from '#/lib/dialogs.ts'
 import { preloadImages } from '#/lib/preload.ts'
 import { toast } from '#/lib/toasts.ts'
 
@@ -691,9 +692,11 @@ export function Lightbox({
   // Shown rather than the stored path: the index keeps Windows' canonical
   // extended-length form, which nobody can read and nobody can paste anywhere.
   const folder = dirnameOf(displayPath(item.path))
-  // The *stored* folder, which is what an exclusion has to be keyed on: the
-  // index matches rows by path prefix and the scanner compares against the
-  // canonical form it walks. `folder` above is only ever shown to a person.
+  // The stored spelling of the same folder. Only used to tell "this row has a
+  // folder" from "it does not" — what an exclusion is *keyed* on is settled by
+  // the backend, which canonicalizes whatever it is handed, because the path it
+  // is handed may have been edited by a person who could only read one of the
+  // two forms.
   const storedFolder = dirnameOf(item.path)
   const panelOpen = Boolean(showGeneration && item.generation)
 
@@ -856,15 +859,28 @@ export function Lightbox({
             // Says what lands on disk, because something does. A
             // `.lumaignore` is how the scanner is told to skip a folder, and
             // writing one is the whole of what "exclude" means here.
-            const message = [
-              folder,
-              'Its files leave the library and a .lumaignore file is written into it, which is what keeps it out. No media is deleted, and you can undo this from the sidebar.',
-            ].join('\n\n')
-            void askConfirm(message, {
-              title: 'Stop scanning this folder?',
-              confirmLabel: 'Exclude folder',
-            }).then((yes) => {
-              if (yes) onExcludeFolder(storedFolder)
+            const message =
+              'Its files leave the library and a .lumaignore file is written into it, which is what keeps it out. No media is deleted, and you can undo this from the sidebar.'
+            // The folder holding this picture is a *starting point*, not the
+            // answer: the thing worth excluding is regularly several levels
+            // above it — you find a texture pack from one texture, nine deep.
+            // So the path is editable, and every ancestor is one click.
+            //
+            // Offered in the readable form, not the stored one. Nobody can
+            // check `\\?\UNC\server\share\…` at a glance, and an edit is
+            // exactly the moment somebody needs to read what they are
+            // changing. The backend canonicalizes whatever comes back, so both
+            // spellings arrive at the same folder.
+            void askToEdit(
+              message,
+              {
+                label: 'Folder to exclude',
+                value: folder,
+                suggestions: ancestorsOf(folder),
+              },
+              { title: 'Stop scanning this folder?', confirmLabel: 'Exclude folder' },
+            ).then((chosen) => {
+              if (chosen) onExcludeFolder(chosen.trim())
             })
           }}
           title={folder ? `Exclude ${folder}` : undefined}

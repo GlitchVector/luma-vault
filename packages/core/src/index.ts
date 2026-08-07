@@ -51,6 +51,7 @@ export {
   VIDEO_EXTENSIONS,
   extensionOf,
   basenameOf,
+  ancestorsOf,
   dirnameOf,
   displayPath,
   folderMatch,

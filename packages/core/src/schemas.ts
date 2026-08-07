@@ -449,6 +449,18 @@ export const mediaQuerySchema = z.object({
   /** Show only items rated at least this many stars. `1` means "rated at all". */
   minStars: z.number().nullable().default(null),
   /**
+   * Show only items rated at most this many stars.
+   *
+   * **Rated.** An unstarred row is not a low-rated one — nobody has said
+   * anything about it — and `stars <= 3` excludes NULL of its own accord, which
+   * is the wanted answer rather than an accident worth working around. The
+   * question "what has nobody judged" already has `unstarred`.
+   *
+   * Contradicts `minStars` by construction, so the bar keeps them from being on
+   * together in the same way the star pills already replace each other.
+   */
+  maxStars: z.number().nullable().default(null),
+  /**
    * Show only items nobody has starred yet — the triage queue.
    *
    * Not `minStars: 0`, which would mean "everything" under a filter whose whole

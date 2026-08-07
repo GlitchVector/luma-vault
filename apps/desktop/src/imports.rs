@@ -387,6 +387,7 @@ mod tests {
             search_paths: false,
             tag: None,
             min_stars: None,
+            max_stars: None,
             unstarred: false,
             has_prompt: None,
             img2img: None,
