@@ -1,0 +1,210 @@
+---
+description: Take a generated image you like and get it from other angles
+argument-hint: <image> [model — optional; defaults to the one it was made on]
+---
+
+# The same picture, from somewhere else
+
+You have a generation you like. This gets you more angles of it, and changes
+nothing else — not the character, the outfit, the body or the setting.
+
+**The second half of every workflow here.** `/sdxl`, `/recreate` and `/swap`
+each make *one* picture and are where all the tuning questions live. When one of
+them lands, this is where you come for the rest of the set. It asks one
+question, and nothing it asks is about the subject.
+
+One shot or twelve, the question is the same; only what happens afterwards
+changes, and that is decided for you.
+
+## 1. Read the block
+
+```bash
+pnpm migrate-prompt $ARGUMENTS --show
+```
+
+Two things to take from it, and nothing else needs deciding:
+
+- **The framing it already has** — the ladder rung if it carries one, plus
+  `from behind`, `looking back`, `ass focus` and the rest. That is the shot to
+  mark as detected in the question below.
+- **The checkpoint it was made on**, from `Model:`.
+
+Do not open the picture. This changes the camera and nothing else, so what the
+prompt fails to say about the subject is not its business — that is what `/sdxl`
+is for, and if the prompt is thin every angle is thin the same way, which is
+what keeps the set a set.
+
+### Which model, without asking
+
+**Default to the checkpoint the original was made on**, when it is installed and
+XL — that is what makes these the same picture from other angles rather than
+different renders. Pass the substring that finds it, so
+`Model: waiNSFWIllustrious_v110` becomes `wai`.
+
+Fall back to the script's own default when that checkpoint is SD1.5 or is no
+longer installed, and **say which happened** — a family change moves the style,
+and the user did not ask for that.
+
+A model named positionally — `/shot 00205 aniverse` — overrides both.
+
+## 2. Ask the two sizes, then where the camera goes
+
+Two `AskUserQuestion` calls, because the shot table needs all four question
+slots of its own and the tool caps a call at four.
+
+### Call 1 — breasts and ass
+
+Both single-select, both defaulting to what the source already has. They come
+first because they change the body every shot shares, and because a set is only
+a set if the figure is the same in all of them.
+
+Four questions, because the call has four slots and the shot table needs all of
+its own — so the two shots that do not fit that table are asked here.
+
+| Question | Options |
+|---|---|
+| Breasts | as seen · `large breasts` · `huge breasts` · `gigantic breasts` |
+| Ass | as seen · `huge ass` · `gigantic ass` · `(gigantic ass:1.5)` |
+| Legs (hips down) | no · yes |
+| Character sheet | no · yes — **landscape**, front/back/side in one frame |
+
+Read the source's current tags out of the block and say what they are in the
+question, so "as seen" is a real choice rather than a shrug.
+
+**What is picked here is still filtered per shot in step 3.** A face close-up
+gets neither of them whatever was chosen — that is not the question being
+overruled, it is the tag not being in frame. Say so when it happens.
+
+### Call 2 — where the camera goes
+
+**One call**: four questions, four options each, `multiSelect: true`, from the
+table in **`.claude/shot-tags.md`**. Read that file — it carries each option's
+ladder rung and framing tags, and the rules that make them safe to combine.
+
+**Mark the shot it already is** with ` — detected`, first inside its group, and
+say it is the framing the prompt currently carries. `AskUserQuestion` has no
+real preselection, so that is a label and nothing more: it still needs ticking
+to be included, and someone asking for four new angles may not want a fifth of
+what they already have.
+
+Tick as many as you like. If nothing comes back, ask once whether they meant to
+cancel rather than doing nothing in silence.
+
+## 3. Re-frame each one
+
+Two runs per shot, because the framing tags have to land on the first line and
+only the dry run knows what the rest of the prompt became.
+
+```bash
+pnpm migrate-prompt <image> <model> --dry-run --shot "<the rung>"
+pnpm migrate-prompt <image> <model> --shot "<the rung>" <send flag> \
+  --prompt "<the shot's framing tags>\n<every line the dry run printed below the first>"
+```
+
+The dry run is worth doing **once**, not once per shot: everything below the
+first line is identical across the set, and that is exactly what makes them
+comparable.
+
+Both flags on every send. `--shot` is thrown away as far as the prompt goes —
+`--prompt` supersedes it — but its *negative* work is not: a wide rung is what
+adds `close-up, cropped, portrait, upper body` as the backstop, and that has to
+be present for `full body` and absent for `close-up`. Drop the flag and every
+wide angle quietly crops at the waist.
+
+The first line is that shot's framing tags, weighted the way the migration
+would: `(full body:1.3)` and `(wide shot:1.3)` go in weighted because a bare
+wide rung loses to body tags pulling the camera in; tight rungs go in bare.
+
+**Cut the body tags to what is in frame.** The rule that matters most, measured
+the hard way: a 15-shot set where every single one came back as the same
+from-behind ass shot, `portrait, face focus` and `close-up, breast focus`
+included. `(huge ass:2)` was the strongest weight in the prompt and simply beat
+every rung on the ladder.
+
+| Rung | Keep | Drop |
+|---|---|---|
+| `close-up`, `portrait` | nothing below the neck | ass, hips, thighs, legwear, undress state, `arched back`, `bent over` |
+| `upper body` | breasts, waist | ass, hips, thighs, legwear, `arched back`, `bent over` |
+| `cowboy shot` | breasts, waist, hips, thighs | `bent over` on a front shot |
+| `full body`, `wide shot` | all of them | nothing |
+
+Drop the **weight** on the ass for anything front-facing — it is not in frame —
+but keep the weights on hips and thighs. Removing all three was tried and the
+figure came back slim, which is a different picture rather than a different
+angle. Full detail in `.claude/shot-tags.md`.
+
+**Strip the old facing tags out of the rest.** The second rule, and the one
+people reach for first because turning a picture around is the commonest ask.
+On its own it is not enough — this run stripped the facing correctly and still
+produced fifteen identical ass shots, because the body tags were untouched. The
+migration drops the competing *rung* and leaves `from behind`, `looking back`,
+`ass focus`, `from side`, `profile`, `from above` and `from below` exactly where
+they are — and on a source whose framing is spread through the prompt rather
+than sitting in a first line, they outnumber and outweigh the shot just chosen.
+The render faces the old way and nothing says why. See "Clear the old facing
+before you write the new one" in `.claude/shot-tags.md`, measured on a real
+block from this library.
+
+Only when the new shot faces differently, and only in that direction — turning
+*away* is already handled by `enforceFraming`, which also drops the front-only
+anatomy and reports both. Pass those notes on: the user wrote those tags and is
+entitled to know they are not in that render.
+
+## 4. One or two open as tabs; three or more render in the background
+
+Decided by the count, not by preference. `.claude/shot-tags.md` has the
+measurements under "Getting the shots rendered"; the short version is that a
+Forge page's `load` handler runs on Gradio's queue, which drains one event at a
+time, so past two tabs they wedge behind each other and no amount of waiting
+fixes it.
+
+**One or two — tabs.** Send with no extra flag. Check `/sdapi/v1/progress`
+first: a non-zero `job_count` means a render holds the queue and the tab will
+sit on "Loading…" behind it. Open the second only once the first has finished
+loading — on the condition, never on a timer. A tab is the better answer at this
+size because it leaves you somewhere to re-roll and tweak.
+
+**Three or more — `--render`.**
+
+```bash
+--render "<scratchpad>/<n>-<shot>.png"
+```
+
+One call per shot, sequentially, each waiting for its own render. No browser is
+involved: the request queues as *work* and comes back with the picture. Safe
+while Forge is busy, because the checkpoint travels in `override_settings` per
+request rather than being set globally.
+
+Write into the session scratchpad, not a watched folder — Forge saves its own
+copy into its outputs with its own numbering, and that is what puts each picture
+in the library.
+
+**Show each one as it lands**, with `SendUserFile`, captioned with the shot it
+was prompted for. The shot name is the one thing a picture cannot tell you
+itself, and a render arriving three minutes later unlabelled is a puzzle.
+
+**Say how long it will take before you start.** Two to four minutes per shot on
+this machine, so five is a quiet quarter of an hour. Unannounced, that reads as
+a hang.
+
+## 5. Report the set
+
+Number them, because they are indistinguishable once they arrive:
+
+```
+1  cowboy shot (front)      — detected
+2  full body (from behind)
+3  close-up, face focus
+```
+
+Then, once rather than per shot:
+
+- **The model**, and whether it is the original's own or a fallback.
+- **What the framing rules removed or weighted**, from the notes. Identical
+  across the set apart from the reframe line — say which line differed.
+- **A tag from a free-text shot that is not in the vocabulary.** Other accepts
+  anything; `models/anime-tagger/selected_tags.csv` is what the model learned.
+  Say it once and send it anyway.
+
+Seeds stay random per shot, which is right: what makes these a set is the shared
+prompt, and a seed reused across framings does not reproduce a character anyway.
