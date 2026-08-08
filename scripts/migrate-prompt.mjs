@@ -41,6 +41,7 @@ import {
   fail,
   forge,
   openWithBlock,
+  renderWithBlock,
   resolveModel,
   selectCheckpoint,
   unescapeNewlines,
@@ -227,6 +228,7 @@ const add = flag('--add')
 // picture — and what these prompts are for is a standing figure. Inheriting the
 // shape produced landscape and square canvases nobody had asked for.
 const size = flag('--size') ?? PORTRAIT
+const renderTo = flag('--render')
 const style = flag('--style')
 if (!/^\d+\s*x\s*\d+$/.test(size)) fail(`--size takes WxH, e.g. --size ${PORTRAIT} (got "${size}")`)
 const [imageName, targetName = DEFAULT_MODEL] = argv
@@ -343,6 +345,23 @@ if (dryRun) {
   console.log('')
   console.log(migrated)
   console.log('\ndry run: nothing selected, nothing opened.')
+  process.exit(0)
+}
+
+if (renderTo) {
+  // Generated here rather than in a tab. Above two tabs the browser is the
+  // bottleneck, not the model: a Forge page's load handler runs on Gradio's
+  // queue and they wedge behind each other. See `renderWithBlock`.
+  console.log(`
+rendering… (this is the model's own time, not a stagger)`)
+  try {
+    const { path, seed } = await renderWithBlock(migrated, renderTo)
+    console.log(`rendered  ${path}${seed === undefined ? '' : `  seed ${seed}`}`)
+    console.log('Forge saved its own copy to its outputs folder, so the library will index it.')
+  } catch (error) {
+    fail(`
+Forge refused the render: ${error.message}`, 'Nothing was opened and nothing was saved.')
+  }
   process.exit(0)
 }
 

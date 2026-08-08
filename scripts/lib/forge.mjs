@@ -8,7 +8,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { openSync, readSync, closeSync, statSync } from 'node:fs'
+import { openSync, readSync, closeSync, statSync, writeFileSync } from 'node:fs'
 
 export const FORGE = process.env.LUMA_FORGE_URL ?? 'http://127.0.0.1:7860'
 
@@ -36,7 +36,22 @@ export function unescapeNewlines(value) {
 
 export async function forge(path, options) {
   const response = await fetch(FORGE + path, options)
-  if (!response.ok) throw new Error(`${path} returned ${response.status}`)
+  if (!response.ok) {
+    // The body, not only the status. Forge answers a failed generation with a
+    // 500 whose payload names the actual exception — and a render can queue
+    // for minutes behind a batch before failing, so throwing away the one line
+    // that says why costs another full wait to find out.
+    let detail = ''
+    try {
+      const body = await response.text()
+      const parsed = JSON.parse(body)
+      detail = parsed?.detail ?? parsed?.error ?? parsed?.errors ?? body
+    } catch {
+      detail = ''
+    }
+    const said = String(detail).replace(/\s+/g, ' ').trim().slice(0, 400)
+    throw new Error(`${path} returned ${response.status}${said ? `: ${said}` : ''}`)
+  }
   return response.json()
 }
 
@@ -240,6 +255,46 @@ export function openWithBlock(block) {
         ? ['open', [url]]
         : ['xdg-open', [url]]
   spawn(opener[0], opener[1], { detached: true, stdio: 'ignore' }).unref()
+}
+
+/**
+ * Generate the block instead of opening it in a tab, and write the result.
+ *
+ * The `-multi` commands' way out of the queue problem. A Forge page's `load`
+ * handler runs on Gradio's queue, which drains one event at a time, so a row of
+ * tabs past the second sits on "Loading…" waiting for each other — measured
+ * wedging identically at a five-second stagger and at ten. An API request has
+ * no page to load: it queues as *work*, behind whatever is generating, and
+ * comes back with the picture.
+ *
+ * `save_images` so Forge files it in its own outputs with its own numbering,
+ * which is what puts it in the library. The copy written here is separate and
+ * only so the caller has a path to show — it goes to a scratch directory
+ * outside any watched folder, so nothing indexes it twice.
+ *
+ * No checkpoint selection beforehand: `toApiPayload` sends the model in
+ * `override_settings`, per request. That is also why this is safe to call while
+ * a batch runs, where `selectCheckpoint` would refuse.
+ */
+export async function renderWithBlock(block, destination) {
+  const { toApiPayload } = await import('../../packages/core/src/migrate.ts')
+  const answer = await forge('/sdapi/v1/txt2img', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...toApiPayload(block), save_images: true }),
+  })
+  const image = answer?.images?.[0]
+  if (!image) throw new Error('Forge accepted the request but returned no image')
+  // The data URI prefix is present on some builds and absent on others.
+  writeFileSync(destination, Buffer.from(image.replace(/^data:image\/\w+;base64,/, ''), 'base64'))
+  let seed
+  try {
+    seed = JSON.parse(answer.info)?.seed
+  } catch {
+    // The info blob is a convenience, not the result. A build that changes its
+    // shape must not cost us the picture we already have on disk.
+  }
+  return { path: destination, seed }
 }
 
 /**
