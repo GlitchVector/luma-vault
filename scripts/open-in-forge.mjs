@@ -17,7 +17,7 @@
  * the model and prints the block but touches nothing — no selection, no tab.
  */
 
-import { enforceFraming } from '../packages/core/src/migrate.ts'
+import { enforceFraming, enforceUndress } from '../packages/core/src/migrate.ts'
 import {
   DEFAULT_MODEL,
   PORTRAIT,
@@ -29,6 +29,7 @@ import {
   inspectCheckpoint,
   fail,
   openWithBlock,
+  renderWithBlock,
   resolveModel,
   selectCheckpoint,
   unescapeNewlines,
@@ -63,6 +64,9 @@ function parseArgs(argv) {
     // checked against the tagger's vocabulary, unlike the obvious words for
     // this, most of which are not tags at all.
     else if (flag === '--style') args.style = String(argv[++at]).toLowerCase()
+    // Generate rather than open a tab, writing the picture here. What the
+    // -multi commands use past two shots — see `renderWithBlock`.
+    else if (flag === '--render') args.render = argv[++at]
     else fail(`unknown argument: ${flag}`)
   }
   return args
@@ -89,6 +93,13 @@ if (!Number.isFinite(args.width) || !Number.isFinite(args.height)) {
 // different angles comes back as one angle repeated. See FACING_CONFLICTS.
 const framed = enforceFraming(args.prompt)
 args.prompt = framed.text
+
+// Garments the prompt's own state of undress rules out. `/swap` is where this
+// earns its keep — a new character arrives with her reference outfit while the
+// original still says `bottomless` — but the contradiction is worth catching
+// wherever it came from, including a garment typed into the last-look edit.
+const dressed = enforceUndress(args.prompt)
+args.prompt = dressed.text
 
 const target = await resolveModel(args.model)
 const { architecture, vPred } = inspectCheckpoint(target.filename)
@@ -186,11 +197,34 @@ if (framed.removed.length > 0) {
 if (framed.weighted.length > 0) {
   console.log(`weighted the framing — bare, it loses to the body tags`)
 }
+if (dressed.removed.length > 0) {
+  console.log(
+    `dropped ${[...new Set(dressed.removed)].join(', ')} — the prompt says that much is not worn`,
+  )
+}
 console.log('')
 console.log(block)
 
 if (args.dryRun) {
   console.log('\ndry run: nothing selected, nothing opened.')
+  process.exit(0)
+}
+
+const renderTo = args.render
+if (renderTo) {
+  // Generated here rather than in a tab. Above two tabs the browser is the
+  // bottleneck, not the model: a Forge page's load handler runs on Gradio's
+  // queue and they wedge behind each other. See `renderWithBlock`.
+  console.log(`
+rendering… (this is the model's own time, not a stagger)`)
+  try {
+    const { path, seed } = await renderWithBlock(block, renderTo)
+    console.log(`rendered  ${path}${seed === undefined ? '' : `  seed ${seed}`}`)
+    console.log('Forge saved its own copy to its outputs folder, so the library will index it.')
+  } catch (error) {
+    fail(`
+Forge refused the render: ${error.message}`, 'Nothing was opened and nothing was saved.')
+  }
   process.exit(0)
 }
 

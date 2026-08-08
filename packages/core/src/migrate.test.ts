@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { facePrompt, migrateGeneration, enforceFraming } from './migrate.ts'
+import {
+  facePrompt,
+  migrateGeneration,
+  enforceFraming,
+  enforceUndress,
+  toApiPayload,
+} from './migrate.ts'
 
 /**
  * These pin the three failures the migration exists to prevent, all of which
@@ -127,29 +133,59 @@ describe('migrateGeneration, SD1.5 to SDXL', () => {
     expect(line.match(/low quality/g)).toHaveLength(1)
   })
 
-  it('rewrites phrases that only look like danbooru tags', () => {
-    // `huge hips` is not one of the 10,861 tags these models learned, so it
-    // carries no meaning and the hips come out *smaller* than with `wide hips`.
-    // Checked against models/anime-tagger/selected_tags.csv.
+  it('canonicalises a phrasing onto the one tag its axis has', () => {
+    // Hips have exactly one tag, so `huge hips` is a spelling of `wide hips`
+    // rather than a bigger version of it — and it measured *smaller*, which is
+    // what the rewrite is for.
     const { block: out, notes: why } = migrateGeneration(
-      'a girl, huge hips, big ass, hyper breasts, chubby\nSteps: 20, Size: 512x768',
+      'a girl, huge hips, wasp waist, fat thighs\nSteps: 20, Size: 512x768',
       TO_XL,
     )
     expect(out).toContain('wide hips')
-    expect(out).toContain('huge ass')
-    expect(out).toContain('gigantic breasts')
-    expect(out).toContain('plump')
-    expect(out).not.toMatch(/huge hips|big ass|hyper breasts|chubby/)
+    expect(out).toContain('narrow waist')
+    expect(out).toContain('thick thighs')
+    expect(out).not.toMatch(/huge hips|wasp waist|fat thighs/)
     expect(why.join(' ')).toContain('huge hips → wide hips')
+  })
+
+  it('never changes the size that was asked for', () => {
+    // The rewriter used to turn `big ass` into `huge ass` and `bbw` into
+    // `plump`, on the reasoning that a phrase missing from the tagger's
+    // vocabulary carries no meaning. It does — CLIP reads it compositionally —
+    // so those substitutions were quietly resizing somebody's prompt. Picking a
+    // rung is the user's job.
+    const { block: out } = migrateGeneration(
+      'a girl, big ass, big breasts, hyper breasts, busty, chubby, bbw, gigantic ass\n' +
+        'Steps: 20, Size: 512x768',
+      TO_XL,
+    )
+    for (const asked of ['big ass', 'big breasts', 'hyper breasts', 'busty', 'chubby', 'bbw']) {
+      expect(out).toContain(asked)
+    }
+    expect(out).toContain('gigantic ass')
+    expect(out).not.toContain('huge ass')
+  })
+
+  it('leaves `naked` alone, because rewriting it undressed a character', () => {
+    // `naked ass` became `nude ass`, and the word "nude" then tripped the
+    // full-nudity row of UNDRESS_CONFLICTS, which removed a shirt that was
+    // plainly in the picture.
+    const { block: out } = migrateGeneration(
+      'a girl, naked ass, black shirt, crop top\nSteps: 20, Size: 512x768',
+      TO_XL,
+    )
+    expect(out).toContain('naked ass')
+    expect(out).toContain('black shirt')
+    expect(out).toContain('crop top')
   })
 
   it('keeps the weight when it rewrites a tag', () => {
     const { block: out } = migrateGeneration(
-      'a girl, (huge hips:1.3), (big ass:0.8)\nSteps: 20, Size: 512x768',
+      'a girl, (huge hips:1.3), (wasp waist:0.8)\nSteps: 20, Size: 512x768',
       TO_XL,
     )
     expect(out).toContain('(wide hips:1.3)')
-    expect(out).toContain('(huge ass:0.8)')
+    expect(out).toContain('(narrow waist:0.8)')
   })
 
   it('removes negatives that cancel what the prompt asks for', () => {
@@ -561,6 +597,212 @@ describe('migrateGeneration, the last look', () => {
     const prompt = proposed.block.split('\nNegative prompt:')[0]!
     const { notes } = migrateGeneration(BLOCK, { ...TO_XL, prompt })
     expect(notes.some((note) => note.includes('superseded'))).toBe(false)
+  })
+})
+
+describe('toApiPayload', () => {
+  // The migrated block, which is what the -multi commands would actually send.
+  const block = migrateGeneration(SD15, TO_XL).block
+  const payload = toApiPayload(block) as Record<string, any>
+
+  it('carries the generation across as the API names its fields', () => {
+    expect(payload['prompt']).toContain('1girl')
+    expect(payload['negative_prompt']).toContain('worst quality')
+    expect(payload['steps']).toBe(28)
+    expect(payload['cfg_scale']).toBe(5)
+    expect(payload['width']).toBe(832)
+    expect(payload['height']).toBe(1216)
+    // Random, the same as every migration.
+    expect(payload['seed']).toBe(-1)
+  })
+
+  it('sends the checkpoint with the request rather than setting it beforehand', () => {
+    // Per-request, so nothing changes a global out from under a running batch
+    // — which is the whole reason `selectCheckpoint` refuses mid-generation.
+    expect(payload['override_settings']).toMatchObject({
+      sd_model_checkpoint: 'perfectdeliberate_v10',
+      CLIP_stop_at_last_layers: 2,
+    })
+    expect(payload['override_settings_restore_afterwards']).toBe(false)
+  })
+
+  it('turns the hires pass into its switch and its settings', () => {
+    expect(payload['enable_hr']).toBe(true)
+    expect(payload['hr_scale']).toBeGreaterThan(1)
+    expect(payload['hr_upscaler']).toBe('4xUltrasharp_4xUltrasharpV10')
+  })
+
+  it('sends the Forge field whose absence kills every hires request', () => {
+    // Forge defaults `hr_additional_modules` to None and then iterates it, so
+    // an API render with `enable_hr` and without this returns a 500 reading
+    // `argument of type 'NoneType' is not iterable` — naming neither the field
+    // nor the hires pass. Cost one five-minute queue behind a batch to find.
+    expect(payload['hr_additional_modules']).toEqual([])
+    // And it is not sent when there is no hires pass to configure.
+    const bare = toApiPayload('1girl\nSteps: 20, Size: 512x768')
+    expect(bare['hr_additional_modules']).toBeUndefined()
+  })
+
+  it('sends the face pass in the arg shape the extension takes', () => {
+    // This block names only the model, which is what the migration leaves
+    // alone when one is already there — so the unit is the model and nothing
+    // invented around it.
+    expect(payload['alwayson_scripts'].ADetailer.args.slice(0, 2)).toEqual([true, false])
+    expect(payload['alwayson_scripts'].ADetailer.args[2]).toEqual({
+      ad_model: 'face_yolov8n.pt',
+    })
+  })
+
+  it('unquotes the ADetailer prompts the block wrote with quotes', () => {
+    // A real block writes them quoted, because they contain the commas that
+    // separate every other field. Passed through with the quotes still on,
+    // the face pass would ask for a literal `"` and lose the first word.
+    const withFace = toApiPayload(
+      '1girl\nNegative prompt: worst quality\n' +
+        'Steps: 28, Size: 832x1216, ADetailer model: face_yolov8n.pt, ' +
+        'ADetailer prompt: "masterpiece, detailed face, purple eyes", ' +
+        'ADetailer negative prompt: "blurry, lowres", ADetailer denoising strength: 0.4',
+    ) as Record<string, any>
+    expect(withFace['alwayson_scripts'].ADetailer.args[2]).toEqual({
+      ad_model: 'face_yolov8n.pt',
+      ad_prompt: 'masterpiece, detailed face, purple eyes',
+      ad_negative_prompt: 'blurry, lowres',
+      ad_denoising_strength: 0.4,
+    })
+  })
+
+  it('omits what the block never said instead of inventing a default', () => {
+    // A block with no hires pass and no face pass must not acquire either —
+    // Forge's own settings decide, exactly as they would for a pasted block.
+    const bare = toApiPayload(
+      '1girl, standing\nNegative prompt: worst quality\nSteps: 20, Size: 512x768',
+    )
+    expect(bare['enable_hr']).toBeUndefined()
+    expect(bare['alwayson_scripts']).toBeUndefined()
+    expect(bare['sampler_name']).toBeUndefined()
+    expect(bare['steps']).toBe(20)
+  })
+
+  it('survives a block with nothing but a prompt', () => {
+    expect(toApiPayload('1girl')).toEqual({ prompt: '1girl', negative_prompt: '' })
+  })
+})
+
+describe('a swap whose new wardrobe arrives through --prompt', () => {
+  // The shape `/swap` produces: the original's composition and state of
+  // undress kept, a different character's outfit written in. The contradiction
+  // enters through the override, which is *after* everything else the
+  // migration does — so it has to be caught there rather than earlier.
+  const swapped = [
+    'masterpiece, best quality, cowboy shot, looking at viewer',
+    'BREAK',
+    '1girl, makima \\(chainsaw man\\), red hair, braid, ringed eyes, huge breasts, bottomless',
+    'BREAK',
+    'white shirt, black necktie, black pants, indoors, night',
+  ].join('\n')
+
+  const { block, notes } = migrateGeneration(SD15, { ...TO_XL, prompt: swapped })
+  const prompt = block.split('\nNegative prompt:')[0]!
+
+  it('takes the trousers the picture says are not being worn', () => {
+    expect(prompt).not.toContain('black pants')
+    expect(notes.join(' ')).toContain('black pants')
+  })
+
+  it('keeps everything the swap was supposed to keep', () => {
+    // The half that matters more: an over-eager rule that also removed the
+    // shirt would be undressing a character the user asked for.
+    for (const kept of ['white shirt', 'black necktie', 'bottomless', 'huge breasts', 'night']) {
+      expect(prompt).toContain(kept)
+    }
+    expect(prompt).toContain('makima')
+  })
+})
+
+describe('enforceUndress', () => {
+  it('keeps the skirt for no panties and takes it for bottomless', () => {
+    // The distinction the tag exists to make. Collapsing the two loses a skirt
+    // somebody deliberately kept, which is the difference between two
+    // completely different pictures.
+    const under = enforceUndress('1girl, pleated skirt, panties, no panties, thighhighs')
+    expect(under.text).toContain('pleated skirt')
+    expect(under.text).not.toContain(', panties')
+    expect(under.removed).toEqual(['panties'])
+
+    const bare = enforceUndress('1girl, pleated skirt, panties, bottomless, thighhighs')
+    expect(bare.text).not.toContain('pleated skirt')
+    expect(bare.removed).toEqual(expect.arrayContaining(['pleated skirt', 'panties']))
+  })
+
+  it('never removes the state tag that asked for the removal', () => {
+    // `no panties` contains `panties`. Whole-term matching is what keeps the
+    // rule from eating its own instruction — worth pinning, because a
+    // substring match here would silently put the underwear back.
+    const { text } = enforceUndress('1girl, no panties, panties')
+    expect(text).toContain('no panties')
+    expect(text).not.toMatch(/(^|,\s*)panties/)
+  })
+
+  it('leaves legwear alone, whatever the state says', () => {
+    // `nude, thighhighs` is a wanted combination, not a contradiction. These
+    // tags are about the torso and hips and nothing else.
+    const { text, removed } = enforceUndress('1girl, nude, thighhighs, gloves, boots, dress')
+    expect(text).toContain('thighhighs')
+    expect(text).toContain('gloves')
+    expect(text).toContain('boots')
+    expect(removed).toEqual(['dress'])
+  })
+
+  it('takes the top for topless and leaves the jacket over it', () => {
+    // `topless, open jacket` is a real framing: the jacket is not what would
+    // be covering her.
+    const { text, removed } = enforceUndress('1girl, topless, shirt, bra, open jacket, miniskirt')
+    expect(removed).toEqual(expect.arrayContaining(['shirt', 'bra']))
+    expect(text).toContain('open jacket')
+    expect(text).toContain('miniskirt')
+  })
+
+  it('survives the BREAK structure a composed prompt carries', () => {
+    const { text } = enforceUndress(
+      'masterpiece, cowboy shot\nBREAK\n1girl, aqua \\(konosuba\\), bottomless\nBREAK\nblue skirt, thighhighs',
+    )
+    expect(text.split('\n').filter((line) => line.trim() === 'BREAK')).toHaveLength(2)
+    expect(text).toContain('thighhighs')
+  })
+
+  it('does nothing to a fully dressed prompt', () => {
+    const dressed = '1girl, pleated skirt, blouse, thighhighs, standing'
+    expect(enforceUndress(dressed)).toEqual({ text: dressed, removed: [] })
+  })
+
+  it('catches a garment wearing its colour', () => {
+    // How these tags are actually written. Matching only the bare noun caught
+    // `pants` and left `black pants`, which is the same contradiction with an
+    // adjective in front of it.
+    const { removed } = enforceUndress('1girl, bottomless, black pants, blue pleated skirt')
+    expect(removed).toEqual(expect.arrayContaining(['black pants', 'blue pleated skirt']))
+  })
+
+  it('matches the head noun and not the modifier', () => {
+    // `topless` takes the top half of a swimsuit and leaves the bottom. A
+    // substring match on `bikini` would take both and put her in nothing,
+    // which is not what the tag says.
+    const { text, removed } = enforceUndress('1girl, topless, bikini top, bikini bottom')
+    expect(removed).toEqual(['bikini top'])
+    expect(text).toContain('bikini bottom')
+  })
+
+  it('does not read naked breasts as fully nude', () => {
+    // `naked apron`, `naked shirt` and `naked breasts` all describe something
+    // still being worn. Triggering full nudity on them would strip a character
+    // the user deliberately dressed.
+    const worn = '1girl, naked apron, naked breasts, pleated skirt, thighhighs'
+    expect(enforceUndress(worn)).toEqual({ text: worn, removed: [] })
+  })
+
+  it('keeps a weighted garment out just as surely as a bare one', () => {
+    const { removed } = enforceUndress('1girl, bottomless, (blue skirt:1.3), [panties]')
+    expect(removed).toEqual(expect.arrayContaining(['blue skirt', 'panties']))
   })
 })
 

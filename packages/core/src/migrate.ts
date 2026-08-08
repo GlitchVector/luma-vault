@@ -180,45 +180,46 @@ const SD15_EMBEDDINGS = [
 ]
 
 /**
- * Phrases that read like tags but are not, and the tags that are.
+ * Phrasings canonicalised onto the tag that carries the same meaning.
  *
- * Booru-trained models learned exact strings. `huge hips` is not one of the
- * 10,861 tags in `models/anime-tagger/selected_tags.csv`, so it carries no
- * learned meaning and the model falls back to the words — which is how
- * substituting it for `wide hips` makes hips *smaller*. That is the opposite of
- * SD1.5, which was captioned in prose and would do something reasonable with a
- * synonym.
+ * **Never a change of degree.** This list used to rewrite `big ass` to
+ * `huge ass` and `bbw` to `plump`, on the reasoning that a phrase absent from
+ * `models/anime-tagger/selected_tags.csv` carries no learned meaning. That
+ * reasoning does not hold: the file is the *tagger's* vocabulary — the ~10,000
+ * tags it was trained to predict — not the checkpoint's and not danbooru's, and
+ * CLIP reads unknown phrases compositionally. `gigantic ass` is absent from it
+ * and renders exactly as expected, confirmed over many real generations.
  *
- * Every left-hand side was checked as absent from that file and every
- * right-hand side as present. Rewriting is safe; *dropping* unknown tags would
- * not be, because character names, artist names and quality tags are all
- * legitimately outside the tagger's vocabulary.
+ * So absence is a reason to check, not a licence to substitute. What survives
+ * here is only where the axis has a single real tag and the left-hand side adds
+ * no size of its own — `wasp waist` and `narrow waist` are the same request;
+ * `big ass` and `huge ass` are not, and picking one of them is the user's job.
+ *
+ * `naked` is gone for a second reason on top of that one: rewriting it to
+ * `nude` put the word "nude" into prompts that only said `naked ass`, which
+ * tripped [`UNDRESS_CONFLICTS`]'s full-nudity row and stripped a shirt that was
+ * plainly in the picture.
  */
 const TAG_ALIASES: ReadonlyArray<readonly [string, string]> = [
+  // Hips and thighs each have exactly one tag on the axis, so these are
+  // spellings of it rather than degrees of it. `huge hips` measured *smaller*
+  // than `wide hips`, which is what this row is for.
   ['huge hips', 'wide hips'],
   ['large hips', 'wide hips'],
   ['big hips', 'wide hips'],
   ['wide hip', 'wide hips'],
-  ['big ass', 'huge ass'],
-  ['large ass', 'huge ass'],
-  ['fat ass', 'huge ass'],
-  ['bubble butt', 'huge ass'],
-  ['big breasts', 'huge breasts'],
-  ['hyper breasts', 'gigantic breasts'],
-  ['busty', 'huge breasts'],
   ['huge thighs', 'thick thighs'],
   ['fat thighs', 'thick thighs'],
-  ['chubby', 'plump'],
-  ['bbw', 'plump'],
-  ['voluptuous', 'curvy'],
-  ['curvaceous', 'curvy'],
+  // `voluptuous` and `curvaceous` used to be rewritten to `curvy` here. They
+  // are absent from the tagger's list, but so is `gigantic ass`, which works —
+  // and they do not mean quite the same thing as `curvy`, so swapping them was
+  // the same quiet substitution as `big ass → huge ass`. Left alone.
   ['slim waist', 'narrow waist'],
   ['thin waist', 'narrow waist'],
   ['wasp waist', 'narrow waist'],
   ['hourglass figure', 'narrow waist, wide hips'],
   ['naked breasts', 'breasts out'],
   ['bare breasts', 'breasts out'],
-  ['naked', 'nude'],
 ]
 
 /**
@@ -301,6 +302,163 @@ const FACING_CONFLICTS: ReadonlyArray<{ framing: string[]; hides: string[] }> = 
  * the check has to be the same one either way or the table's behaviour depends
  * on which entry you are reading.
  */
+/**
+ * What a state of undress forbids the wardrobe from putting back.
+ *
+ * For `/swap`, which keeps a picture's composition and changes who is in it.
+ * The new character brings her own outfit, and the prompt already says how much
+ * of the old one was being worn — so `bottomless` beside a freshly-added
+ * `pleated skirt` is the swap arguing with itself, and the model resolves it by
+ * drawing the skirt. What the original said about *coverage* has to outrank
+ * what the new character's reference sheet says about *cloth*.
+ *
+ * Matched as whole tags, so this only removes what it is sure about: a
+ * `pleated skirt` is listed because `skirt` alone would not catch it, and a
+ * garment nobody thought of survives. Under-removing leaves one contradiction
+ * in a prompt somebody is about to read; over-removing silently undresses a
+ * character the user asked for.
+ *
+ * Legwear and footwear are deliberately absent from every row. `nude,
+ * thighhighs` and `topless, gloves` are ordinary, wanted combinations rather
+ * than mistakes — these tags are about what covers the torso and hips, and
+ * nothing else.
+ */
+const UNDRESS_CONFLICTS: ReadonlyArray<{ state: string[]; hides: string[] }> = [
+  {
+    // Everything off.
+    //
+    // Bare `naked` is deliberately not a trigger. Its common uses in these
+    // prompts are `naked apron`, `naked shirt` and `naked breasts`, and every
+    // one of those describes something still being worn — treating them as
+    // full nudity would strip a character the user dressed on purpose. `nude`
+    // is the canonical tag and the one that means it.
+    state: ['nude', 'completely nude', 'fully nude'],
+    hides: [
+      'shirt', 't-shirt', 'blouse', 'sweater', 'hoodie', 'jacket', 'coat', 'cardigan',
+      'tank top', 'crop top', 'camisole', 'tube top', 'turtleneck', 'vest', 'kimono',
+      'dress', 'sundress', 'long dress', 'evening gown', 'school uniform', 'serafuku',
+      'leotard', 'bodysuit', 'corset', 'swimsuit', 'one-piece swimsuit', 'bikini',
+      'bikini top', 'bikini bottom', 'bra', 'sports bra', 'panties', 'thong', 'underwear',
+      'skirt', 'miniskirt', 'pleated skirt', 'long skirt', 'pencil skirt', 'pants',
+      'shorts', 'short shorts', 'denim shorts', 'jeans', 'leggings', 'bloomers', 'hakama',
+    ],
+  },
+  {
+    // Bare above the waist. A jacket stays: `topless, open jacket` is a real
+    // framing and the jacket is not what would be covering her.
+    state: ['topless'],
+    hides: [
+      'shirt', 't-shirt', 'blouse', 'sweater', 'hoodie', 'cardigan', 'tank top',
+      'crop top', 'camisole', 'tube top', 'turtleneck', 'dress', 'sundress',
+      'school uniform', 'serafuku', 'leotard', 'bodysuit', 'corset', 'swimsuit',
+      'one-piece swimsuit', 'bikini', 'bikini top', 'bra', 'sports bra',
+    ],
+  },
+  {
+    // Bare below the waist, underwear included.
+    state: ['bottomless', 'no pants'],
+    hides: [
+      'skirt', 'miniskirt', 'pleated skirt', 'long skirt', 'pencil skirt', 'pants',
+      'shorts', 'short shorts', 'denim shorts', 'jeans', 'leggings', 'bloomers', 'hakama',
+      'panties', 'thong', 'underwear', 'bikini bottom', 'swimsuit', 'one-piece swimsuit',
+    ],
+  },
+  {
+    // Underwear absent, whatever is over it is not. The distinction is the
+    // whole point of the tag: `no panties` under a skirt is a different picture
+    // from `bottomless`, and collapsing the two loses the skirt.
+    state: ['no panties', 'pantyless'],
+    hides: ['panties', 'thong', 'underwear', 'bikini bottom'],
+  },
+  {
+    state: ['no bra', 'braless'],
+    hides: ['bra', 'sports bra', 'bikini top'],
+  },
+]
+
+/**
+ * Take back whatever the prompt's own state of undress rules out.
+ *
+ * Runs over the *finished* prompt rather than over the wardrobe being added, so
+ * it catches the contradiction whichever side introduced it — a state tag
+ * carried over from the original, or a garment typed into the last-look edit.
+ *
+ * Names everything it removed. The user picked the character whose outfit this
+ * is, and a garment quietly deleted from their prompt is exactly the kind of
+ * change they would otherwise only find in the render.
+ */
+export function enforceUndress(prompt: string): { text: string; removed: string[] } {
+  const hidden = new Set<string>()
+  for (const { state, hides } of UNDRESS_CONFLICTS) {
+    if (!state.some((tag) => hasTag(prompt, tag))) continue
+    for (const term of hides) hidden.add(term)
+  }
+  if (hidden.size === 0) return { text: prompt, removed: [] }
+
+  // Every state tag in the table, not only the ones that fired. `no panties`
+  // ends with `panties` and `no bra` ends with `bra`, so without this the rule
+  // deletes the very instruction that asked for the removal — and the garment
+  // it was supposed to take then has nothing arguing against it.
+  const protectedTags = new Set(
+    UNDRESS_CONFLICTS.flatMap(({ state }) => state).map((tag) => tag.toLowerCase()),
+  )
+  return dropGarmentsByLine(prompt, [...hidden], protectedTags)
+}
+
+/**
+ * Whether `term` is one of `garments`, allowing for the modifiers these tags
+ * are nearly always written with.
+ *
+ * Danbooru garment tags are `<modifier> <noun>` — `black pants`, `pleated
+ * skirt`, `lace-trimmed panties` — and a real prompt uses the modified form
+ * almost every time. Matching only the whole tag would have caught `pants` and
+ * left `black pants`, which is the same contradiction wearing an adjective.
+ *
+ * Suffix, not substring, and on a word boundary: `bikini bottom` must not be
+ * taken by an entry reading `bikini top`, and under a `topless` that keeps the
+ * bottom half of a swimsuit that distinction is the whole answer.
+ */
+function isGarment(term: string, garments: string[]): string | null {
+  const bare = term.toLowerCase()
+  for (const garment of garments) {
+    if (bare === garment || bare.endsWith(` ${garment}`)) return garment
+  }
+  return null
+}
+
+/** `enforceUndress`'s removal, line by line so BREAK boundaries survive. */
+function dropGarmentsByLine(
+  text: string,
+  garments: string[],
+  protectedTags: Set<string>,
+): { text: string; removed: string[] } {
+  const removed: string[] = []
+  const lines: string[] = []
+  for (const line of text.split('\n')) {
+    const kept = line
+      .split(',')
+      .map((term) => term.trim())
+      .filter((term) => {
+        if (!term) return false
+        const bare = term
+          .replace(/^[([{]+|[)\]}]+$/g, '')
+          .replace(/:[\d.]+$/, '')
+          .trim()
+        if (protectedTags.has(bare.toLowerCase())) return true
+        if (!isGarment(bare, garments)) return true
+        removed.push(bare)
+        return false
+      })
+    const rest = kept.join(', ')
+    // A newline is whitespace to the prompt parser rather than a separator, so
+    // a line that ended with a comma has to keep it or its last tag fuses with
+    // the first tag of the next line.
+    const trailing = /,\s*$/.test(line) && rest ? ',' : ''
+    if (rest || !line.trim()) lines.push(rest + trailing)
+  }
+  return { text: lines.join('\n'), removed }
+}
+
 function hasTag(text: string, tag: string): boolean {
   return new RegExp(`(^|[^a-z])${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z]|$)`, 'i').test(
     text,
@@ -733,6 +891,115 @@ function settingsFields(line: string): Array<[string, string]> {
   return fields
 }
 
+/**
+ * A parameter block as a `/sdapi/v1/txt2img` request body.
+ *
+ * The block is what the prefill extension paints into a tab. This is the same
+ * generation asked for over the API instead — for the `-multi` commands, where
+ * opening a row of tabs is the part that keeps failing. A Forge page's load
+ * handler runs on Gradio's queue, which drains one event at a time, so tabs
+ * past the second sit on "Loading…" behind each other; an API request has no
+ * page to load and simply queues as work.
+ *
+ * `override_settings` rather than a prior checkpoint selection, because it is
+ * per-request: the model, clip skip and VAE arrive *with* the generation
+ * instead of being set globally beforehand and hoped to still hold. That also
+ * sidesteps the reason `selectCheckpoint` refuses mid-batch — nothing here
+ * changes a global out from under a running job.
+ *
+ * Anything the block does not name is left out rather than defaulted, so
+ * Forge's own settings decide it, exactly as they would for a pasted block.
+ */
+export function toApiPayload(block: string): Record<string, unknown> {
+  const { prompt, negative, settings } = splitBlock(block)
+  const fields = settingsFields(settings)
+  const get = (key: string) => fields.find(([name]) => name === key)?.[1]
+  const num = (key: string) => {
+    const raw = get(key)
+    if (raw === undefined) return undefined
+    const value = Number(raw)
+    return Number.isFinite(value) ? value : undefined
+  }
+
+  const payload: Record<string, unknown> = { prompt, negative_prompt: negative }
+  const set = (key: string, value: unknown) => {
+    if (value !== undefined) payload[key] = value
+  }
+
+  set('steps', num('Steps'))
+  set('sampler_name', get('Sampler'))
+  set('scheduler', get('Schedule type'))
+  set('cfg_scale', num('CFG scale'))
+  set('seed', num('Seed'))
+  set('denoising_strength', num('Denoising strength'))
+
+  const size = (get('Size') ?? '').match(/(\d+)x(\d+)/)
+  if (size) {
+    payload['width'] = Number(size[1])
+    payload['height'] = Number(size[2])
+  }
+
+  // The hires pass is one switch plus its settings, and the switch is implied
+  // by an upscale factor being present at all — the same way the block reads.
+  const upscale = num('Hires upscale')
+  if (upscale !== undefined && upscale > 1) {
+    payload['enable_hr'] = true
+    payload['hr_scale'] = upscale
+    set('hr_second_pass_steps', num('Hires steps'))
+    set('hr_upscaler', get('Hires upscaler'))
+    // Forge-only, and not optional despite looking it. Its txt2img endpoint
+    // defaults this to `None` and then iterates it, so *any* API request with
+    // `enable_hr` and no `hr_additional_modules` dies with `argument of type
+    // 'NoneType' is not iterable` — a 500 naming neither the field nor the
+    // hires pass. Measured against this Forge; an empty list is the same as
+    // the UI's "Use same choices".
+    payload['hr_additional_modules'] = []
+  }
+
+  const overrides: Record<string, unknown> = {}
+  if (get('Model')) overrides['sd_model_checkpoint'] = get('Model')
+  if (num('Clip skip') !== undefined) overrides['CLIP_stop_at_last_layers'] = num('Clip skip')
+  if (get('VAE')) overrides['sd_vae'] = get('VAE')
+  if (Object.keys(overrides).length > 0) {
+    payload['override_settings'] = overrides
+    // Not restored afterwards: the next shot in a row wants the same
+    // checkpoint, and putting it back between every render would reload the
+    // model each time — minutes of nothing, for a setting about to be asked
+    // for again.
+    payload['override_settings_restore_afterwards'] = false
+  }
+
+  const adetailer = adetailerUnit(get)
+  if (adetailer) payload['alwayson_scripts'] = { ADetailer: { args: [true, false, adetailer] } }
+
+  return payload
+}
+
+/**
+ * The face pass, as ADetailer's API takes it.
+ *
+ * `[enable, skip_img2img, unit]` is the arg shape the extension has used since
+ * 23.x. A block with no `ADetailer model` gets no entry at all rather than a
+ * disabled one, because an `alwayson_scripts` key Forge cannot match is an
+ * error for the whole request rather than a setting it ignores.
+ */
+function adetailerUnit(
+  get: (key: string) => string | undefined,
+): Record<string, unknown> | null {
+  const model = get('ADetailer model')
+  if (!model) return null
+  // Values arrive still wearing the quotes the block wrote them with.
+  const unquote = (value: string | undefined) => value?.replace(/^"|"$/g, '')
+  const unit: Record<string, unknown> = { ad_model: model }
+  const prompt = unquote(get('ADetailer prompt'))
+  const negative = unquote(get('ADetailer negative prompt'))
+  if (prompt) unit['ad_prompt'] = prompt
+  if (negative) unit['ad_negative_prompt'] = negative
+  const denoise = Number(get('ADetailer denoising strength'))
+  if (Number.isFinite(denoise)) unit['ad_denoising_strength'] = denoise
+  return unit
+}
+
 function joinSettings(fields: Array<[string, string]>): string {
   return fields.map(([key, value]) => `${key}: ${value}`).join(', ')
 }
@@ -1059,6 +1326,21 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
         `Weighted the framing to (${framed.weighted.join(', ')}:${FACING_WEIGHT}) and moved it to ` +
           'the front. Bare, it loses to the body tags, which describe a front view whatever the ' +
           'camera was told.',
+      )
+    }
+  }
+
+  // Garments the prompt's own state of undress rules out — see
+  // UNDRESS_CONFLICTS. After the override for the same reason as the framing:
+  // a swap's new wardrobe arrives through `--prompt`, and that is precisely
+  // where a skirt lands next to the `bottomless` it contradicts.
+  {
+    const dressed = enforceUndress(nextPrompt)
+    nextPrompt = dressed.text
+    if (dressed.removed.length > 0) {
+      notes.push(
+        `Dropped ${[...new Set(dressed.removed)].join(', ')} — the prompt already says that much ` +
+          'is not being worn. Left in, the garment wins and the state tag reads as noise.',
       )
     }
   }
