@@ -180,45 +180,46 @@ const SD15_EMBEDDINGS = [
 ]
 
 /**
- * Phrases that read like tags but are not, and the tags that are.
+ * Phrasings canonicalised onto the tag that carries the same meaning.
  *
- * Booru-trained models learned exact strings. `huge hips` is not one of the
- * 10,861 tags in `models/anime-tagger/selected_tags.csv`, so it carries no
- * learned meaning and the model falls back to the words — which is how
- * substituting it for `wide hips` makes hips *smaller*. That is the opposite of
- * SD1.5, which was captioned in prose and would do something reasonable with a
- * synonym.
+ * **Never a change of degree.** This list used to rewrite `big ass` to
+ * `huge ass` and `bbw` to `plump`, on the reasoning that a phrase absent from
+ * `models/anime-tagger/selected_tags.csv` carries no learned meaning. That
+ * reasoning does not hold: the file is the *tagger's* vocabulary — the ~10,000
+ * tags it was trained to predict — not the checkpoint's and not danbooru's, and
+ * CLIP reads unknown phrases compositionally. `gigantic ass` is absent from it
+ * and renders exactly as expected, confirmed over many real generations.
  *
- * Every left-hand side was checked as absent from that file and every
- * right-hand side as present. Rewriting is safe; *dropping* unknown tags would
- * not be, because character names, artist names and quality tags are all
- * legitimately outside the tagger's vocabulary.
+ * So absence is a reason to check, not a licence to substitute. What survives
+ * here is only where the axis has a single real tag and the left-hand side adds
+ * no size of its own — `wasp waist` and `narrow waist` are the same request;
+ * `big ass` and `huge ass` are not, and picking one of them is the user's job.
+ *
+ * `naked` is gone for a second reason on top of that one: rewriting it to
+ * `nude` put the word "nude" into prompts that only said `naked ass`, which
+ * tripped [`UNDRESS_CONFLICTS`]'s full-nudity row and stripped a shirt that was
+ * plainly in the picture.
  */
 const TAG_ALIASES: ReadonlyArray<readonly [string, string]> = [
+  // Hips and thighs each have exactly one tag on the axis, so these are
+  // spellings of it rather than degrees of it. `huge hips` measured *smaller*
+  // than `wide hips`, which is what this row is for.
   ['huge hips', 'wide hips'],
   ['large hips', 'wide hips'],
   ['big hips', 'wide hips'],
   ['wide hip', 'wide hips'],
-  ['big ass', 'huge ass'],
-  ['large ass', 'huge ass'],
-  ['fat ass', 'huge ass'],
-  ['bubble butt', 'huge ass'],
-  ['big breasts', 'huge breasts'],
-  ['hyper breasts', 'gigantic breasts'],
-  ['busty', 'huge breasts'],
   ['huge thighs', 'thick thighs'],
   ['fat thighs', 'thick thighs'],
-  ['chubby', 'plump'],
-  ['bbw', 'plump'],
-  ['voluptuous', 'curvy'],
-  ['curvaceous', 'curvy'],
+  // `voluptuous` and `curvaceous` used to be rewritten to `curvy` here. They
+  // are absent from the tagger's list, but so is `gigantic ass`, which works —
+  // and they do not mean quite the same thing as `curvy`, so swapping them was
+  // the same quiet substitution as `big ass → huge ass`. Left alone.
   ['slim waist', 'narrow waist'],
   ['thin waist', 'narrow waist'],
   ['wasp waist', 'narrow waist'],
   ['hourglass figure', 'narrow waist, wide hips'],
   ['naked breasts', 'breasts out'],
   ['bare breasts', 'breasts out'],
-  ['naked', 'nude'],
 ]
 
 /**

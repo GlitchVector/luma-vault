@@ -127,29 +127,59 @@ describe('migrateGeneration, SD1.5 to SDXL', () => {
     expect(line.match(/low quality/g)).toHaveLength(1)
   })
 
-  it('rewrites phrases that only look like danbooru tags', () => {
-    // `huge hips` is not one of the 10,861 tags these models learned, so it
-    // carries no meaning and the hips come out *smaller* than with `wide hips`.
-    // Checked against models/anime-tagger/selected_tags.csv.
+  it('canonicalises a phrasing onto the one tag its axis has', () => {
+    // Hips have exactly one tag, so `huge hips` is a spelling of `wide hips`
+    // rather than a bigger version of it — and it measured *smaller*, which is
+    // what the rewrite is for.
     const { block: out, notes: why } = migrateGeneration(
-      'a girl, huge hips, big ass, hyper breasts, chubby\nSteps: 20, Size: 512x768',
+      'a girl, huge hips, wasp waist, fat thighs\nSteps: 20, Size: 512x768',
       TO_XL,
     )
     expect(out).toContain('wide hips')
-    expect(out).toContain('huge ass')
-    expect(out).toContain('gigantic breasts')
-    expect(out).toContain('plump')
-    expect(out).not.toMatch(/huge hips|big ass|hyper breasts|chubby/)
+    expect(out).toContain('narrow waist')
+    expect(out).toContain('thick thighs')
+    expect(out).not.toMatch(/huge hips|wasp waist|fat thighs/)
     expect(why.join(' ')).toContain('huge hips → wide hips')
+  })
+
+  it('never changes the size that was asked for', () => {
+    // The rewriter used to turn `big ass` into `huge ass` and `bbw` into
+    // `plump`, on the reasoning that a phrase missing from the tagger's
+    // vocabulary carries no meaning. It does — CLIP reads it compositionally —
+    // so those substitutions were quietly resizing somebody's prompt. Picking a
+    // rung is the user's job.
+    const { block: out } = migrateGeneration(
+      'a girl, big ass, big breasts, hyper breasts, busty, chubby, bbw, gigantic ass\n' +
+        'Steps: 20, Size: 512x768',
+      TO_XL,
+    )
+    for (const asked of ['big ass', 'big breasts', 'hyper breasts', 'busty', 'chubby', 'bbw']) {
+      expect(out).toContain(asked)
+    }
+    expect(out).toContain('gigantic ass')
+    expect(out).not.toContain('huge ass')
+  })
+
+  it('leaves `naked` alone, because rewriting it undressed a character', () => {
+    // `naked ass` became `nude ass`, and the word "nude" then tripped the
+    // full-nudity row of UNDRESS_CONFLICTS, which removed a shirt that was
+    // plainly in the picture.
+    const { block: out } = migrateGeneration(
+      'a girl, naked ass, black shirt, crop top\nSteps: 20, Size: 512x768',
+      TO_XL,
+    )
+    expect(out).toContain('naked ass')
+    expect(out).toContain('black shirt')
+    expect(out).toContain('crop top')
   })
 
   it('keeps the weight when it rewrites a tag', () => {
     const { block: out } = migrateGeneration(
-      'a girl, (huge hips:1.3), (big ass:0.8)\nSteps: 20, Size: 512x768',
+      'a girl, (huge hips:1.3), (wasp waist:0.8)\nSteps: 20, Size: 512x768',
       TO_XL,
     )
     expect(out).toContain('(wide hips:1.3)')
-    expect(out).toContain('(huge ass:0.8)')
+    expect(out).toContain('(narrow waist:0.8)')
   })
 
   it('removes negatives that cancel what the prompt asks for', () => {
