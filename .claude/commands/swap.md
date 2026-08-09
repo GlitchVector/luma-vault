@@ -1,6 +1,6 @@
 ---
 description: Recreate a generation with a different character in it, wearing her own outfit
-argument-hint: <image> [model — optional; otherwise you are asked]
+argument-hint: <image> [model] [bg — render in the background]
 ---
 
 # Same picture, different character
@@ -156,6 +156,39 @@ now       makima (chainsaw man), red hair, braid, ringed eyes, white shirt,
 
 That third line is the command's whole output, and none of it is visible in the
 tab afterwards. Then send exactly as `/sdxl` does.
+
+## `bg` — render in the background instead of opening a tab
+
+**A bare `bg` anywhere in the arguments means: generate it and show the
+picture, do not open Forge.** `/sdxl 00489 bg`, `/swap 00205 wai bg`,
+`/recreate 00316 bg` — the token is never a model, because no installed
+checkpoint contains those two letters, so it can sit in the model slot without
+ambiguity.
+
+What changes at the send step, and nothing else — every question, every rule
+and the last look all happen exactly as written above:
+
+```bash
+<the same command> --render "<scratchpad>/<image>-<what-it-is>.png"
+```
+
+Then show it with `SendUserFile`, captioned with what was asked for.
+
+Three things worth knowing:
+
+- **It is safe while Forge is busy.** The checkpoint travels in
+  `override_settings` per request rather than being selected globally, so the
+  render queues behind whatever is running instead of changing the model out
+  from under it. No need to check `/sdapi/v1/progress` first.
+- **Forge saves its own copy** into its outputs with its own numbering, which
+  is what puts the picture in the library. Write the `--render` file into the
+  session scratchpad, not a watched folder, or it is indexed twice.
+- **It takes two to four minutes** on this machine, and there is nothing on
+  screen meanwhile. Say so before starting, or the wait reads as a hang.
+
+`.claude/shot-tags.md` has the measurements behind all of this under "Getting
+the shots rendered". `/shot` does not take `bg`: it already decides by count,
+opening one or two as tabs and rendering three or more.
 
 ## What to say afterwards
 

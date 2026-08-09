@@ -149,8 +149,12 @@ So when the camera turns, the weight moves to whichever tag shows from the new
 side:
 
 - **Source boosted the ass** → front, side and low-angle shots take a matching
-  boost on `wide hips`. `(huge ass:2)` in the source became `(wide hips:1.8)`
-  on the front shots of one set, and the two angles finally read as one person.
+  boost on `wide hips`. `(huge ass:2)` in the source needed
+  `(wide hips:2), (thick thighs:1.8), (curvy:1.6)` on the front shots before
+  the two angles read as one person — 1.8 on the hips alone was tried first
+  and was still visibly narrower than the back view. The ass tag is doing
+  more work than its number suggests, so the front side needs more than a
+  matching weight on one tag.
 - **Source boosted the hips** → back-facing shots take the matching boost on
   `huge ass`, for exactly the same reason in reverse.
 

@@ -1,6 +1,6 @@
 ---
 description: Turn an image — attached, or already in the vault — into a danbooru prompt, tune the body shape, and open it prefilled in Forge
-argument-hint: [image name — optional; attach an image instead]
+argument-hint: [image name — or attach one] [bg — render in the background]
 ---
 
 # Recreating a picture as a prompt
@@ -363,6 +363,39 @@ When a name was given, say what *moved*: which of the original prompt's words
 you kept, what the picture made you add, and which rung each answer replaced.
 That diff is the whole point of running `/recreate` on a picture that already
 had a prompt, and none of it is visible in the tab.
+
+## `bg` — render in the background instead of opening a tab
+
+**A bare `bg` anywhere in the arguments means: generate it and show the
+picture, do not open Forge.** `/sdxl 00489 bg`, `/swap 00205 wai bg`,
+`/recreate 00316 bg` — the token is never a model, because no installed
+checkpoint contains those two letters, so it can sit in the model slot without
+ambiguity.
+
+What changes at the send step, and nothing else — every question, every rule
+and the last look all happen exactly as written above:
+
+```bash
+<the same command> --render "<scratchpad>/<image>-<what-it-is>.png"
+```
+
+Then show it with `SendUserFile`, captioned with what was asked for.
+
+Three things worth knowing:
+
+- **It is safe while Forge is busy.** The checkpoint travels in
+  `override_settings` per request rather than being selected globally, so the
+  render queues behind whatever is running instead of changing the model out
+  from under it. No need to check `/sdapi/v1/progress` first.
+- **Forge saves its own copy** into its outputs with its own numbering, which
+  is what puts the picture in the library. Write the `--render` file into the
+  session scratchpad, not a watched folder, or it is indexed twice.
+- **It takes two to four minutes** on this machine, and there is nothing on
+  screen meanwhile. Say so before starting, or the wait reads as a hang.
+
+`.claude/shot-tags.md` has the measurements behind all of this under "Getting
+the shots rendered". `/shot` does not take `bg`: it already decides by count,
+opening one or two as tabs and rendering three or more.
 
 ## Illustrious checkpoints — `hassaku`, `deliberate`, `illustrious`
 
