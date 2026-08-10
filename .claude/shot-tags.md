@@ -138,6 +138,98 @@ fastened, and the dress came back whole. The same applies to `halterneck`,
 if the detail is a property of a garment, there is usually a tag that says so,
 and reaching for a noun instead adds clothing nobody asked for.
 
+**`--style 2.5d` delivers 3D, and the preset table is why.** Measured across a
+session of renders that all came back looking like plastic. The three presets in
+`STYLES` (`packages/core/src/migrate.ts`) are:
+
+| | positive | negative |
+|---|---|---|
+| `2d` | `anime coloring, flat color` | `realistic, photorealistic, shiny skin` |
+| `2.5d` | `realistic, shiny skin` | `flat color, anime coloring, photorealistic` |
+| `3d` | `photorealistic, realistic, shiny skin` | `anime coloring, flat color, lineart, sketch` |
+
+Two problems, both from the counts:
+
+- **`2.5d` and `3d` differ by one tag, and it has 822 images.** `photorealistic`
+  is nearly inert, so the two presets are effectively the same request. Reaching
+  for `3d` to get "more real" does almost nothing, and that is not a quirk of
+  one checkpoint.
+- **Both assert `shiny skin`, at 115,412 by far the strongest tag on the axis.**
+  That tag *is* the plastic look. `realistic` is only 19,111, so in `2.5d` the
+  gloss outweighs the realism three to one and the result reads as a render
+  rather than as semi-real anime.
+
+So on a checkpoint that already leans glossy — perfectdeliberate does — `2.5d`
+overshoots into 3D. What actually produces 2.5D is the middle the table has no
+entry for:
+
+```
+positive:  (anime coloring:1.2)          # 3,057 — too weak unweighted
+negative:  (shiny skin:1.3), realistic, photorealistic
+```
+
+**Leave `flat color` out of both sides.** Asserting it gives full 2D; negating
+it pushes back toward realism. Its absence is what separates 2.5D from 2D — the
+shading stays soft instead of going flat.
+
+The general lesson is the one below, applied to a preset table rather than a
+prompt: these presets were written by picking sensible-sounding words, and two
+of the six are words the model barely knows. Weighting is not a nicety here, it
+is what makes a thin tag audible next to a thick one.
+
+**And the checkpoint outweighs all of it.** The same prompt, negative, weights
+and seed on `hassakuXLIllustrious_v12Style` came back dramatically flatter than
+on `perfectdeliberate_v10` — crisp lines, simplified background, almost no
+gradient on the skin. Not a nudge; a different picture on this axis.
+
+**A checkpoint's rendering style is a floor, not a starting point.** Pushed as
+far as the weights usefully go — `(anime coloring:1.8), (flat color:1.6)` in the
+positive against `(shiny skin:2), (realistic:1.5), photorealistic` in the
+negative — `perfectdeliberate_v10` *still* rendered soft gradient shading and
+semi-real skin. Two rounds, the second near the ceiling where weights start
+warping anatomy instead of changing anything. It never got close to hassaku's
+flatness, which hassaku produces with no style tags at all.
+
+So the style tags move a render **within** a checkpoint's band; they do not move
+it into another checkpoint's. Want flat? Load hassaku. Want gloss? Load
+perfectdeliberate. Reaching for `--style` to cross that gap is the expensive way
+to find out it cannot be crossed.
+
+### For actual 2.5D: `--model hassaku --style 2.5d`
+
+Which follows from the floor rule, and is the inverse of what anyone tries
+first. **Pick the checkpoint whose floor sits below your target, then push up.**
+
+perfectdeliberate's floor is already at or above 2.5D, so `--style 2.5d` there
+can only push further into gloss — that is why a whole session of trying to pull
+it *down* failed. hassaku's floor is flat, so the same stock preset lands in the
+middle: clean anime linework and face, with volumetric shading and a soft sheen
+on the skin.
+
+No weighting, no hand-written style block, no ADetailer split. Confirmed against
+the same seed as the failed attempts:
+
+| on hassaku | result |
+|---|---|
+| no style tags | flat cel — the 2D end of its band |
+| `--style 2.5d` | **the target: semi-real shading, anime face** |
+| `--style 3d`, even weighted to `(realistic:1.5), (shiny skin:1.5)` | glossier, but *still* an anime face and clean lines |
+
+That last row is the ceiling made visible: hassaku will not become a plastic
+render however hard it is pushed, exactly as perfectdeliberate would not become
+flat. Two checkpoints, two bands, and the bands barely overlap.
+
+Reaching for the *more realistic* checkpoint when you want semi-real is
+backwards. Reach for the flatter one and turn it up.
+
+So reach for the checkpoint before the tags. perfectdeliberate is inherently
+glossy and needs `shiny skin` negated to stop reading as a render; hassaku's
+Style release is inherently flat and needs the sheen *left in* to reach 2.5D
+rather than 2D. Both are Illustrious and take identical settings, so switching
+between them costs nothing — see the family note. Two checkpoints from the same
+family are not interchangeable on rendering style, whatever they share on
+sampler and CFG.
+
 **`selected_tags.csv` is evidence, not a verdict.** Every command here checks
 tags against it, and that is worth keeping in proportion: it is the *tagger*
 model's vocabulary — the ~10,000 tags it was trained to predict — not the
