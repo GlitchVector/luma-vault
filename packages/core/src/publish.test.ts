@@ -152,6 +152,53 @@ describe('describeForDeviantArt', () => {
     expect(draft.title).toBe('1girl, Blue Hair, Nun, Halberd')
   })
 
+  it('titles from the character the prompt names, plus a word to tell a batch apart', () => {
+    const draft = describeForDeviantArt(
+      item({
+        generation: generation({ characters: ['aqua (konosuba)'], prompt: '1girl, blue hair' }),
+      }),
+    )
+    // Not the exact word: that belongs to the generator's dictionary, and
+    // pinning it here would make a dependency bump look like a broken rule.
+    expect(draft.title).toMatch(/^Aqua [A-Z][a-z]+$/)
+  })
+
+  it('leads with the name alone, not the series danbooru’s form appends', () => {
+    const draft = describeForDeviantArt(
+      item({ generation: generation({ characters: ['hatsune miku (vocaloid)'] }) }),
+    )
+    expect(draft.title).toMatch(/^Hatsune /)
+    expect(draft.title).not.toContain('vocaloid')
+  })
+
+  it('gives a row the same word every time, and its neighbour a different one', () => {
+    // Seeded from the id rather than from chance, so reopening the panel does
+    // not reshuffle a batch of titles under someone's cursor.
+    const characters = ['aqua (konosuba)']
+    const first = describeForDeviantArt(item({ id: 7, generation: generation({ characters }) }))
+    const again = describeForDeviantArt(item({ id: 7, generation: generation({ characters }) }))
+    const neighbour = describeForDeviantArt(item({ id: 8, generation: generation({ characters }) }))
+    expect(again.title).toBe(first.title)
+    expect(neighbour.title).not.toBe(first.title)
+  })
+
+  it('still prefers a filename a person chose over the character', () => {
+    const draft = describeForDeviantArt(
+      item({
+        name: 'winter_market_study.png',
+        generation: generation({ characters: ['aqua (konosuba)'] }),
+      }),
+    )
+    expect(draft.title).toBe('Winter Market Study')
+  })
+
+  it('falls through to the prompt when no character was detected', () => {
+    const draft = describeForDeviantArt(
+      item({ generation: generation({ prompt: '1girl, red dress' }) }),
+    )
+    expect(draft.title).toBe('1girl, Red Dress')
+  })
+
   it('titles every draft the same when one is given for the batch', () => {
     const draft = describeForDeviantArt(item({ name: 'winter_market_study.png' }), {
       title: '  Sister of the Halberd  ',

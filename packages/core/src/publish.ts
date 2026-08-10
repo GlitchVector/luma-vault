@@ -12,6 +12,7 @@
  * wrong guess costs a keystroke, not a bad post.
  */
 
+import { adjectives, uniqueNamesGenerator } from 'unique-names-generator'
 import { effectiveRating } from './classify.ts'
 import { LABEL_WEIGHTS, isRatedLabel, type RatedLabel } from './labels.ts'
 import type { Generation, MediaItem, Rating } from './schemas.ts'
@@ -400,6 +401,51 @@ function titleFromName(name: string): string | null {
   return titleCase(words).slice(0, MAX_TITLE).trim()
 }
 
+/**
+ * The name a character leads with, whichever form the detector stored.
+ *
+ * Both are in the index and the split has to survive either: about an eighth
+ * carry danbooru's disambiguating series — `aqua (konosuba)`, `misty (pokemon)`
+ * — and the rest are the bare name, `kiryu coco` or `ninomae ina'nis`. The
+ * leading whitespace-separated word is the lead name in both, so no bracket
+ * handling is needed to get `aqua`, `misty`, `kiryu`.
+ *
+ * The first entry wins because `characters_of` collects them in the order the
+ * prompt names them, and a prompt leads with its subject.
+ */
+function characterFirstName(generation: Generation | null): string | null {
+  const [main] = generation?.characters ?? []
+  const first = main?.trim().split(/\s+/)[0]
+  // A name has to carry letters. Guards against a malformed entry titling
+  // everything in a batch after a stray bracket.
+  return first !== undefined && /[a-z]/i.test(first) ? first : null
+}
+
+/**
+ * A second word for a title, drawn from the row's id rather than from chance.
+ *
+ * Docker's trick — one dictionary word to tell otherwise identical things
+ * apart. Seeded, so it is a *function of the picture* rather than of when the
+ * panel was opened: the same row is always "Aqua Serene", reopening the panel
+ * does not reshuffle the batch under a cursor, and a re-upload months later
+ * matches the first one. That also keeps this module pure and its tests exact,
+ * which an unseeded generator would not.
+ *
+ * The id is the seed, so a row torn down and reinserted — what the watcher does
+ * when a file's contents change — comes back with a different word. Nothing
+ * downstream depends on the name, so that costs a retitle and no more.
+ */
+function moniker(seed: number): string {
+  return uniqueNamesGenerator({ dictionaries: [adjectives], length: 1, style: 'capital', seed })
+}
+
+/** The named character and its moniker: `Aqua Serene`. */
+function titleFromCharacter(item: MediaItem): string | null {
+  const name = characterFirstName(item.generation)
+  if (name === null) return null
+  return `${titleCase(name)} ${moniker(item.id)}`.slice(0, MAX_TITLE).trim()
+}
+
 /** Up to four leading subjects, as a title. */
 function titleFromPrompt(prompt: string): string | null {
   const [first, ...rest] = promptSubjects(prompt)
@@ -530,9 +576,16 @@ export function describeForDeviantArt(item: MediaItem, options: DraftOptions = {
   const rating: Rating = effectiveRating(item)
   const topLabel = item.verdict?.topLabel ?? null
 
+  // Ahead of the prompt but behind the filename. A prompt-derived title is a
+  // list of tags — "1girl, Silver Hair, Red Dress, Forest" — so naming the
+  // character instead is an improvement on essentially every generated file,
+  // whose name is a counter and a seed that `titleFromName` already rejects.
+  // A filename a person actually chose still wins, because choosing one is a
+  // stronger statement about this picture than the prompt naming a character.
   const title =
     options.title?.trim() ||
     titleFromName(item.name) ||
+    titleFromCharacter(item) ||
     (item.generation?.prompt ? titleFromPrompt(item.generation.prompt) : null) ||
     'Untitled'
 
