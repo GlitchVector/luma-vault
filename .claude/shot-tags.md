@@ -106,6 +106,38 @@ So the wardrobe travels with every shot regardless of the crop. Only `huge ass`,
 part they describe is genuinely outside the frame. "Not the subject" is not a
 reason; "not visible" is.
 
+**But trim it to the frame's depth, or it drags the camera out.** The other half
+of the same rule, measured on a 16-shot set whose body tags were already
+filtered correctly: `close-up, face focus` and `portrait, face focus` both came
+back as cowboy shots anyway. Nothing about the body was at fault — the wardrobe
+named `side slit`, `black thighhighs` and `elbow gloves`, and the model zooms out
+to draw what it has been told to include. That is the same mechanic the wide-shot
+recipe uses on purpose with `boots`, firing in the wrong direction.
+
+Keep three depths of the same outfit and pick by rung, rather than one list:
+
+| Rung | Wardrobe |
+|---|---|
+| `close-up`, `portrait` | collar, neckline, what a head-and-shoulders crop contains |
+| `upper body`, breast close-up | down to the waist; gloves and armlets in, legwear out |
+| `cowboy shot` and wider | all of it |
+
+This is *not* the "never filter the wardrobe" failure in disguise. That one was
+about garments vanishing from the prompt and being reinvented as something else.
+Here every garment in frame is still named — only the ones that cannot be seen
+are dropped, and the same three lists are reused across the whole set so nothing
+drifts between shots.
+
+**Name a garment's property, not a second garment.** A white dress laced up the
+back was prompted with `backless dress` *and* `corset`, and came back as a black
+waist-cincher worn over a separate bra and skirt — three garments where the
+source had one. `corset` names a thing you put on; the fix was
+`cross-laced clothes` (15,633), which names how the thing you already named is
+fastened, and the dress came back whole. The same applies to `halterneck`,
+`side slit`, `gold trim`, `frilled` and every other cut, trim or fastening:
+if the detail is a property of a garment, there is usually a tag that says so,
+and reaching for a noun instead adds clothing nobody asked for.
+
 **`selected_tags.csv` is evidence, not a verdict.** Every command here checks
 tags against it, and that is worth keeping in proportion: it is the *tagger*
 model's vocabulary — the ~10,000 tags it was trained to predict — not the
@@ -179,6 +211,13 @@ indistinguishable from a full body. What worked, measured on one render:
   rung, and it is the tag that actually asks for an environment.
 - **Drop the body size tags entirely.** They pull the camera in, which is the
   whole problem, and at this distance the figure is too small to show them.
+  **Check this one against the outfit before believing it.** On a floor-length
+  gown it bought almost no extra distance — the dress already fills the frame
+  whatever the camera does — and the figure came back visibly slimmer than the
+  other fifteen shots, which is a worse failure than a slightly tight wide: the
+  set stops being one person. Restoring `(wide hips:1.4), (thick thighs:1.4),
+  (curvy:1.4)` gave both the room *and* the silhouette. The rule holds for
+  swimwear and short outfits, where the body really is what fills the frame.
 - **Name footwear** — `boots`, `high heels`. The model zooms out to fit what it
   has been told to include, and feet are the bottom of the figure.
 - Keep `full body` alongside the rung. This breaks "one rung per shot" on
@@ -202,9 +241,27 @@ back-facing source left `from behind`, `looking back`, `(ass focus:2)` and
 `(from behind, no panties:1.1)` untouched across two chunks.
 
 The reverse direction is already handled — `enforceFraming` drops the front-only
-anatomy and `looking at viewer` when the framing turns away. It is only
-front-facing that needs doing by hand, because there is no tag meaning "facing
-forward" for a rule to key on.
+anatomy and `looking at viewer` when the framing turns away.
+
+**Front-facing has a tag after all: `facing viewer`, 46,277 images.** An earlier
+version of this file said no such tag existed, and that was wrong — the claim
+came from `front view`, which genuinely is absent (see the character-sheet
+notes). `facing viewer` is real, well learned, and is the positive instrument
+for a front composition. Use it whenever the prompt carries anything that pulls
+the other way, and put `from behind, looking back, ass focus, facing away` in
+the negative beside it.
+
+**A weighted ass tag is a facing tag.** Measured on a front-facing source
+recreated with `(huge ass:1.5)`: the render came back rear-view with her looking
+over her shoulder, in a composition that named nothing about turning around.
+`huge ass` is trained overwhelmingly on rear views, so at weight it stops
+describing the body and starts deciding which way it points — the same trap as
+`arched back` and `bent over`, but less obvious because it reads as a size.
+
+So on any front-facing shot: drop the ass tag entirely if it is out of frame,
+and let the hips carry the silhouette. That is the "hips and ass are one body
+seen from two sides" rule run in the front direction. If it must stay — to keep
+a figure consistent across a set — plain and unweighted is the ceiling.
 
 
 **One rung per shot, always.** `SHOT_LADDER` in `migrate.ts` treats `close-up`,
@@ -265,11 +322,47 @@ them by hand when a tight tab comes back busy.
 drags the crop back to the hips, which is why the maximum-hips combo drops it
 for anything `full body` or wider. The table only pairs it with `cowboy shot`.
 
-**The wide backstop is per shot, not per run.** `close-up, cropped, portrait,
-upper body` belongs in the negative of the `full body` and `wide shot` tabs and
-nowhere else — in a `close-up` tab it argues against the shot being asked for.
-Passing `--shot` handles this on a migrated block; composing a prompt you write
-the negative yourself, so vary it.
+**Hip focus means the hips only, and `head out of frame` is what gets you
+there.** Asked for as the hip area alone, it kept coming back as a cowboy shot
+with her whole face in it. Negating the face does not work — two rounds of it,
+first `face, head` and then `face, head, portrait, upper body, looking at
+viewer, facial expression`, both lost against a prompt naming hair colour, eye
+colour and a character tag. Weighting the rung did not work either:
+`(hip focus:1.8), (close-up:1.5), (lower body:1.3)` still drew the head.
+
+What worked in one attempt was asking for the crop positively:
+
+```
+(hip focus:1.6), (lower body:1.5), (head out of frame:1.4), cropped torso
+```
+
+`head out of frame` is a real tag at 17,569 images and `cropped torso` at
+28,143 — both far better learned than `lower body`'s 4,426. The general lesson
+is worth more than the shot: **a crop is something to ask for, not something to
+negate.** The negative removes content; it does not move the camera.
+
+**The backstop is per shot, not per run — and it cuts both ways.** `close-up,
+cropped, portrait, upper body` belongs in the negative of the `full body` and
+`wide shot` tabs and nowhere else; in a `close-up` tab it argues against the
+shot being asked for. Passing `--shot` handles this on a migrated block;
+composing a prompt you write the negative yourself, so vary it.
+
+The mirror image is not automatic anywhere and has to be written by hand. A
+tight rung needs stopping from drifting *wide* exactly as a wide rung needs
+stopping from drifting tight:
+
+| Rung | Add to the negative |
+|---|---|
+| `close-up`, `portrait` | `full body, cowboy shot, wide shot, upper body, thighs, legs, feet` |
+| `upper body`, tight focus shots | `full body, cowboy shot, wide shot, legs, feet` |
+| `cowboy shot` | `close-up, portrait` |
+| `full body`, `wide shot` | `close-up, cropped, portrait, upper body` |
+
+The `cowboy shot` row is the one that looks unnecessary and is not. Measured:
+`cowboy shot, from behind, ass focus, looking back` beside `(huge ass:1.4)` and
+`enforceFraming`'s own 1.5 boost cropped to the hips — which then duplicated the
+two shots in group C that are *meant* to be ass close-ups. Three near-identical
+rear crops in one set of sixteen.
 
 Watch for the inverse too: if the *source* block's own negative already carries
 `close-up` or `portrait`, a tight variant is fighting itself before it starts.
@@ -278,6 +371,51 @@ Say so rather than sending it quietly.
 ## Getting the shots rendered
 
 **Two or fewer: open tabs. Three or more: render through the API instead.**
+
+### Or later, when the room is empty: `--queue`
+
+A 3090 mid-render is loud enough to be antisocial, and a sixteen-shot set is a
+quarter of an hour of it. `--queue` writes the job down instead of generating
+it, and `pnpm queue --drain` works through the lot whenever nobody minds — a
+scheduled task at 3am, or by hand once the flat is empty.
+
+```bash
+pnpm open-in-forge <the same flags> --queue --label "<n>-<shot>"
+pnpm migrate-prompt <image> <model> <the same flags> --queue --label "<n>-<shot>"
+
+pnpm queue                 # what is waiting, and roughly how long it will take
+pnpm queue --drain         # render all of it, one job at a time
+pnpm queue --retry         # put the failed ones back to pending
+pnpm queue --clear         # forget the finished ones
+```
+
+**It composes with `--render` rather than replacing it.** Given both, the job
+remembers where the picture should land; given only `--queue`, it goes to
+`queue-out` beside the index. So a shot script gains this by adding one flag.
+
+What gets stored is the **finished parameter block and nothing else** — no
+image name, no model, no flags. By the time either command has a block, model
+resolution, `enforceFraming`, `enforceUndress`, the family tuning and `--style`
+have all been applied, so a drained job reproduces byte for byte what a live
+render would have sent. There is nothing left to re-derive and therefore nothing
+that can drift between queueing and draining.
+
+Three things it does deliberately:
+
+- **A failed job is a row, not an abort** — the same rule the scanner follows. A
+  bad tag fails its own job and the drain carries on. But a *connection* failure
+  stops the run and leaves the rest pending, because continuing would convert
+  the whole queue into failures for a reason that has nothing to do with them.
+- **Forge is probed once before anything is marked.** Draining against a Forge
+  that is not running would otherwise fail every job in turn, and you would come
+  back to a queue that had destroyed itself.
+- **The queue is written back after every job**, not at the end, so an
+  interrupted overnight run keeps the hours it already spent.
+
+Measured on the 3090 this was written for: **32 seconds** per job at 832x1216
+with the 1.5x hires pass and an ADetailer face pass, checkpoint already
+resident. The "two to four minutes" quoted elsewhere in this file is the cold
+case — the first render after a model switch pays the load as well.
 
 The tab route is pleasant when it works — the picture appears in a page you can
 tweak and re-roll from. It stops working at scale, for a reason no amount of
