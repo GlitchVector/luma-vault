@@ -27,7 +27,7 @@ import {
   familyOf,
   settingsFor,
   warnAboutVPrediction,
-  inspectCheckpoint,
+  describeCheckpoint,
   fail,
   openWithBlock,
   renderWithBlock,
@@ -108,7 +108,7 @@ const dressed = enforceUndress(args.prompt)
 args.prompt = dressed.text
 
 const target = await resolveModel(args.model)
-const { architecture, vPred } = inspectCheckpoint(target.filename)
+const { architecture, vPred } = describeCheckpoint(target)
 if (architecture !== 'xl') {
   // Not fatal — the block still opens — but the canvas and tuning here are
   // SDXL's, and generating an SD1.5 image at 832x1216 gives doubled anatomy,
@@ -237,9 +237,9 @@ if (renderTo) {
   console.log(`
 rendering… (this is the model's own time, not a stagger)`)
   try {
-    const { path, seed } = await renderWithBlock(block, renderTo)
+    const { path, seed, note } = await renderWithBlock(block, renderTo)
     console.log(`rendered  ${path}${seed === undefined ? '' : `  seed ${seed}`}`)
-    console.log('Forge saved its own copy to its outputs folder, so the library will index it.')
+    console.log(note)
   } catch (error) {
     fail(`
 Forge refused the render: ${error.message}`, 'Nothing was opened and nothing was saved.')

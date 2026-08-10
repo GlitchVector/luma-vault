@@ -37,7 +37,7 @@ import {
   PORTRAIT,
   familyOf,
   warnAboutVPrediction,
-  inspectCheckpoint,
+  describeCheckpoint,
   fail,
   forge,
   openWithBlock,
@@ -230,18 +230,42 @@ const add = flag('--add')
 const size = flag('--size') ?? PORTRAIT
 const renderTo = flag('--render')
 const style = flag('--style')
+// The one number the sources disagree about — see `MigrationTarget.cfg`. This
+// was documented in `/sdxl` for months while nothing here read it, and because
+// `flag()` splices what it recognises and the remainder becomes positionals,
+// `--cfg 7` was not an error: it was silently dropped and the render came back
+// at 5. Hence the unconsumed-flag guard below.
+const cfgGiven = flag('--cfg')
+const cfg = cfgGiven === undefined ? undefined : Number(cfgGiven)
+if (cfg !== undefined && !Number.isFinite(cfg)) fail(`--cfg takes a number (got "${cfgGiven}")`)
 // Write the job down instead of generating it — see scripts/lib/queue.mjs.
 // Must be spliced out like every other flag, or it lands in the positionals and
 // is read as the image name.
 const queueIt = switchFlag('--queue')
 const queueLabel = flag('--label')
+
+// Every flag has now been spliced out, so anything left that looks like one is
+// a flag this script does not have. Worth failing over rather than ignoring:
+// what remains becomes positionals, and the destructuring below reads only the
+// first two — so an unrecognised flag used to vanish without a word and the
+// render came back subtly not what was asked for. `--cfg` did exactly that for
+// months while `/sdxl` documented it three times.
+const stray = argv.filter((argument) => argument.startsWith('--'))
+if (stray.length > 0) {
+  fail(
+    `unknown argument${stray.length > 1 ? 's' : ''}: ${stray.join(', ')}`,
+    'Run with no arguments to see the ones this script takes.',
+  )
+}
+
 if (!/^\d+\s*x\s*\d+$/.test(size)) fail(`--size takes WxH, e.g. --size ${PORTRAIT} (got "${size}")`)
 const [imageName, targetName = DEFAULT_MODEL] = argv
 if (!imageName) {
   fail(
     'usage: pnpm migrate-prompt <image-name> [target-model] [--shot "full body"]',
     '       [--body "(gigantic ass:2)"] [--add "black dress, demon horns"] [--size WxH]',
-    '       [--dry-run] [--prompt "<the edited prompt>"]',
+    '       [--cfg 7] [--style 2d|2.5d|3d] [--dry-run] [--prompt "<the edited prompt>"]',
+    '       [--render <path>] [--queue [--label <name>]]',
     '',
     `  pnpm migrate-prompt 00166-3997412987            # onto ${DEFAULT_MODEL}, at ${PORTRAIT}`,
     '  pnpm migrate-prompt 00166-3997412987 illustrious',
@@ -313,7 +337,7 @@ if (show) {
 }
 
 const target = await resolveModel(targetName)
-const { architecture, vPred } = inspectCheckpoint(target.filename)
+const { architecture, vPred } = describeCheckpoint(target)
 if (vPred) warnAboutVPrediction(target.name)
 // Read the emphasis Forge is on so the block can state it. Left unstated, the
 // paste fills in the default and adds an override that reverts whatever the
@@ -332,6 +356,7 @@ const { block: migrated, notes } = migrateGeneration(block, {
   add,
   size,
   style,
+  cfg,
   prompt: editedPrompt,
 })
 
@@ -372,9 +397,9 @@ if (renderTo) {
   console.log(`
 rendering… (this is the model's own time, not a stagger)`)
   try {
-    const { path, seed } = await renderWithBlock(migrated, renderTo)
+    const { path, seed, note } = await renderWithBlock(migrated, renderTo)
     console.log(`rendered  ${path}${seed === undefined ? '' : `  seed ${seed}`}`)
-    console.log('Forge saved its own copy to its outputs folder, so the library will index it.')
+    console.log(note)
   } catch (error) {
     fail(`
 Forge refused the render: ${error.message}`, 'Nothing was opened and nothing was saved.')

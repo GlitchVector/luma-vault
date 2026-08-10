@@ -8,9 +8,28 @@
  */
 
 import { spawn } from 'node:child_process'
-import { openSync, readSync, closeSync, statSync, writeFileSync } from 'node:fs'
+import { openSync, readSync, closeSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 
 export const FORGE = process.env.LUMA_FORGE_URL ?? 'http://127.0.0.1:7860'
+
+/**
+ * Whether Forge is somewhere else — a rented GPU, a machine in another room.
+ *
+ * Three things stop being true when it is, and each fails silently rather than
+ * loudly, which is why this is worth knowing rather than discovering:
+ *
+ * - `filename` in a checkpoint listing is a path **over there**. Statting it
+ *   throws, and reading it for the architecture returns nothing.
+ * - `save_images` files Forge's own copy on **that** machine, so the copy that
+ *   normally puts a render into the library never appears here.
+ * - The render still comes back — the bytes travel base64 in the response — so
+ *   nothing errors and the picture simply never gets indexed.
+ */
+export const IS_REMOTE = !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(FORGE)
+
+/** Where a remote render is copied so the library still sees it. */
+export const RENDER_DIR = process.env.LUMA_RENDER_DIR
 
 export function fail(...lines) {
   for (const line of lines) console.error(line)
@@ -66,8 +85,13 @@ export async function forge(path, options) {
  * the webui and the block to agree.
  */
 export function inspectCheckpoint(file) {
-  const fd = openSync(file, 'r')
+  // `openSync` inside the try, not before it. Outside, an unreadable path threw
+  // straight past the catch — so a checkpoint on another machine did not
+  // degrade to a guess, it took the whole command down with an ENOENT naming a
+  // path that does not exist here and explaining nothing.
+  let fd
   try {
+    fd = openSync(file, 'r')
     const head = Buffer.alloc(8)
     readSync(fd, head, 0, 8, 0)
     const length = Number(head.readBigUInt64LE(0))
@@ -84,17 +108,56 @@ export function inspectCheckpoint(file) {
         : 'sd'
     return { architecture, vPred: keys.includes('v_pred') }
   } catch {
-    // A header that cannot be read is not a reason to refuse the migration:
-    // `sd` is the conservative reading, and epsilon is the common case.
-    return { architecture: 'sd', vPred: false }
+    // **`null`, not a guess.** This used to answer `sd` on any failure, which
+    // reads as conservative and is not: `settingsFor` gates the family tuning
+    // on `xl`, so an unreadable file quietly cost the Illustrious sampler and
+    // CFG and the render came back on DPM++ 2M SDE Karras with nothing saying
+    // why. Unreadable is a different fact from "looks like SD1.5" and the
+    // caller has to be able to tell them apart — see `describeCheckpoint`.
+    return null
   } finally {
-    closeSync(fd)
+    if (fd !== undefined) closeSync(fd)
   }
 }
 
 /** `sd`, `xl` or `flux`, from the tensor names in the safetensors header. */
 export function architectureOf(file) {
-  return inspectCheckpoint(file).architecture
+  return inspectCheckpoint(file)?.architecture
+}
+
+/**
+ * What a checkpoint is, from whoever can actually see the file.
+ *
+ * Three sources, in descending order of trust:
+ *
+ * 1. **What Forge reported.** The extension reads the header on the machine
+ *    that holds the checkpoint, so this is the only source that works when
+ *    Forge is remote. Older installs of the extension do not send it.
+ * 2. **The file, read here.** Correct whenever Forge is local.
+ * 3. **The name.** Every family this app knows — Illustrious, NoobAI, AniVerse
+ *    — is SDXL, so a name that matches one is XL. Said out loud, because a
+ *    guess sitting in a block looks exactly like a fact.
+ *
+ * When all three come up empty it still answers `xl` rather than `sd`, and
+ * warns. Every checkpoint this workflow targets is XL; the old silent `sd` was
+ * wrong far more often than it was right, and it was wrong invisibly.
+ */
+export function describeCheckpoint(entry) {
+  if (entry.architecture) {
+    return { architecture: entry.architecture, vPred: Boolean(entry.v_pred) }
+  }
+  const read = inspectCheckpoint(entry.filename)
+  if (read) return read
+
+  const family = familyOf(entry.name)
+  console.error(
+    `note: could not read ${entry.name}'s header${IS_REMOTE ? ' — Forge is remote, so its file is not on this machine' : ''}.\n` +
+      (family
+        ? `  Assuming xl, because the name says ${family} and every family here is SDXL.`
+        : '  Assuming xl, which is what this workflow targets — but nothing confirmed it.') +
+      '\n  Update the Forge extension (pnpm setup:forge, then restart Forge) and it will report this itself.',
+  )
+  return { architecture: 'xl', vPred: false, guessed: true }
 }
 
 /**
@@ -187,7 +250,36 @@ export async function resolveModel(wanted) {
   // Newest by file date — "the latest one I have" is a question about the
   // filesystem, not about version numbers in names, which are not comparable
   // across authors.
-  matches.sort((a, b) => statSync(b.filename).mtimeMs - statSync(a.filename).mtimeMs)
+  //
+  // Whose filesystem, though. `filename` is a path on the machine running
+  // Forge, so statting it here throws the moment Forge is remote and two
+  // checkpoints match — a crash in the middle of a substring lookup, for a
+  // reason nothing on screen would explain. The extension reports `mtime`
+  // precisely so a remote caller can still order them; only fall back to
+  // statting when every entry lacks it, so the two units are never mixed.
+  if (matches.length > 1) {
+    if (matches.every((entry) => typeof entry.mtime === 'number')) {
+      matches.sort((a, b) => b.mtime - a.mtime)
+    } else {
+      const local = (entry) => {
+        try {
+          return statSync(entry.filename).mtimeMs
+        } catch {
+          return 0
+        }
+      }
+      const dated = matches.map(local)
+      if (dated.every((at) => at === 0)) {
+        console.error(
+          `note: ${matches.length} checkpoints match "${wanted}" and none of their dates could be read` +
+            `${IS_REMOTE ? ' — Forge is remote' : ''}, so "newest" is whatever order Forge listed.\n` +
+            `  Taking ${matches[0].name}. Name one specifically, or update the Forge extension.`,
+        )
+      } else {
+        matches.sort((a, b) => local(b) - local(a))
+      }
+    }
+  }
   return matches[0]
 }
 
@@ -267,26 +359,53 @@ export function openWithBlock(block) {
  * no page to load: it queues as *work*, behind whatever is generating, and
  * comes back with the picture.
  *
- * `save_images` so Forge files it in its own outputs with its own numbering,
- * which is what puts it in the library. The copy written here is separate and
- * only so the caller has a path to show — it goes to a scratch directory
- * outside any watched folder, so nothing indexes it twice.
+ * **Which copy ends up in the library depends on where Forge is.** Locally,
+ * `save_images` files one in Forge's own outputs with its own numbering, and
+ * that is the copy the watcher picks up; the one written here is only so the
+ * caller has a path to show, and it goes to a scratch directory outside any
+ * watched folder so nothing is indexed twice.
+ *
+ * Remotely, that arrangement quietly stops working: Forge's own copy lands on
+ * *that* machine and the picture never reaches the library, while the request
+ * still succeeds and the render still appears in the scratchpad. So when Forge
+ * is remote, `save_images` is off — it would only fill a rented disk — and the
+ * bytes that came back are written into `LUMA_RENDER_DIR` instead, which is
+ * expected to be a watched folder.
  *
  * No checkpoint selection beforehand: `toApiPayload` sends the model in
  * `override_settings`, per request. That is also why this is safe to call while
  * a batch runs, where `selectCheckpoint` would refuse.
+ *
+ * @returns the scratch path, the seed, and the sentence to print about where
+ *   the library's copy came from — which the caller cannot work out itself.
  */
 export async function renderWithBlock(block, destination) {
   const { toApiPayload } = await import('../../packages/core/src/migrate.ts')
   const answer = await forge('/sdapi/v1/txt2img', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...toApiPayload(block), save_images: true }),
+    body: JSON.stringify({ ...toApiPayload(block), save_images: !IS_REMOTE }),
   })
   const image = answer?.images?.[0]
   if (!image) throw new Error('Forge accepted the request but returned no image')
   // The data URI prefix is present on some builds and absent on others.
-  writeFileSync(destination, Buffer.from(image.replace(/^data:image\/\w+;base64,/, ''), 'base64'))
+  const bytes = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ''), 'base64')
+  writeFileSync(destination, bytes)
+
+  let note = 'Forge saved its own copy to its outputs folder, so the library will index it.'
+  if (IS_REMOTE) {
+    if (RENDER_DIR) {
+      mkdirSync(RENDER_DIR, { recursive: true })
+      const filed = join(RENDER_DIR, basename(destination))
+      writeFileSync(filed, bytes)
+      note = `Forge is remote, so its own copy stayed there — filed here instead:\n  ${filed}`
+    } else {
+      note =
+        'Forge is remote, so its own copy stayed on that machine and nothing has been\n' +
+        '  added to the library. Set LUMA_RENDER_DIR to a watched folder to have renders filed.'
+    }
+  }
+
   let seed
   try {
     seed = JSON.parse(answer.info)?.seed
@@ -294,7 +413,7 @@ export async function renderWithBlock(block, destination) {
     // The info blob is a convenience, not the result. A build that changes its
     // shape must not cost us the picture we already have on disk.
   }
-  return { path: destination, seed }
+  return { path: destination, seed, note }
 }
 
 /**

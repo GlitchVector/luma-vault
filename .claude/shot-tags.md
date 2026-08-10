@@ -372,6 +372,32 @@ Say so rather than sending it quietly.
 
 **Two or fewer: open tabs. Three or more: render through the API instead.**
 
+### Or on a machine that is not this one: `LUMA_FORGE_URL`
+
+`scripts/lib/forge.mjs` reads `LUMA_FORGE_URL` and only defaults to
+`http://127.0.0.1:7860`, so every command here can drive a Forge in another
+room or on a rented GPU. Three things stop being true when it does, and each
+used to fail without saying so:
+
+- **`filename` in a checkpoint listing is a path over there.** `resolveModel`
+  sorted by statting it, which threw the moment two checkpoints matched;
+  `inspectCheckpoint` opened it, which threw outright. The extension now
+  reports `architecture`, `v_pred` and `mtime` on `/luma/v1/checkpoints` so a
+  remote caller needs neither. Older installs do not send them, and the client
+  falls back to reading the file and then to the name — saying out loud when it
+  is guessing, because a guess in a block looks exactly like a fact.
+- **`save_images` files Forge's copy on that machine**, and that copy is what
+  normally puts a render in the library. Remotely it is turned off, and the
+  bytes that came back — they always do, base64 in the response — are written
+  to **`LUMA_RENDER_DIR`** instead. Point it at a watched folder. Unset, the
+  render still arrives but nothing is indexed, and the command says so.
+- **Nothing errors either way**, which is the whole problem: the picture
+  appears in the scratchpad and quietly never reaches the vault.
+
+Localhost, `127.0.0.1` and `[::1]` count as local; anything else is remote.
+Never expose Forge's API to the internet — it has no authentication. Use the
+host's authenticated proxy, or an SSH tunnel and point the URL at the local end.
+
 ### Or later, when the room is empty: `--queue`
 
 A 3090 mid-render is loud enough to be antisocial, and a sixteen-shot set is a
