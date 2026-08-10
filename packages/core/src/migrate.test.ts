@@ -550,6 +550,45 @@ describe('migrateGeneration, an explicit canvas', () => {
   })
 })
 
+describe('migrateGeneration, an explicit CFG', () => {
+  it('overrides the family tuning, and says what it changed', () => {
+    const { block, notes } = migrateGeneration(SD15, {
+      ...TO_XL,
+      family: 'illustrious',
+      cfg: 7,
+    })
+    expect(block.split('\n').at(-1)).toContain('CFG scale: 7')
+    expect(notes.some((note) => note.includes('CFG 5 → 7'))).toBe(true)
+  })
+
+  it('leaves the rest of the family tuning alone — only the disputed number moves', () => {
+    const { block } = migrateGeneration(SD15, { ...TO_XL, family: 'illustrious', cfg: 7 })
+    const settings = block.split('\n').at(-1)!
+    expect(settings).toContain('Steps: 28')
+    expect(settings).toContain('Sampler: Euler a')
+    expect(settings).toContain('Schedule type: Automatic')
+  })
+
+  it('applies on a same-architecture move, like every other explicit ask', () => {
+    const { block } = migrateGeneration(IMG2IMG, {
+      architecture: 'sd',
+      checkpoint: 'anything_v5',
+      cfg: 9,
+    })
+    expect(block.split('\n').at(-1)).toContain('CFG scale: 9')
+  })
+
+  it('says nothing when the asked-for value is the one already there', () => {
+    const { notes } = migrateGeneration(SD15, { ...TO_XL, family: 'illustrious', cfg: 5 })
+    expect(notes.some((note) => /CFG .* → /.test(note))).toBe(false)
+  })
+
+  it('is absent by default, leaving the family tuning to decide', () => {
+    const { block } = migrateGeneration(SD15, { ...TO_XL, family: 'illustrious' })
+    expect(block.split('\n').at(-1)).toContain('CFG scale: 5')
+  })
+})
+
 describe('migrateGeneration, the last look', () => {
   const BLOCK = 'a girl, blue hair\nNegative prompt: lowres\nSteps: 20, Size: 512x768, Model: x'
 

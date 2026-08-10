@@ -47,40 +47,58 @@ def _resolve(name):
     return None
 
 
-def _architecture(filename):
-    """`sd`, `xl` or `flux`, read from the tensor names in the header alone.
+def _inspect(filename):
+    """What a checkpoint says about itself, from one read of its header.
 
-    Forge's UI radio decides which controls are shown and what they default
-    to: on `xl` the clip-skip slider and the VAE picker are hidden, which is
-    wrong for an SD1.5 checkpoint that specifies both. It does *not* filter the
-    checkpoint dropdown - `on_preset_change` does not list that component among
-    its outputs at all.
+    Both answers come from the same parse because both are in the same place,
+    and this mirrors `inspectCheckpoint` in `scripts/lib/forge.mjs` deliberately
+    - the two must agree, or a remote client is told something different from
+    what a local one would work out for itself.
+
+    - **architecture**: `sd`, `xl` or `flux`, from the tensor names.
+    - **v_pred**: the checkpoint predicts v rather than epsilon, which it says
+      by carrying `v_pred` as a non-weight entry beside the tensors.
 
     A safetensors header is a length-prefixed JSON blob at the front of the
-    file, so this is a few KB read, not a model load.
+    file, so this is a small read rather than a model load.
     """
     import json
     import struct
 
     if not filename or not filename.lower().endswith(".safetensors"):
-        return None
+        return None, False
     try:
         with open(filename, "rb") as handle:
             length = struct.unpack("<Q", handle.read(8))[0]
             # Guard against a corrupt length turning into a huge allocation.
             if not 0 < length < 64 * 1024 * 1024:
-                return None
+                return None, False
             keys = json.loads(handle.read(length)).keys()
     except (OSError, ValueError, struct.error):
-        return None
+        return None, False
 
+    architecture = "sd"
     for key in keys:
         if key.startswith("double_blocks.") or ".double_blocks." in key:
-            return "flux"
+            architecture = "flux"
+            break
         # SDXL is the one with a second text encoder.
         if key.startswith("conditioner.embedders.1."):
-            return "xl"
-    return "sd"
+            architecture = "xl"
+            break
+    return architecture, "v_pred" in keys
+
+
+def _architecture(filename):
+    """`sd`, `xl` or `flux`, for Forge's UI radio.
+
+    That radio decides which controls are shown and what they default to: on
+    `xl` the clip-skip slider and the VAE picker are hidden, which is wrong for
+    an SD1.5 checkpoint that specifies both. It does *not* filter the checkpoint
+    dropdown - `on_preset_change` does not list that component among its outputs
+    at all.
+    """
+    return _inspect(filename)[0]
 
 
 def _normalise_choices(component):
@@ -213,18 +231,39 @@ def on_app_started(_demo, app):
 
     @app.get("/luma/v1/checkpoints")
     def list_checkpoints():
-        import modules.sd_models as sd_models
+        """Every installed checkpoint, and what its header says about it.
 
-        return [
-            {
+        `architecture`, `v_pred` and `mtime` are here for a client that cannot
+        read `filename` itself, which is every client once Forge is on another
+        machine. Without them a remote caller falls back to guessing `sd` and
+        silently loses the family tuning - the wrong sampler and CFG, with
+        nothing reporting it.
+
+        One small header read per checkpoint, and the OS caches them after the
+        first call. Absent from older installs of this extension, so treat every
+        one of these as optional on the client.
+        """
+        import modules.sd_models as sd_models
+        import os
+
+        def described(info):
+            architecture, v_pred = _inspect(info.filename)
+            try:
+                mtime = os.path.getmtime(info.filename)
+            except OSError:
+                mtime = None
+            return {
                 "title": info.title,
                 "name": info.model_name,
                 "filename": info.filename,
                 "hash": info.shorthash,
                 "sha256": info.sha256,
+                "architecture": architecture,
+                "v_pred": v_pred,
+                "mtime": mtime,
             }
-            for info in sd_models.checkpoints_list.values()
-        ]
+
+        return [described(info) for info in sd_models.checkpoints_list.values()]
 
     @app.post("/luma/v1/checkpoint")
     def set_checkpoint(name: str = Body(..., embed=True)):

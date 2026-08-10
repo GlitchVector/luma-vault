@@ -51,6 +51,17 @@ export interface MigrationTarget {
    */
   family?: 'noob' | 'aniverse' | 'illustrious'
   /**
+   * Override the CFG the family tuning would otherwise set.
+   *
+   * The one number the sources genuinely disagree about. A Hassaku-specific
+   * page says 7 where the Illustrious guides call 4.5-5 the sweet spot, and
+   * PerfectDeliberate's own card asks for 5-8 — so the tuning sends 5, which is
+   * inside all of them, and this is how someone tries the other reading when a
+   * render looks flat. Applied after the family tuning rather than instead of
+   * it: everything else that tuning decides is still wanted.
+   */
+  cfg?: number
+  /**
    * How the picture is rendered: flat anime, semi-real, or photoreal.
    *
    * The axis with the largest visible effect on a booru model and the one with
@@ -1494,6 +1505,19 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       )
     } else {
       notes.push(`Kept ${current}, which is safe on a v-prediction checkpoint.`)
+    }
+  }
+
+  // An explicit CFG — see `MigrationTarget.cfg`. Outside the `crossing` branch
+  // for the same reason as the canvas below, and *after* the family tuning
+  // rather than instead of it: the steps, sampler and schedule that tuning
+  // chose are still wanted, and this overrides the one number the sources
+  // disagree about.
+  if (target.cfg !== undefined) {
+    const was = next.get('CFG scale')
+    next.set('CFG scale', String(target.cfg))
+    if (was !== String(target.cfg)) {
+      notes.push(`CFG ${was ?? '(unset)'} → ${target.cfg}, asked for.`)
     }
   }
 

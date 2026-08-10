@@ -129,15 +129,20 @@ console.log('')
 
 let done = 0
 let failed = 0
+// Identical for every job in a run, so it is said once at the end rather than
+// after each. Where the library's copy came from depends on whether Forge is
+// local, which the drain cannot work out for itself.
+let filedNote
 
 for (const job of waiting) {
   const at = new Date().toLocaleTimeString()
   process.stdout.write(`[${at}] ${job.label} … `)
   try {
-    const { path, seed } = await renderWithBlock(job.block, job.destination)
+    const { path, seed, note } = await renderWithBlock(job.block, job.destination)
     job.status = 'done'
     job.seed = seed
     job.renderedAt = new Date().toISOString()
+    filedNote = note
     done++
     console.log(`ok  seed ${seed ?? '?'}`)
     console.log(`         ${path}`)
@@ -168,8 +173,6 @@ for (const job of waiting) {
 
 console.log('')
 console.log(`${done} rendered, ${failed} failed.`)
-if (done > 0) {
-  console.log('Forge saved its own copies to its outputs folder, so the library will index them.')
-}
+if (done > 0 && filedNote) console.log(filedNote)
 if (failed > 0) console.log('Run `pnpm queue` to see why, then `pnpm queue --retry`.')
 if (!existsSync(queuePath())) console.log('(queue file vanished mid-run)')
