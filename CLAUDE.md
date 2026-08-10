@@ -48,6 +48,7 @@ pnpm install
 pnpm setup:python        # venv-classifier + model self-check
 pnpm dev:desktop         # the real app
 pnpm dev                 # SPA only (shows a "run the desktop app" notice)
+pnpm queue --drain       # render everything queued with --queue, when the GPU may be loud
 ```
 
 The gate that matches CI:
