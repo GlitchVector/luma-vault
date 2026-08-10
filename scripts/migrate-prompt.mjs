@@ -28,7 +28,7 @@
 
 import { openSync, readSync, closeSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, extname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { migrateGeneration } from '../packages/core/src/migrate.ts'
 import { walkToOrigin } from '../packages/core/src/origin.ts'
@@ -230,6 +230,11 @@ const add = flag('--add')
 const size = flag('--size') ?? PORTRAIT
 const renderTo = flag('--render')
 const style = flag('--style')
+// Write the job down instead of generating it — see scripts/lib/queue.mjs.
+// Must be spliced out like every other flag, or it lands in the positionals and
+// is read as the image name.
+const queueIt = switchFlag('--queue')
+const queueLabel = flag('--label')
 if (!/^\d+\s*x\s*\d+$/.test(size)) fail(`--size takes WxH, e.g. --size ${PORTRAIT} (got "${size}")`)
 const [imageName, targetName = DEFAULT_MODEL] = argv
 if (!imageName) {
@@ -345,6 +350,18 @@ if (dryRun) {
   console.log('')
   console.log(migrated)
   console.log('\ndry run: nothing selected, nothing opened.')
+  process.exit(0)
+}
+
+// Queued before the render branch: the block is finished by this point, so
+// what is written down is exactly what a live render would have sent.
+if (queueIt) {
+  const { enqueue } = await import('./lib/queue.mjs')
+  const label = queueLabel ?? (renderTo ? basename(renderTo, extname(renderTo)) : imageName)
+  const job = enqueue({ label, block: migrated, destination: renderTo })
+  console.log(`\nqueued  ${job.label}`)
+  console.log(`        → ${job.destination}`)
+  console.log('Render it with: pnpm queue --drain')
   process.exit(0)
 }
 

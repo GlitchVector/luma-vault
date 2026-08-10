@@ -17,6 +17,7 @@
  * the model and prints the block but touches nothing — no selection, no tab.
  */
 
+import { basename, extname } from 'node:path'
 import { enforceFraming, enforceUndress } from '../packages/core/src/migrate.ts'
 import {
   DEFAULT_MODEL,
@@ -67,6 +68,11 @@ function parseArgs(argv) {
     // Generate rather than open a tab, writing the picture here. What the
     // -multi commands use past two shots — see `renderWithBlock`.
     else if (flag === '--render') args.render = argv[++at]
+    // Write the job down instead of generating it, for `pnpm queue --drain` to
+    // pick up later. Composes with --render, which then names where the picture
+    // will eventually land rather than where it is being written now.
+    else if (flag === '--queue') args.queue = true
+    else if (flag === '--label') args.label = argv[++at]
     else fail(`unknown argument: ${flag}`)
   }
   return args
@@ -207,6 +213,19 @@ console.log(block)
 
 if (args.dryRun) {
   console.log('\ndry run: nothing selected, nothing opened.')
+  process.exit(0)
+}
+
+// Queued before the render branch, because queueing is the same decision made
+// about a later time: everything above has already happened, so the block being
+// written down is the one that would have been sent.
+if (args.queue) {
+  const { enqueue } = await import('./lib/queue.mjs')
+  const label = args.label ?? (args.render ? basename(args.render, extname(args.render)) : 'job')
+  const job = enqueue({ label, block, destination: args.render })
+  console.log(`\nqueued  ${job.label}`)
+  console.log(`        → ${job.destination}`)
+  console.log('Render it with: pnpm queue --drain')
   process.exit(0)
 }
 
