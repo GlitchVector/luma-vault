@@ -15,7 +15,7 @@
 import { adjectives, uniqueNamesGenerator } from 'unique-names-generator'
 import { effectiveRating } from './classify.ts'
 import { LABEL_WEIGHTS, isRatedLabel, type RatedLabel } from './labels.ts'
-import type { Generation, MediaItem, Rating } from './schemas.ts'
+import type { DeviantArtGallery, Generation, MediaItem, Rating } from './schemas.ts'
 
 /**
  * How mature a submission is, in DeviantArt's vocabulary.
@@ -63,6 +63,14 @@ export interface DeviantArtDraft {
    * uploading a 4K render. See {@link DISPLAY_ORIGINAL}.
    */
   displayResolution: DisplayResolution
+  /**
+   * `galleryids`: which of the account's gallery folders this is filed under.
+   *
+   * Only `stash/publish` accepts them, so these reach DeviantArt on the "upload
+   * and post" path and nowhere else. A staged upload has no galleries to carry
+   * them — a batch merged in Studio is filed there by hand.
+   */
+  galleryIds: string[]
 }
 
 /**
@@ -537,6 +545,41 @@ function classify(rating: Rating, topLabel: string | null): MatureClassification
   return rating === 'explicit' ? ['nudity', 'sexual'] : ['nudity']
 }
 
+/**
+ * The names one stored character could be filed under.
+ *
+ * Two spellings because the folder can be named either way: the stored form
+ * `aqua (konosuba)` matches a gallery called "Aqua (Konosuba)" *and* one called
+ * plain "Aqua". `toTag` is reused as the comparison key rather than a bespoke
+ * fold — it already lowercases, folds accents and collapses punctuation, so
+ * `Ninomae Ina'nis` and `ninomae ina'nis` land on the same string.
+ */
+function galleryKeys(character: string): string[] {
+  const bare = character.replace(/\s*\(.*$/, '')
+  return [toTag(character), toTag(bare)].filter((key) => key.length > 0)
+}
+
+/**
+ * The galleries a picture belongs in, by folder id.
+ *
+ * An exact name match after folding, never a prefix or a fuzzy one. That is not
+ * timidity: "Aqua" and "Minato Aqua" are two different characters with two
+ * different galleries, and anything looser files half a batch under the wrong
+ * girl. A miss costs one click in the panel; a wrong match is a picture posted
+ * to someone else's gallery.
+ *
+ * Every character the prompt names is matched, not only the first, so a
+ * two-character picture lands in both galleries when both exist.
+ */
+export function galleriesForItem(
+  item: MediaItem,
+  galleries: readonly DeviantArtGallery[],
+): string[] {
+  const wanted = new Set((item.generation?.characters ?? []).flatMap(galleryKeys))
+  if (wanted.size === 0) return []
+  return galleries.filter((gallery) => wanted.has(toTag(gallery.name))).map((g) => g.folderId)
+}
+
 export interface DraftOptions {
   /**
    * Tags added to every draft — a signature, a series, a gallery name.
@@ -557,6 +600,14 @@ export interface DraftOptions {
   includePrompt?: boolean
   /** Title every draft this instead of deriving one per picture. */
   title?: string
+  /**
+   * The account's gallery folders, so a draft can file itself.
+   *
+   * Passed in rather than fetched: this module has no I/O, and the list belongs
+   * to the connection rather than to the picture. Absent means no galleries —
+   * which is also what a connection without the `browse` scope produces.
+   */
+  galleries?: readonly DeviantArtGallery[]
 }
 
 /**
@@ -633,5 +684,6 @@ export function describeForDeviantArt(item: MediaItem, options: DraftOptions = {
     isAiGenerated: item.generation !== null,
     noai: options.noai ?? false,
     displayResolution: DISPLAY_ORIGINAL,
+    galleryIds: options.galleries ? galleriesForItem(item, options.galleries) : [],
   }
 }

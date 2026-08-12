@@ -377,9 +377,11 @@ pub struct MediaQuery {
     /// Only animated images (true), or only still ones (false).
     ///
     /// By extension, which is what [`crate::types::MediaKind`] cannot express:
-    /// a GIF and a PNG are both `image`. A static WebP is caught by `true` and
-    /// excluded by `false` — the container allows animation and the name is all
-    /// there is to go on without decoding every file.
+    /// a GIF and a PNG are both `image`. The two directions read different
+    /// lists on purpose, because a name can prove a file animates and cannot
+    /// prove it does not: `true` is `.gif` alone, while `false` also excludes
+    /// WebP and AVIF, whose containers allow animation. Deciding either way for
+    /// certain would mean decoding every file.
     #[serde(default)]
     pub animated: Option<bool>,
     /// Only black-and-white rows (true), or only colour ones (false).
@@ -474,6 +476,26 @@ pub struct DeviantArtDraft {
     /// value it lands on is the one this app wants anyway.
     #[serde(default)]
     pub display_resolution: u8,
+    /// `galleryids`: the folders this deviation is filed under, by UUID.
+    ///
+    /// Only `stash/publish` accepts them — a staged upload has no galleries,
+    /// so a batch merged in Studio is filed there by hand. Defaulted for the
+    /// same reason as the field above.
+    #[serde(default)]
+    pub gallery_ids: Vec<String>,
+}
+
+/// One of the account's own gallery folders.
+///
+/// Read from `gallery/folders`, which is the one thing here needing the
+/// `browse` scope: a connection authorized before that was asked for can still
+/// publish perfectly well and simply cannot list what it is publishing into.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviantArtGallery {
+    /// DeviantArt's UUID for the folder, which is what `galleryids` takes.
+    pub folder_id: String,
+    pub name: String,
 }
 
 /// Which account is connected, and what it is actually allowed to do.
@@ -497,6 +519,13 @@ pub struct DeviantArtAccount {
     /// get it, and finding that out at connect time is far better than finding
     /// out on the first upload.
     pub can_publish: bool,
+    /// Whether `browse` came back among them, which is what listing the
+    /// account's gallery folders needs. Its own flag rather than an inference
+    /// from `scopes` because a connection authorized before this app asked for
+    /// the scope is the normal case, not an error: everything except the
+    /// gallery picker still works, and only the panel needs to know.
+    #[serde(default)]
+    pub can_browse: bool,
 }
 
 /// What became of one picture.

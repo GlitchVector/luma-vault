@@ -5,6 +5,7 @@ import {
   MAX_TITLE,
   POSE_TAGS,
   describeForDeviantArt,
+  galleriesForItem,
   poseFromLabel,
   poseOf,
   promptSubjects,
@@ -101,7 +102,74 @@ describe('promptSubjects', () => {
   })
 })
 
+describe('galleriesForItem', () => {
+  const GALLERIES = [
+    { folderId: 'featured', name: 'Featured' },
+    { folderId: 'ina', name: "Ninomae Ina'nis" },
+    { folderId: 'coco', name: 'Kiryu Coco' },
+    { folderId: 'minato-aqua', name: 'Minato Aqua' },
+    { folderId: 'konosuba-aqua', name: 'Aqua (Konosuba)' },
+  ]
+
+  function withCharacters(...characters: string[]): MediaItem {
+    return item({ generation: generation({ characters }) })
+  }
+
+  it('files a picture under the gallery named after its character', () => {
+    // The apostrophe is the point: the stored form and the folder name differ
+    // in case and nothing else, and both fold to the same key.
+    expect(galleriesForItem(withCharacters("ninomae ina'nis"), GALLERIES)).toEqual(['ina'])
+  })
+
+  it('matches a gallery named with or without the series', () => {
+    expect(galleriesForItem(withCharacters('aqua (konosuba)'), GALLERIES)).toEqual([
+      'konosuba-aqua',
+    ])
+  })
+
+  it('never files one character under another whose name contains it', () => {
+    // The failure this exists to prevent. Aqua of Konosuba and Minato Aqua are
+    // two people with two galleries, and a prefix match would post half a batch
+    // to the wrong one — which is not a click to undo, it is a public page.
+    expect(galleriesForItem(withCharacters('aqua (konosuba)'), GALLERIES)).not.toContain(
+      'minato-aqua',
+    )
+    expect(galleriesForItem(withCharacters('minato aqua'), GALLERIES)).toEqual(['minato-aqua'])
+  })
+
+  it('files a two-character picture in both galleries', () => {
+    expect(galleriesForItem(withCharacters("ninomae ina'nis", 'kiryu coco'), GALLERIES)).toEqual([
+      'ina',
+      'coco',
+    ])
+  })
+
+  it('chooses nothing when no character was detected, rather than Featured', () => {
+    expect(galleriesForItem(withCharacters(), GALLERIES)).toEqual([])
+    expect(galleriesForItem(item(), GALLERIES)).toEqual([])
+  })
+
+  it('comes back empty when the connection cannot list galleries', () => {
+    expect(galleriesForItem(withCharacters("ninomae ina'nis"), [])).toEqual([])
+  })
+})
+
 describe('describeForDeviantArt', () => {
+  it('files a draft into the galleries matching its character', () => {
+    const draft = describeForDeviantArt(
+      item({ generation: generation({ characters: ['kiryu coco'] }) }),
+      { galleries: [{ folderId: 'coco', name: 'Kiryu Coco' }] },
+    )
+    expect(draft.galleryIds).toEqual(['coco'])
+  })
+
+  it('carries no galleries when none were offered', () => {
+    const draft = describeForDeviantArt(
+      item({ generation: generation({ characters: ['kiryu coco'] }) }),
+    )
+    expect(draft.galleryIds).toEqual([])
+  })
+
   it('titles from the prompt when the filename is a counter and a seed', () => {
     // Which is what generated output is called, essentially always — so this is
     // the normal path rather than the fallback.

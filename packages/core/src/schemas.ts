@@ -624,8 +624,32 @@ export const deviantArtDraftSchema = z.object({
    * value it lands on is the one this app wants anyway.
    */
   displayResolution: z.number().int().min(0).max(8).default(0),
+  /**
+   * `galleryids`: the gallery folders this deviation is filed under.
+   *
+   * Only reachable on `stash/publish`. A staged upload cannot carry them, so a
+   * batch that is merged in Studio and posted there files itself by hand —
+   * which is what the panel says when nothing here is going to be sent.
+   *
+   * Defaulted, like `displayResolution`, so an older payload still parses.
+   */
+  galleryIds: z.array(z.string()).default([]),
 })
 export type DeviantArtDraftWire = z.infer<typeof deviantArtDraftSchema>
+
+/**
+ * One of the account's own gallery folders.
+ *
+ * Read from `gallery/folders`, which needs the `browse` scope — a connection
+ * made before that scope was asked for lists nothing, and the panel says so
+ * rather than showing an empty picker.
+ */
+export const deviantArtGallerySchema = z.object({
+  /** DeviantArt's UUID for the folder, which is what `galleryids` takes. */
+  folderId: z.string(),
+  name: z.string(),
+})
+export type DeviantArtGallery = z.infer<typeof deviantArtGallerySchema>
 
 export const deviantArtAccountSchema = z.object({
   /** A client id has been entered. Without one there is nothing to connect. */
@@ -640,6 +664,13 @@ export const deviantArtAccountSchema = z.object({
   scopes: z.array(z.string()),
   /** Whether `publish` was among them. A new app may not be given it. */
   canPublish: z.boolean(),
+  /**
+   * Whether `browse` was among them, which is what listing gallery folders
+   * needs. Defaulted, because a connection authorized before this app asked
+   * for the scope is ordinary rather than broken — only the gallery picker
+   * is affected, and reconnecting is the whole fix.
+   */
+  canBrowse: z.boolean().default(false),
 })
 export type DeviantArtAccount = z.infer<typeof deviantArtAccountSchema>
 

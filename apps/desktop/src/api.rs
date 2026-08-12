@@ -18,7 +18,8 @@ use serde_json::Value;
 
 use crate::db::{self, Db};
 use crate::types::{
-    CharacterCount, DeviantArtAccount, DeviantArtDraft, DeviantArtSummary, Folder, LibraryStats,
+    CharacterCount, DeviantArtAccount, DeviantArtDraft, DeviantArtGallery, DeviantArtSummary,
+    Folder, LibraryStats,
     MediaFrame, MediaItem, MediaPage, MediaQuery, Rating, ScanProgress, SourceOrigin,
     TimelineBucket,
 };
@@ -729,6 +730,19 @@ pub fn deviantart_disconnect(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
+/// The account's gallery folders, for the panel to file submissions into.
+///
+/// Empty rather than an error when the connection predates the `browse` scope.
+/// A missing scope is not a failure a toast should shout about — everything
+/// else about posting still works, and the panel explains the one thing that
+/// does not.
+pub async fn deviantart_galleries(state: &AppState) -> Result<Vec<DeviantArtGallery>, String> {
+    if !state.deviantart.account().can_browse {
+        return Ok(Vec::new());
+    }
+    state.deviantart.galleries().await.map_err(stringify)
+}
+
 /// Upload a reviewed selection, optionally publishing each as it lands.
 ///
 /// Takes drafts, not ids: what gets posted is what a person approved in the
@@ -1090,6 +1104,7 @@ pub async fn dispatch(
         "deviantart_set_redirect" => ok(deviantart_set_redirect(state, arg(args, "uri")?)?),
         "deviantart_connect" => ok(deviantart_connect(app, state).await?),
         "deviantart_disconnect" => ok(deviantart_disconnect(state)?),
+        "deviantart_galleries" => ok(deviantart_galleries(state).await?),
         "deviantart_send" => ok(deviantart_send(
             app,
             state,

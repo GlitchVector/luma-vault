@@ -39,14 +39,19 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
 
 use crate::db::Db;
-use crate::types::{DeviantArtAccount, DeviantArtDraft, DeviantArtResult, DeviantArtSummary};
+use crate::types::{
+    DeviantArtAccount, DeviantArtDraft, DeviantArtGallery, DeviantArtResult, DeviantArtSummary,
+};
 
 const AUTHORIZE_URL: &str = "https://www.deviantart.com/oauth2/authorize";
 const TOKEN_URL: &str = "https://www.deviantart.com/oauth2/token";
 const API: &str = "https://www.deviantart.com/api/v1/oauth2";
 
-/// `basic` is required for `whoami`; the other two are the feature.
-const SCOPES: &str = "basic stash publish";
+/// `basic` is required for `whoami`, `stash` and `publish` are the feature, and
+/// `browse` is only there to *list* the account's gallery folders — publishing
+/// into one needs nothing extra. A connection made before `browse` was asked
+/// for keeps working and simply cannot offer the galleries; the panel says so.
+const SCOPES: &str = "basic stash publish browse";
 
 pub const CLIENT_ID_KEY: &str = "deviantart_client_id";
 pub const REDIRECT_KEY: &str = "deviantart_redirect_uri";
@@ -70,6 +75,12 @@ const AUTHORIZE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Progress while a batch uploads. One event shape for both phases.
 pub const PROGRESS_EVENT: &str = "luma://deviantart";
+
+/// How many pages of gallery folders to walk before giving up.
+///
+/// 50 per page, so this is 2,500 folders — far past any real account, and the
+/// point is only that a paging bug on either side terminates.
+const PAGE_LIMIT: usize = 50;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -204,6 +215,7 @@ impl DeviantArt {
             client_id: self.client_id(),
             redirect_uri: self.redirect_uri(),
             can_publish: scopes.iter().any(|scope| scope == "publish"),
+            can_browse: scopes.iter().any(|scope| scope == "browse"),
             scopes,
         }
     }
@@ -411,6 +423,61 @@ impl DeviantArt {
             .ok_or_else(|| anyhow!("DeviantArt did not say who you are"))
     }
 
+    /// The account's own gallery folders, for the panel to file into.
+    ///
+    /// Paged deliberately rather than asked for in one go: `limit` is capped at
+    /// 50 by the API and a gallery per character runs past that quickly — this
+    /// vault alone names more than fifty. `has_more`/`next_offset` is walked to
+    /// the end, with a ceiling so a malformed answer cannot spin here.
+    ///
+    /// Subfolders are flattened in as they come. DeviantArt nests them one
+    /// level and `galleryids` takes any folder's id, so the distinction would
+    /// only make the picker taller.
+    pub async fn galleries(&self) -> Result<Vec<DeviantArtGallery>> {
+        let token = self.access_token().await?;
+        let mut folders: Vec<DeviantArtGallery> = Vec::new();
+        let mut offset = 0_i64;
+
+        for _ in 0..PAGE_LIMIT {
+            // Built through `Url` rather than reqwest's `query`, which this
+            // build does not have — the client is compiled with
+            // `default-features = false`. Same pair-appending as the authorize
+            // URL above.
+            let mut endpoint = url::Url::parse(&format!("{API}/gallery/folders"))?;
+            endpoint
+                .query_pairs_mut()
+                .append_pair("limit", "50")
+                .append_pair("offset", &offset.to_string())
+                // Names and ids are all the picker needs; the counts and the
+                // preview deviations are several hundred KB of answer.
+                .append_pair("calculate_size", "0")
+                .append_pair("ext_preload", "0");
+
+            let response = self
+                .client
+                .get(endpoint)
+                .bearer_auth(&token)
+                .send()
+                .await
+                .context("cannot reach DeviantArt")?;
+
+            let body = read_api_body(response).await?;
+            collect_folders(body.get("results"), &mut folders);
+
+            let more = body.get("has_more").and_then(Value::as_bool).unwrap_or(false);
+            let next = body.get("next_offset").and_then(Value::as_i64);
+            match (more, next) {
+                // Only a *forward* step continues. A missing or repeated offset
+                // is how this would otherwise loop for ever against an API
+                // that says there is more and cannot say where.
+                (true, Some(next)) if next > offset => offset = next,
+                _ => break,
+            }
+        }
+
+        Ok(folders)
+    }
+
     // -----------------------------------------------------------------------
     // Submitting
     // -----------------------------------------------------------------------
@@ -528,6 +595,12 @@ impl DeviantArt {
         }
         for (index, tag) in draft.tags.iter().enumerate() {
             form.push((format!("tags[{index}]"), tag.clone()));
+        }
+        // Indexed like the tags above, which is how this API takes an array.
+        // Absent rather than empty when nothing was chosen: sending
+        // `galleryids[0]=` files the deviation into a folder with no id.
+        for (index, gallery) in draft.gallery_ids.iter().enumerate() {
+            form.push((format!("galleryids[{index}]"), gallery.clone()));
         }
 
         let response = self
@@ -803,6 +876,30 @@ fn reply(stream: &mut TcpStream, title: &str, message: &str) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Pull folders out of one page of `gallery/folders`, subfolders included.
+///
+/// Recursive because DeviantArt nests `subfolders` inside a parent's entry, and
+/// a picker that only offered top-level folders would silently omit whichever
+/// ones a person had grouped. Anything missing an id or a name is skipped
+/// rather than refused: one malformed folder must not cost the whole list.
+fn collect_folders(results: Option<&Value>, into: &mut Vec<DeviantArtGallery>) {
+    let Some(entries) = results.and_then(Value::as_array) else {
+        return;
+    };
+    for entry in entries {
+        if let (Some(folder_id), Some(name)) = (
+            entry.get("folderid").and_then(Value::as_str),
+            entry.get("name").and_then(Value::as_str),
+        ) {
+            into.push(DeviantArtGallery {
+                folder_id: folder_id.to_string(),
+                name: name.to_string(),
+            });
+        }
+        collect_folders(entry.get("subfolders"), into);
+    }
+}
 
 /// Read an API reply, treating the body as authoritative about failure.
 ///

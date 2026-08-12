@@ -9,7 +9,11 @@
     "matureClassification": ["nudity", "sexual"],
     "isAiGenerated": true,
     "noai": false,
-    "displayResolution": 0
+    "displayResolution": 0,
+    "galleryIds": [
+      "A1B2C3D4-0000-4000-8000-000000000002",
+      "F0EE0F0E-1D0E-4C0A-9C0B-000000000001"
+    ]
   },
   {
     "mediaId": 77,
@@ -21,6 +25,7 @@
     "matureClassification": [],
     "isAiGenerated": false,
     "noai": true,
-    "displayResolution": 6
+    "displayResolution": 6,
+    "galleryIds": []
   }
 ]

@@ -5,10 +5,12 @@ import {
   MAX_TAGS,
   POSE_TAGS,
   describeForDeviantArt,
+  galleriesForItem,
   poseOf,
   toTag,
   type DeviantArtAccount,
   type DeviantArtDraft,
+  type DeviantArtGallery,
   type DeviantArtSummary,
   type DisplayResolution,
   type MatureClassification,
@@ -20,6 +22,7 @@ import { DeviantArtSetup } from '#/components/DeviantArtSetup.tsx'
 import {
   DEVIANTART_STUDIO_URL,
   deviantArtAccount,
+  deviantArtGalleries,
   deviantArtSend,
   fileUrl,
   onDeviantArtProgress,
@@ -127,9 +130,38 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
   const [progress, setProgress] = useState<DeviantArtProgress | null>(null)
   const [summary, setSummary] = useState<DeviantArtSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /**
+   * The account's gallery folders. Empty until they arrive, and empty for good
+   * when the connection predates the `browse` scope — which the notice below
+   * explains rather than leaving as a picker that mysteriously has nothing in
+   * it.
+   */
+  const [galleries, setGalleries] = useState<DeviantArtGallery[]>([])
 
   useEffect(() => {
     void deviantArtAccount().then(setAccount, () => setAccount(null))
+  }, [])
+
+  // Loaded once, then matched against every row. Split from the account call so
+  // a gallery list that fails does not cost the panel its connection state —
+  // everything except the picker still works without it.
+  useEffect(() => {
+    void deviantArtGalleries().then((folders) => {
+      setGalleries(folders)
+      if (folders.length === 0) return
+      setRows((previous) =>
+        previous.map((row) =>
+          // Only rows nobody has touched. The list arrives a moment after the
+          // panel opens, and overwriting a choice made in that moment would be
+          // the panel editing itself under someone's hands.
+          row.draft.galleryIds.length > 0
+            ? row
+            : { ...row, draft: { ...row.draft, galleryIds: galleriesForItem(row.item, folders) } },
+        ),
+      )
+      // A failure here is not worth a red banner: it costs the picker and
+      // nothing else, and the notice already covers the common cause.
+    }, () => setGalleries([]))
   }, [])
 
   // Escape closes, unless something is mid-flight — half an upload batch is
@@ -152,6 +184,26 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
       ),
     )
   }, [])
+
+  /** Put one gallery on every row — a series folder, a catch-all. */
+  const addGalleryToAll = useCallback((folderId: string) => {
+    setRows((previous) =>
+      previous.map((row) =>
+        row.draft.galleryIds.includes(folderId)
+          ? row
+          : { ...row, draft: { ...row.draft, galleryIds: [...row.draft.galleryIds, folderId] } },
+      ),
+    )
+  }, [])
+
+  /** Folder id to name, for rendering a chosen gallery as its name. */
+  const galleryNames = useMemo(
+    () => new Map(galleries.map((gallery) => [gallery.folderId, gallery.name])),
+    [galleries],
+  )
+
+  /** How many rows the automatic match actually found a gallery for. */
+  const filed = rows.filter((row) => row.draft.galleryIds.length > 0).length
 
   /** What the pose control resolves to, once the reading has arrived. */
   const effectivePose: Pose | null =
@@ -355,6 +407,45 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
           ) : null}
 
           <div className="flex flex-wrap items-center gap-3 border-b border-white/5 px-4 py-2 text-sm">
+            <span className="shrink-0 text-zinc-500">Galleries</span>
+            {galleries.length > 0 ? (
+              <>
+                <select
+                  value=""
+                  onChange={(event) => {
+                    if (event.target.value) addGalleryToAll(event.target.value)
+                  }}
+                  title="Add one gallery to every picture in this batch. Each row can still be changed on its own below."
+                  className="rounded border border-white/10 bg-black/30 px-1 py-1 text-zinc-300 outline-none focus:border-indigo-400/60"
+                >
+                  <option value="">add one to all…</option>
+                  {galleries.map((gallery) => (
+                    <option key={gallery.folderId} value={gallery.folderId}>
+                      {gallery.name}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-zinc-500">
+                  {filed === rows.length
+                    ? `all ${rows.length.toLocaleString()} matched a gallery by character`
+                    : `${filed.toLocaleString()} of ${rows.length.toLocaleString()} matched a gallery by character — the rest need one picking, or none`}
+                </span>
+              </>
+            ) : account?.connected === true && account.canBrowse !== true ? (
+              // The one case that looks like a bug and is not. Publishing into a
+              // gallery needs no extra permission; *listing* them does, and this
+              // connection was authorized before the app asked for it.
+              <span className="text-amber-300">
+                This connection cannot read your gallery list — it was made before the app asked
+                for the <span className="text-amber-100">browse</span> permission. Disconnect and
+                connect again above to pick galleries here.
+              </span>
+            ) : (
+              <span className="text-zinc-600">no galleries to choose from</span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 border-b border-white/5 px-4 py-2 text-sm">
             <label className="flex min-w-64 flex-1 items-center gap-2">
               <span className="shrink-0 text-zinc-500">Group in Sta.sh as</span>
               <input
@@ -384,6 +475,8 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
                 key={row.draft.mediaId}
                 row={row}
                 common={common}
+                galleries={galleries}
+                galleryNames={galleryNames}
                 isPoster={row.draft.mediaId === posterId}
                 onPoster={() => setPosterId(row.draft.mediaId)}
                 onDraft={update}
@@ -404,6 +497,18 @@ export function DeviantArtPanel({ items, onClose }: DeviantArtPanelProps) {
             <span className="text-zinc-500">
               Uploading stages everything privately in Sta.sh. Nothing is public until it is
               posted — from here, or from your Studio on the site.
+              {/* Not a detail to discover afterwards: galleries are a parameter
+                  of publishing, so the button someone picks decides whether the
+                  choices above are sent at all. */}
+              {filed > 0 ? (
+                <>
+                  {' '}
+                  <span className="text-zinc-400">
+                    Galleries are only set when posting — a staged upload carries none, and a
+                    batch merged in Studio is filed there.
+                  </span>
+                </>
+              ) : null}
             </span>
             <span className="ml-auto flex gap-2">
               <Button
@@ -441,6 +546,10 @@ interface DraftRowProps {
   row: Row
   /** Shared and pose tags, which count against this row's budget too. */
   common: string[]
+  /** Every folder the account has, for the picker. */
+  galleries: DeviantArtGallery[]
+  /** Folder id to name, so a chosen gallery renders as its name. */
+  galleryNames: Map<string, string>
   /** Uploaded first, and so the poster of anything merged out of the stack. */
   isPoster: boolean
   onPoster: () => void
@@ -448,7 +557,16 @@ interface DraftRowProps {
   onTagText: (text: string) => void
 }
 
-function DraftRow({ row, common, isPoster, onPoster, onDraft, onTagText }: DraftRowProps) {
+function DraftRow({
+  row,
+  common,
+  galleries,
+  galleryNames,
+  isPoster,
+  onPoster,
+  onDraft,
+  onTagText,
+}: DraftRowProps) {
   const { item, draft } = row
   const id = draft.mediaId
   const tags = parseTags(row.tagText)
@@ -534,6 +652,48 @@ function DraftRow({ row, common, isPoster, onPoster, onDraft, onTagText }: Draft
             {total}/{MAX_TAGS}
           </span>
         </div>
+
+        {galleries.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {draft.galleryIds.map((folderId) => (
+              <button
+                key={folderId}
+                type="button"
+                onClick={() =>
+                  onDraft(id, {
+                    galleryIds: draft.galleryIds.filter((chosen) => chosen !== folderId),
+                  })
+                }
+                title="Remove this gallery"
+                className="rounded bg-indigo-500/20 px-1.5 py-0.5 text-indigo-200 hover:bg-indigo-500/30"
+              >
+                {/* A folder the account no longer has still has to render as
+                    something — its id is not a name, but it is not nothing. */}
+                {galleryNames.get(folderId) ?? folderId} ×
+              </button>
+            ))}
+            <select
+              value=""
+              onChange={(event) => {
+                if (event.target.value) {
+                  onDraft(id, { galleryIds: [...draft.galleryIds, event.target.value] })
+                }
+              }}
+              className="rounded border border-white/10 bg-black/30 px-1 py-0.5 text-zinc-400 outline-none focus:border-indigo-400/60"
+            >
+              <option value="">
+                {draft.galleryIds.length > 0 ? 'add a gallery…' : 'no gallery — add one…'}
+              </option>
+              {galleries
+                .filter((gallery) => !draft.galleryIds.includes(gallery.folderId))
+                .map((gallery) => (
+                  <option key={gallery.folderId} value={gallery.folderId}>
+                    {gallery.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <label className="flex items-center gap-1.5 text-zinc-400">

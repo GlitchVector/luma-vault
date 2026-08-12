@@ -90,6 +90,13 @@ fn deviantart_draft_matches_the_shared_fixture() {
 }
 
 #[test]
+fn deviantart_gallery_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::DeviantArtGallery>>(include_str!(
+        "../../../contracts/deviantart-gallery.json"
+    ));
+}
+
+#[test]
 fn deviantart_account_matches_the_shared_fixture() {
     round_trip::<Vec<crate::types::DeviantArtAccount>>(include_str!(
         "../../../contracts/deviantart-account.json"
