@@ -445,7 +445,35 @@ re-renders the whole window.
 **Connecting and disconnecting reload the page.** Folders, the grid and its
 paging, the timeline buckets, the character leaderboard and the progress
 subscription all describe one library, and a session swaps every one of them at
-once. The reload cannot be half-done; reconciling each piece can.
+once. The reload cannot be half-done; reconciling each piece can. The browser
+client's login and logout reload for the same reason.
+
+**Tailscale addresses fail `is_lan`, and that is currently deliberate.** The
+tailnet hands devices 100.64.0.0/10 — the CGNAT range — which is not in
+`is_private()`, so a phone dialing the host's Tailscale IP directly gets a 403
+before the passphrase is even read. The way in from outside the LAN is a
+**subnet router** advertising 192.168.1.0/24: its default SNAT means the host
+sees a LAN source address, and the phone types `192.168.1.160:7870` from
+anywhere. Widening `is_lan` to 100.64/10 would also admit every customer of an
+ISP that puts its users behind CGNAT, which is why it is not the default —
+if that trade is ever wanted, it belongs behind a setting.
+
+**The share server serves whatever `apps/web/dist` held at `cargo build` time.**
+`include_dir!` embeds the bundle into the binary; `build.rs` creates the
+directory (possibly empty) so a fresh clone or CI compiles, and emits
+`rerun-if-changed` so a rebuilt bundle is picked up on the next cargo build.
+Two consequences: a host built before ever running `pnpm --filter @luma/web
+build` answers phones with a 503 notice, and a freshly rebuilt SPA does not
+reach phones until the desktop app is rebuilt too. `pnpm dev` (vite) does not
+count — the embedded copy is the built one.
+
+**A browser session dies when sharing restarts, by design.** The cookie token
+is minted per `Sharing::start` and lives nowhere else. A phone that suddenly
+gets 401s mid-session is not broken — somebody toggled sharing or changed the
+passphrase, and the page reloads onto the passphrase screen. Deriving the token
+from anything stored would keep old cookies alive across a passphrase change,
+which is the exact moment they must die (pinned by
+`a_cookie_dies_with_the_server_that_minted_it`).
 
 ## Tooling
 

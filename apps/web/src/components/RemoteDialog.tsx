@@ -1,5 +1,6 @@
 import { Button } from '@luma/ui'
 import { useEffect, useState } from 'react'
+import { isHttpSession } from '#/lib/native.ts'
 import type { Remote } from '#/lib/useRemote.ts'
 
 interface RemoteDialogProps {
@@ -50,6 +51,10 @@ export function RemoteDialog({ remote, onClose }: RemoteDialogProps) {
 
   const connected = status?.connected === true
   const remembered = status?.hasPassphrase === true
+  // This page *is* the remote end — a phone browsing a host. There is no
+  // machine behind it to go back to and no library of its own to lend out, so
+  // the share half disappears and disconnecting is a logout.
+  const guest = isHttpSession()
 
   return (
     <div
@@ -85,7 +90,7 @@ export function RemoteDialog({ remote, onClose }: RemoteDialogProps) {
                 disabled={busy !== null}
                 onClick={remote.disconnect}
               >
-                {busy ?? 'Back to this machine'}
+                {busy ?? (guest ? 'Log out' : 'Back to this machine')}
               </Button>
             </>
           ) : (
@@ -138,6 +143,7 @@ export function RemoteDialog({ remote, onClose }: RemoteDialogProps) {
           ) : null}
         </section>
 
+        {guest ? null : (
         <section className="flex flex-col gap-2 border-t border-white/5 pt-4">
           <h2 className="font-medium text-zinc-100">Share this library</h2>
           <p className="text-zinc-400">
@@ -201,6 +207,7 @@ export function RemoteDialog({ remote, onClose }: RemoteDialogProps) {
             </div>
           )}
         </section>
+        )}
 
         <div className="flex justify-end">
           <Button size="sm" onClick={onClose}>

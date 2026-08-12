@@ -77,19 +77,24 @@ export function StatusBar({
     <footer
       className={cn(
         'border-t px-4 py-1.5',
+        // Standalone on a phone, the home indicator floats over the bottom
+        // edge; the inset keeps the bar's controls above it.
+        'max-md:pb-[max(0.375rem,env(safe-area-inset-bottom))]',
         // The whole bar changes colour while a session is live, not just the
         // button. Delete means "delete on that machine" from here, and one badge
         // among nine other pieces of text is not enough of a reminder.
         connected ? 'border-indigo-400/30 bg-indigo-500/10' : 'border-white/5 bg-zinc-950/70',
       )}
     >
-      <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+      {/* One row that scrolls on a phone rather than wrapping into a second
+          line — a status bar that grows taller steals grid. */}
+      <div className="flex items-center gap-3 text-[11px] text-zinc-500 max-md:overflow-x-auto">
         {running ? <Spinner className="text-indigo-400" /> : null}
-        <span className="text-zinc-400">{PHASE_LABELS[progress.phase]}</span>
+        <span className="shrink-0 whitespace-nowrap text-zinc-400">{PHASE_LABELS[progress.phase]}</span>
 
         {/* Lives here rather than in the filter bar: it governs background work,
             which is what the rest of this bar is about. */}
-        <label className="flex select-none items-center gap-1.5 text-zinc-500">
+        <label className="flex shrink-0 select-none items-center gap-1.5 text-zinc-500">
           CPU
           <select
             value={environment?.throttle ?? 'off'}

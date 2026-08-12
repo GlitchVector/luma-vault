@@ -10,6 +10,14 @@
  * Nothing outside this file imports `@tauri-apps/api` — which is also what
  * keeps the app runnable in a plain browser (`pnpm dev` without the shell) with
  * native features degrading to empty results instead of crashing on load.
+ *
+ * A browser is not always a dead end, though. A sharing host serves this same
+ * SPA over HTTP (see `remote.rs`), which is how a phone gets in: the page then
+ * has no Tauri at all, and every call goes to the host's `/luma/v1/rpc` with a
+ * session cookie instead of through the IPC. `backend()` decides which of the
+ * three worlds this page woke up in — the desktop shell, a browser served by a
+ * host, or a bare dev server — and the forty wrappers below stay unaware, the
+ * same trick that made desktop remote mode invisible to them.
  */
 
 import {
@@ -26,6 +34,7 @@ import {
   shareStatusSchema,
   scanProgressSchema,
   deviantArtAccountSchema,
+  deviantArtGallerySchema,
   deviantArtSummarySchema,
   timelineBucketSchema,
   characterCountSchema,
@@ -34,6 +43,7 @@ import {
   type TimelineBucket,
   type DeviantArtAccount,
   type DeviantArtDraft,
+  type DeviantArtGallery,
   type DeviantArtSummary,
   type Folder,
   type DuplicateReport,
@@ -107,6 +117,130 @@ const LOCAL_ONLY = new Set([
   'set_forge_url',
 ])
 
+// ---------------------------------------------------------------------------
+// Which world this page woke up in
+// ---------------------------------------------------------------------------
+
+/**
+ * - `tauri` — the desktop shell; calls go through the IPC.
+ * - `http` — a browser served by a sharing host, with a live session cookie;
+ *   calls go to `/luma/v1/rpc` on the page's own origin. The greeting rides
+ *   along so the UI can say whose library this is without a second ask.
+ * - `login` — served by a host, but not signed in. The app shows the
+ *   passphrase screen and every data call returns its empty shape.
+ * - `none` — a bare dev server (`pnpm dev`). Nothing behind the page at all.
+ */
+export type Backend =
+  | { kind: 'tauri' }
+  | { kind: 'http'; host: string; folders: number; items: number }
+  | { kind: 'login' }
+  | { kind: 'none' }
+
+const helloSchema = z.object({
+  app: z.string(),
+  host: z.string(),
+  folders: z.number(),
+  items: z.number(),
+})
+
+let detected: Backend | null = null
+let detecting: Promise<Backend> | null = null
+
+async function detect(): Promise<Backend> {
+  if (isTauri()) return { kind: 'tauri' }
+  if (typeof window === 'undefined' || window.location.protocol === 'file:') {
+    return { kind: 'none' }
+  }
+  try {
+    // Same-origin on purpose: the page only ever talks to whoever served it.
+    // The probe doubles as the session check — 200 means the cookie is good.
+    const response = await fetch('/luma/v1/hello', { credentials: 'same-origin' })
+    if (response.status === 401) return { kind: 'login' }
+    if (!response.ok) return { kind: 'none' }
+    const hello = helloSchema.parse(await response.json())
+    if (hello.app !== 'luma-vault') return { kind: 'none' }
+    return { kind: 'http', host: hello.host, folders: hello.folders, items: hello.items }
+  } catch {
+    // A dev server answers this with HTML or a 404; either way it is not a
+    // host, and guessing otherwise would fail every call instead of just this.
+    return { kind: 'none' }
+  }
+}
+
+/** Asked once, then cached — the world does not change under a loaded page. */
+export function backend(): Promise<Backend> {
+  if (detected) return Promise.resolve(detected)
+  detecting ??= detect().then((result) => {
+    detected = result
+    detecting = null
+    return result
+  })
+  return detecting
+}
+
+/**
+ * Synchronous view of the answer, for the two callers that cannot await —
+ * `fileUrl` and the components deciding what to render. Safe for the same
+ * reason `source` below is: a tile cannot exist before a query resolved, and
+ * no query resolves before detection has.
+ */
+export function isHttpSession(): boolean {
+  return detected?.kind === 'http'
+}
+
+/** Whether anything answers at all — the desktop shell or a host session. */
+async function hasBackend(): Promise<boolean> {
+  const kind = (await backend()).kind
+  return kind === 'tauri' || kind === 'http'
+}
+
+/**
+ * Trade the passphrase for the session cookie. Resolves when the cookie is
+ * set; the caller reloads the page, for the same reason connecting does on the
+ * desktop — every piece of state above this seam describes one library, and a
+ * reload swaps all of it at once.
+ */
+export async function httpLogin(passphrase: string): Promise<void> {
+  const response = await fetch('/luma/v1/login', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ passphrase }),
+  })
+  if (response.status === 401) {
+    throw new Error('that is not the passphrase this machine is sharing with')
+  }
+  if (!response.ok) {
+    throw new Error(`the host answered HTTP ${response.status} — is it still sharing?`)
+  }
+}
+
+async function httpLogout(): Promise<void> {
+  await fetch('/luma/v1/logout', { method: 'POST', credentials: 'same-origin' })
+}
+
+async function httpCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  const response = await fetch('/luma/v1/rpc', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: command, args: args ?? {} }),
+  })
+  if (response.status === 401) {
+    // The host restarted sharing, which rotates the session token. Reloading
+    // lands on the login screen — one honest state instead of a page where
+    // every button fails with the same toast. No loop risk: detection said
+    // `http` when this page booted, so a 401 here means the session ended.
+    globalThis.location?.reload()
+    throw new Error('the host ended this session — log in again')
+  }
+  const body = (await response.json()) as { ok?: unknown; error?: unknown }
+  // The host reports a refused operation in the body, not the status, and the
+  // message is thrown verbatim so the toast shows what it said.
+  if (typeof body.error === 'string') throw new Error(body.error)
+  return body.ok as T
+}
+
 /** `null` until the backend has been asked, which happens on the first call. */
 let route: 'local' | 'remote' | null = null
 let probing: Promise<void> | null = null
@@ -141,6 +275,11 @@ async function currentRoute(): Promise<'local' | 'remote'> {
 }
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  // A host session first: there is no Tauri to fall back to in a browser, and
+  // the LOCAL_ONLY set does not apply — every command that must mean "this
+  // machine" is answered before invoke() by its wrapper, because on a phone
+  // there is no meaningful "this machine" to run anything on.
+  if (isHttpSession()) return httpCall<T>(command, args)
   if (LOCAL_ONLY.has(command)) return tauri<T>(command, args)
   if ((await currentRoute()) === 'remote') {
     // The peer runs the same operation under the same name, so nothing here
@@ -189,6 +328,11 @@ function protocolOrigin(): string {
  * that produced it resolved, and no call resolves before the route is known.
  */
 export function fileUrl(path: string): string {
+  // A host session fetches straight from the origin that served the page. No
+  // `&from=` needed here: the browser's cache is already per-origin, so two
+  // hosts with identical folder layouts cannot collide the way two luma://
+  // caches on one desktop can.
+  if (isHttpSession()) return `/luma/v1/file?path=${encodeURIComponent(path)}`
   const from = source ? `&from=${encodeURIComponent(source)}` : ''
   return `${protocolOrigin()}?path=${encodeURIComponent(path)}${from}`
 }
@@ -198,7 +342,7 @@ export function fileUrl(path: string): string {
 // ---------------------------------------------------------------------------
 
 export async function listFolders(): Promise<Folder[]> {
-  if (!isTauri()) return []
+  if (!(await hasBackend())) return []
   return z.array(folderSchema).parse(await invoke('list_folders'))
 }
 
@@ -232,7 +376,7 @@ export async function pickFolder(): Promise<string | null> {
  * rather than quietly destroying the file. `hasRecycleBin` decides.
  */
 export async function deleteItem(id: number, permanent: boolean): Promise<void> {
-  if (!isTauri()) return
+  if (!(await hasBackend())) return
   await invoke('delete_item', { id, permanent })
 }
 
@@ -249,7 +393,7 @@ export async function deleteItem(id: number, permanent: boolean): Promise<void> 
  * without blocking the tab — the parameters are on the clipboard either way.
  */
 export async function forgeSelectCheckpoint(block: string): Promise<string | null> {
-  if (!isTauri()) return null
+  if (!(await hasBackend())) return null
   return invoke<string | null>('forge_select_checkpoint', { block })
 }
 
@@ -280,7 +424,7 @@ export async function revealInFileManager(path: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function queryMedia(query: MediaQuery): Promise<MediaPage> {
-  if (!isTauri()) return { items: [], total: 0, offset: 0 }
+  if (!(await hasBackend())) return { items: [], total: 0, offset: 0 }
   return mediaPageSchema.parse(await invoke('query_media', { query }))
 }
 
@@ -297,7 +441,7 @@ export async function queryMedia(query: MediaQuery): Promise<MediaPage> {
  * as a search term because the prompt contains it verbatim.
  */
 export async function topCharacters(query: MediaQuery, limit = 10): Promise<CharacterCount[]> {
-  if (!isTauri()) return []
+  if (!(await hasBackend())) return []
   // Outgoing parse fills defaults, the same lesson the timeline taught.
   return z.array(characterCountSchema).parse(
     await invoke('top_characters', { query: mediaQuerySchema.parse(query), limit }),
@@ -305,7 +449,7 @@ export async function topCharacters(query: MediaQuery, limit = 10): Promise<Char
 }
 
 export async function mediaTimeline(query: MediaQuery): Promise<TimelineBucket[]> {
-  if (!isTauri()) return []
+  if (!(await hasBackend())) return []
   // Parsed on the way OUT as well as back. The schema fills defaults for any
   // field a caller left off, and Rust rejects a partial struct outright — the
   // first version of the timeline panel sent one with `offset` deleted, every
@@ -317,12 +461,12 @@ export async function mediaTimeline(query: MediaQuery): Promise<TimelineBucket[]
 }
 
 export async function recentMedia(limit = 40): Promise<MediaItem[]> {
-  if (!isTauri()) return []
+  if (!(await hasBackend())) return []
   return z.array(mediaItemSchema).parse(await invoke('recent_media', { limit }))
 }
 
 export async function mediaFrames(mediaId: number): Promise<MediaFrame[]> {
-  if (!isTauri()) return []
+  if (!(await hasBackend())) return []
   return z.array(mediaFrameSchema).parse(await invoke('media_frames', { mediaId }))
 }
 
@@ -338,7 +482,7 @@ export async function mediaFrames(mediaId: number): Promise<MediaFrame[]> {
  * only the path the variant carries.
  */
 export async function mediaByPath(path: string): Promise<MediaItem | null> {
-  if (!isTauri()) return null
+  if (!(await hasBackend())) return null
   return mediaItemSchema.nullable().parse(await invoke('media_by_path', { path }))
 }
 
@@ -385,7 +529,7 @@ export interface ForgeStatus {
  * busy: a Forge that is not running is not a reason to stop anything.
  */
 export async function forgeStatus(): Promise<ForgeStatus> {
-  if (!isTauri()) return { reachable: false, busy: false, job: null, progress: 0 }
+  if (!(await hasBackend())) return { reachable: false, busy: false, job: null, progress: 0 }
   return invoke<ForgeStatus>('forge_status')
 }
 
@@ -440,7 +584,7 @@ export interface DeleteSummary {
  * stop the rest, so the summary says what actually happened.
  */
 export async function deleteMedia(ids: number[], permanent: boolean): Promise<DeleteSummary> {
-  if (!isTauri()) return { deleted: 0, missing: 0, failed: 0, errors: [] }
+  if (!(await hasBackend())) return { deleted: 0, missing: 0, failed: 0, errors: [] }
   return invoke<DeleteSummary>('delete_media', { ids, permanent })
 }
 
@@ -450,12 +594,12 @@ export async function deleteMedia(ids: number[], permanent: boolean): Promise<De
  * Duplicates has not run — which the panel says rather than hiding.
  */
 export async function extrasOriginal(id: number): Promise<MediaItem | null> {
-  if (!isTauri()) return null
+  if (!(await hasBackend())) return null
   return mediaItemSchema.nullable().parse(await invoke('extras_original', { id }))
 }
 
 export async function mediaById(id: number): Promise<MediaItem | null> {
-  if (!isTauri()) return null
+  if (!(await hasBackend())) return null
   return mediaItemSchema.nullable().parse(await invoke('media_by_id', { id }))
 }
 
@@ -469,7 +613,7 @@ export async function mediaById(id: number): Promise<MediaItem | null> {
  * anything else the walk has nothing to look for.
  */
 export async function sourceOrigin(id: number): Promise<SourceOrigin | null> {
-  if (!isTauri()) return null
+  if (!(await hasBackend())) return null
   return sourceOriginSchema.nullable().parse(await invoke('source_origin', { id }))
 }
 
@@ -480,7 +624,7 @@ export async function sourceOrigin(id: number): Promise<SourceOrigin | null> {
  * from a model, and a re-classify never touches this one.
  */
 export async function setStars(id: number, stars: number | null): Promise<void> {
-  if (!isTauri()) return
+  if (!(await hasBackend())) return
   await invoke('set_stars', { id, stars })
 }
 
@@ -491,7 +635,7 @@ export async function setStars(id: number, stars: number | null): Promise<void> 
  * so a rating lands on all of it or on none.
  */
 export async function setStarsMany(ids: number[], stars: number | null): Promise<number> {
-  if (!isTauri()) return 0
+  if (!(await hasBackend())) return 0
   return z.number().parse(await invoke('set_stars_many', { ids, stars }))
 }
 
@@ -506,7 +650,7 @@ export async function setRatingOverride(
   ids: number[],
   rating: Exclude<Rating, 'unrated'> | null,
 ): Promise<number> {
-  if (!isTauri()) return 0
+  if (!(await hasBackend())) return 0
   return z.number().parse(await invoke('set_rating_override', { ids, rating }))
 }
 
@@ -517,7 +661,7 @@ export async function setRatingOverride(
  * files are indexed, so importing before scanning is the expected order.
  */
 export async function importImageBrowserDb(path: string): Promise<ImportSummary> {
-  if (!isTauri()) return { found: 0, staged: 0, applied: 0, unrecognised: 0 }
+  if (!(await hasBackend())) return { found: 0, staged: 0, applied: 0, unrecognised: 0 }
   return importSummarySchema.parse(await invoke('import_image_browser_db', { path }))
 }
 
@@ -529,7 +673,7 @@ export async function importImageBrowserDb(path: string): Promise<ImportSummary>
  * because a re-encoded video is a different video.
  */
 export async function findDuplicates(): Promise<DuplicateReport> {
-  if (!isTauri()) {
+  if (!(await hasBackend())) {
     return { groups: 0, files: 0, imageGroups: 0, videoGroups: 0, hashed: 0, skippedCommon: 0 }
   }
   return duplicateReportSchema.parse(await invoke('find_duplicates'))
@@ -553,7 +697,7 @@ export async function openExternal(url: string): Promise<void> {
  * the difference between regenerating the same image and a similar one.
  */
 export async function generationParameters(id: number): Promise<string | null> {
-  if (!isTauri()) return null
+  if (!(await hasBackend())) return null
   return z.string().nullable().parse(await invoke('generation_parameters', { id }))
 }
 
@@ -592,11 +736,24 @@ const NO_ACCOUNT: DeviantArtAccount = {
   redirectUri: '',
   scopes: [],
   canPublish: false,
+  canBrowse: false,
 }
 
 export async function deviantArtAccount(): Promise<DeviantArtAccount> {
-  if (!isTauri()) return NO_ACCOUNT
+  if (!(await hasBackend())) return NO_ACCOUNT
   return deviantArtAccountSchema.parse(await invoke('deviantart_account'))
+}
+
+/**
+ * The account's own gallery folders, for filing a submission into.
+ *
+ * Empty rather than an error when the connection predates the `browse` scope —
+ * the backend checks before asking — so a caller can render the picker from
+ * whatever comes back without treating a missing scope as a failure.
+ */
+export async function deviantArtGalleries(): Promise<DeviantArtGallery[]> {
+  if (!(await hasBackend())) return []
+  return z.array(deviantArtGallerySchema).parse(await invoke('deviantart_galleries'))
 }
 
 /**
@@ -673,7 +830,7 @@ export async function deviantArtSend(
  * is up but not where, so its badge carries no link.
  */
 export async function deviantArtMark(ids: number[], posted: boolean): Promise<number> {
-  if (!isTauri()) return 0
+  if (!(await hasBackend())) return 0
   return (await invoke('deviantart_mark', { ids, posted })) as number
 }
 
@@ -718,6 +875,23 @@ function remember(status: RemoteStatus): RemoteStatus {
 }
 
 export async function remoteStatus(): Promise<RemoteStatus> {
+  // A host session *is* a remote session, just without a desktop in front of
+  // it — so it reports as connected, to the machine that served this page.
+  // Synthesized rather than asked over the wire: `remote_status` on the host
+  // would describe the host's own outward connection, which is a different
+  // question (and the same circularity LOCAL_ONLY exists to avoid).
+  const world = await backend()
+  if (world.kind === 'http') {
+    return {
+      connected: true,
+      address: globalThis.location?.host ?? '',
+      host: world.host,
+      folders: world.folders,
+      items: world.items,
+      lastAddress: '',
+      hasPassphrase: false,
+    }
+  }
   if (!isTauri()) return NOT_CONNECTED
   return remember(remoteStatusSchema.parse(await invoke('remote_status')))
 }
@@ -741,6 +915,12 @@ export async function remoteConnect(address: string, passphrase: string): Promis
 }
 
 export async function remoteDisconnect(): Promise<RemoteStatus> {
+  // Disconnecting a host session means ending it: expire the cookie. The
+  // caller reloads, which lands on the passphrase screen.
+  if (isHttpSession()) {
+    await httpLogout()
+    return NOT_CONNECTED
+  }
   if (!isTauri()) return NOT_CONNECTED
   return remember(remoteStatusSchema.parse(await invoke('remote_disconnect')))
 }
@@ -768,7 +948,7 @@ export async function setShare(enabled: boolean, passphrase: string | null): Pro
 // ---------------------------------------------------------------------------
 
 export async function listExclusions(): Promise<string[]> {
-  if (!isTauri()) return []
+  if (!(await hasBackend())) return []
   return z.array(z.string()).parse(await invoke('list_exclusions'))
 }
 
@@ -778,17 +958,17 @@ export async function listExclusions(): Promise<string[]> {
  * Returns how many rows were removed. Files on disk are never touched.
  */
 export async function excludeFolder(path: string): Promise<number> {
-  if (!isTauri()) return 0
+  if (!(await hasBackend())) return 0
   return z.number().parse(await invoke('exclude_folder', { path }))
 }
 
 export async function includeFolder(path: string): Promise<void> {
-  if (!isTauri()) return
+  if (!(await hasBackend())) return
   await invoke('include_folder', { path })
 }
 
 export async function libraryStats(): Promise<LibraryStats> {
-  if (!isTauri()) {
+  if (!(await hasBackend())) {
     return { folders: 0, images: 0, videos: 0, classified: 0, pending: 0, sexy: 0, failed: 0 }
   }
   return libraryStatsSchema.parse(await invoke('library_stats'))
@@ -801,7 +981,7 @@ export async function libraryStats(): Promise<LibraryStats> {
  * or a missing ffmpeg fails everything it touches at once.
  */
 export async function retryFailed(folderId: number | null = null): Promise<number> {
-  if (!isTauri()) return 0
+  if (!(await hasBackend())) return 0
   return z.number().parse(await invoke('retry_failed', { folderId }))
 }
 
@@ -810,14 +990,14 @@ export async function retryFailed(folderId: number | null = null): Promise<numbe
 // ---------------------------------------------------------------------------
 
 export async function scanProgress(): Promise<ScanProgress> {
-  if (!isTauri()) {
+  if (!(await hasBackend())) {
     return { phase: 'idle', folderId: null, done: 0, total: 0, current: null, errors: [] }
   }
   return scanProgressSchema.parse(await invoke('scan_progress'))
 }
 
 export async function processPending(): Promise<void> {
-  if (!isTauri()) return
+  if (!(await hasBackend())) return
   await invoke('process_pending')
 }
 
@@ -831,7 +1011,7 @@ const environmentSchema = z.object({
 export type Environment = z.infer<typeof environmentSchema>
 
 export async function environment(): Promise<Environment> {
-  if (!isTauri()) {
+  if (!(await hasBackend())) {
     return {
       classifierAvailable: false,
       ffmpegAvailable: false,
@@ -849,7 +1029,7 @@ export async function environment(): Promise<Environment> {
  * inside the classifier finishes at full speed.
  */
 export async function setThrottle(level: ThrottleLevel): Promise<void> {
-  if (!isTauri()) return
+  if (!(await hasBackend())) return
   await invoke('set_throttle', { level })
 }
 

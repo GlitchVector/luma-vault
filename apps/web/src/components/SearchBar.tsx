@@ -91,7 +91,9 @@ export function SearchBar({
               : 'Search filenames and prompts — try a character, a tag, a filename'
           }
           aria-label={searchPaths ? 'Search folder paths' : 'Search the library'}
-          className="min-w-0 flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+          // text-base below md: iOS Safari zooms the whole page into any
+          // focused input under 16px and never zooms back out.
+          className="min-w-0 flex-1 bg-transparent text-base text-zinc-100 placeholder:text-zinc-600 focus:outline-none md:text-sm"
         />
 
         {/* Inside the field rather than out in the filter bar, because it does
@@ -145,7 +147,7 @@ export function SearchBar({
             </button>
           </>
         ) : (
-          <kbd className="shrink-0 rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-600">
+          <kbd className="shrink-0 rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-600 max-md:hidden">
             Ctrl K
           </kbd>
         )}

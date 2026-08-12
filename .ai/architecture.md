@@ -150,6 +150,44 @@ Progress is polled as well as subscribed to (`useLibrary`), because
 `luma://progress` events are emitted into the webview of the machine doing the
 work and never cross the wire.
 
+### The browser client — a phone
+
+The same share server also serves the **built SPA** (embedded via `include_dir!`
+in `lib.rs`; `build.rs` creates `apps/web/dist` so a webless checkout still
+compiles) and a cookie login beside the existing routes:
+
+```
+phone's browser                                host (sharing switched on)
+GET /                    ──────────────▶       the SPA shell, no credential
+POST /luma/v1/login {passphrase}  ─────▶       Set-Cookie: luma_session=<random>
+fetch /luma/v1/rpc  + cookie  ─────────▶       api::dispatch — same operations
+<img src=/luma/v1/file?path=…> + cookie ▶      protocol::serve — same allowlist
+```
+
+Three decisions carry this half:
+
+- **The cookie exists because an `<img>` cannot send a custom header.** It is a
+  fresh random token per `Sharing::start`, held only in memory — so stopping
+  sharing (or changing the passphrase, which restarts it) ends every browser
+  session. `HttpOnly` + `SameSite=Strict` make it useless to other origins.
+- **`native.ts` grew a third world, not a fork.** `backend()` probes
+  `/luma/v1/hello` once: `tauri` (the shell), `http` (served by a host, cookie
+  live), `login` (served, not signed in — App shows `HostLogin`), `none` (bare
+  dev server, the old notice). In `http` mode `invoke()` is a same-origin
+  `fetch` and `fileUrl()` is a relative URL; the forty wrappers stay unaware,
+  exactly as they did for desktop remote mode.
+- **The phone has no "this machine".** The `LOCAL_ONLY` set does not apply;
+  every command that must mean the local machine is answered by its wrapper
+  before `invoke()` (`remote_status` is synthesized from the greeting,
+  `remote_disconnect` is a logout, the OS pickers return null, Explorer and
+  Forge-URL actions no-op). The RemoteDialog hides the share half and turns
+  disconnect into **Log out**.
+
+The static shell answers **without** a credential — a login page nobody can
+load is not a login page — but it is only the app's own bytes, pinned to
+`'self'` by a CSP header. Library data still requires the cookie or the header
+on every request.
+
 ## Storage
 
 Everything lives under the OS app-data directory:

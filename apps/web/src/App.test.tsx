@@ -91,6 +91,13 @@ let remoteState = {
   hasPassphrase: false,
 }
 let shareState = { sharing: false, port: 7870, addresses: [] as string[], hasPassphrase: false }
+/** Which world the page woke up in. The desktop shell unless a case says otherwise. */
+let backendState: { kind: 'tauri' | 'http' | 'login' | 'none'; host?: string; folders?: number; items?: number } = {
+  kind: 'tauri',
+}
+/** What the passphrase screen sent, and whether the host refuses it. */
+const loginCalls: string[] = []
+let loginFailure: string | null = null
 /** Each batch delete, so one call for the whole set can be asserted. */
 const deleteBatches: Array<{ ids: number[]; permanent: boolean }> = []
 /** What the DeviantArt panel actually asked the backend to upload. */
@@ -102,12 +109,21 @@ let deviantArtAccountState = {
   username: 'glitchvector',
   clientId: '12345',
   redirectUri: 'http://localhost:14340/deviantart',
-  scopes: ['basic', 'stash', 'publish'],
+  scopes: ['basic', 'stash', 'publish', 'browse'],
   canPublish: true,
+  canBrowse: true,
 }
+/** The account's gallery folders. Swapped per test, empty by default. */
+let deviantArtGalleryList: Array<{ folderId: string; name: string }> = []
 
 vi.mock('#/lib/native.ts', () => ({
-  isTauri: () => true,
+  isTauri: () => backendState.kind === 'tauri',
+  backend: () => Promise.resolve(backendState),
+  isHttpSession: () => backendState.kind === 'http',
+  httpLogin: (passphrase: string) => {
+    loginCalls.push(passphrase)
+    return loginFailure ? Promise.reject(new Error(loginFailure)) : Promise.resolve()
+  },
   fileUrl: (path: string) => `luma://${path}`,
   listFolders: () =>
     Promise.resolve([
@@ -258,6 +274,7 @@ vi.mock('#/lib/native.ts', () => ({
   DEVIANTART_STUDIO_URL: 'https://www.deviantart.com/studio',
   DEVIANTART_APPS_URL: 'https://www.deviantart.com/developers/apps',
   deviantArtAccount: () => Promise.resolve(deviantArtAccountState),
+  deviantArtGalleries: () => Promise.resolve(deviantArtGalleryList),
   deviantArtConfigure: () => Promise.resolve(deviantArtAccountState),
   deviantArtSetRedirect: () => Promise.resolve(),
   deviantArtConnect: () => Promise.resolve(deviantArtAccountState),
@@ -300,9 +317,11 @@ beforeEach(() => {
     username: 'glitchvector',
     clientId: '12345',
     redirectUri: 'http://localhost:14340/deviantart',
-    scopes: ['basic', 'stash', 'publish'],
+    scopes: ['basic', 'stash', 'publish', 'browse'],
     canPublish: true,
+    canBrowse: true,
   }
+  deviantArtGalleryList = []
   forgeState = { reachable: true, busy: false, job: null, progress: 0 }
   remoteState = {
     connected: false,
@@ -314,6 +333,9 @@ beforeEach(() => {
     hasPassphrase: false,
   }
   shareState = { sharing: false, port: 7870, addresses: [], hasPassphrase: false }
+  backendState = { kind: 'tauri' }
+  loginCalls.length = 0
+  loginFailure = null
   // The tile size is remembered here, so a case that sets it would otherwise
   // decide the starting size of every case after it.
   localStorage.clear()
@@ -1577,6 +1599,47 @@ describe('sending a selection to DeviantArt', () => {
     expect(deviantArtSends[0]!.publish).toBe(true)
   })
 
+  it('files a picture into the gallery named after its character', async () => {
+    // The whole feature: a gallery per girl, ticked without anyone hunting for
+    // it in a list of forty.
+    library[0]!.generation = {
+      tool: 'Stable Diffusion',
+      prompt: '1girl, kiryu coco',
+      needsSourceImage: false,
+      postprocessed: false,
+      characters: ['kiryu coco'],
+    }
+    deviantArtGalleryList = [
+      { folderId: 'featured', name: 'Featured' },
+      { folderId: 'coco', name: 'Kiryu Coco' },
+    ]
+    await openPanel()
+    await screen.findByRole('button', { name: 'Kiryu Coco ×' })
+
+    screen.getByRole('button', { name: 'Upload and post' }).click()
+    await waitFor(() => expect(deviantArtSends).toHaveLength(1))
+
+    const drafts = deviantArtSends[0]!.drafts as Array<{ galleryIds: string[] }>
+    expect(drafts[0]!.galleryIds).toEqual(['coco'])
+    // And nothing invented for the picture that named nobody — an unmatched
+    // row goes out unfiled rather than into Featured.
+    expect(drafts[1]!.galleryIds).toEqual([])
+  })
+
+  it('explains an empty gallery picker instead of just showing one', async () => {
+    // A connection made before the app asked for `browse` can publish into a
+    // gallery perfectly well and cannot list them, which looks exactly like a
+    // broken picker unless it is spelled out.
+    deviantArtAccountState = {
+      ...deviantArtAccountState,
+      scopes: ['basic', 'stash', 'publish'],
+      canBrowse: false,
+    }
+    await openPanel()
+
+    expect(await screen.findByText(/cannot read your gallery list/)).toBeTruthy()
+  })
+
   it('sends the edited title rather than the derived one', async () => {
     // The whole point of the panel. Re-deriving on the backend would discard
     // every correction someone just made.
@@ -2717,6 +2780,110 @@ describe('remote mode', () => {
     // The address to type on the other machine, verbatim.
     expect(await screen.findByText('192.168.1.7:7870')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Stop sharing' })).toBeTruthy()
+  })
+})
+
+describe('the phone layout', () => {
+  // jsdom applies no CSS, so which mount is *visible* is Tailwind's business —
+  // what these pin is the structure: one sidebar normally, a second mount plus
+  // a backdrop while the drawer is open, and the drawer getting out of the way
+  // when a folder is picked, because the answer to that tap is behind it.
+  it('opens the library as a drawer and closes it when a folder is picked', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    expect(screen.getAllByRole('button', { name: /All folders/ })).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open the library panel' }))
+    expect(screen.getAllByRole('button', { name: /All folders/ })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Close the library panel' })).toBeTruthy()
+
+    const drawerCopy = screen.getAllByRole('button', { name: /All folders/ })[1]!
+    fireEvent.click(drawerCopy)
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /All folders/ })).toHaveLength(1),
+    )
+  })
+
+  it('closes the drawer from its backdrop without changing anything', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open the library panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close the library panel' }))
+    expect(screen.getAllByRole('button', { name: /All folders/ })).toHaveLength(1)
+  })
+
+  it('opens the lightbox as a history entry, so the back gesture closes it', async () => {
+    render(<App />)
+    ;(await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)).click()
+    await screen.findByRole('dialog', { name: `image-${LIBRARY_SIZE}.png` })
+    expect(window.location.hash).toBe('#lightbox')
+
+    // The gesture itself: by the time the app hears popstate, the browser has
+    // already popped the entry — only the state has to follow.
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    expect(screen.queryByRole('dialog', { name: `image-${LIBRARY_SIZE}.png` })).toBeNull()
+  })
+
+  it('takes the history entry back out when the lightbox closes from inside', async () => {
+    render(<App />)
+    ;(await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)).click()
+    await screen.findByRole('dialog', { name: `image-${LIBRARY_SIZE}.png` })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    // Without this, the next back gesture eats a press undoing a navigation
+    // that already looks undone.
+    await waitFor(() => expect(window.location.hash).not.toBe('#lightbox'))
+  })
+})
+
+describe('a browser served by a sharing host', () => {
+  it('asks for the passphrase before showing anything, and sends what is typed', async () => {
+    backendState = { kind: 'login' }
+    loginFailure = 'that is not the passphrase this machine is sharing with'
+    render(<App />)
+
+    const input = await screen.findByLabelText('Passphrase')
+    // Nothing but the door: no grid, no sidebar, no search.
+    expect(screen.queryByPlaceholderText(/search/i)).toBeNull()
+
+    fireEvent.change(input, { target: { value: 'open sesame' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    await waitFor(() => expect(loginCalls).toEqual(['open sesame']))
+    // The refusal lands on the screen, not in a console.
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('not the passphrase')
+  })
+
+  it('reports the host session as a remote session, without the share half', async () => {
+    backendState = { kind: 'http', host: 'JEBPOT', folders: 3, items: 66412 }
+    remoteState = {
+      connected: true,
+      address: '192.168.1.160:7870',
+      host: 'JEBPOT',
+      folders: 3,
+      items: 66412,
+      lastAddress: '',
+      hasPassphrase: false,
+    }
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    const badge = await screen.findByRole('button', { name: 'Remote · JEBPOT' })
+    badge.click()
+    // Leaving is a logout, not a return to a machine this page does not have —
+    // and there is no library here to lend out, so the share half is gone.
+    expect(await screen.findByRole('button', { name: 'Log out' })).toBeTruthy()
+    expect(screen.queryByLabelText('Sharing passphrase')).toBeNull()
+  })
+
+  it('shows the plain-browser notice only when nothing served the page', async () => {
+    backendState = { kind: 'none' }
+    render(<App />)
+    expect(await screen.findByText('Luma Vault runs as a desktop app')).toBeTruthy()
   })
 })
 

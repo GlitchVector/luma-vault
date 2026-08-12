@@ -47,6 +47,12 @@ url = "2"
 # port, and a self-signed certificate between two machines on one LAN would add
 # a trust dialog rather than any security.
 tiny_http = { version = "0.12", default-features = false }
+# The built SPA, embedded so the share server can hand it to a phone's browser.
+# Embedded rather than read from disk because in a bundle the frontend exists
+# only inside the Tauri binary — there is no dist directory next to the exe to
+# point at. build.rs creates ../web/dist when it is missing, so a checkout that
+# has never built the web app (CI) still compiles; it just serves a notice.
+include_dir = "0.7"
 
 # PKCE. `getrandom` talks to the OS CSPRNG directly — a code verifier from a
 # seeded PRNG is a code verifier an attacker can predict, which is the one

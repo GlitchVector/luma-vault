@@ -7,6 +7,12 @@
 //! client (Session)                        host (Sharing)
 //!   invoke ─▶ remote_call ──POST /rpc──▶  api::dispatch, against the host index
 //!   luma://?path=… ────────GET /file──▶   protocol::serve, host's allowlist
+//!
+//! browser client (a phone on the same network)
+//!   GET /            ─────────────────▶   the built SPA, embedded in the binary
+//!   POST /login      ─────────────────▶   passphrase in, session cookie out
+//!   fetch /rpc, <img src=/file?…>  ──▶    the same two routes, cookie instead
+//!                                         of the header
 //! ```
 //!
 //! # Why the page never talks to the peer itself
@@ -18,11 +24,25 @@
 //! `luma://`, and Rust does the network. It also means the whole frontend is
 //! unchanged by this feature — one seam decides where a call goes.
 //!
+//! The browser client does not weaken that argument, though it looks like it
+//! should: there the page *is* served by the host and talks straight back to
+//! it. But that page runs on a machine with no library, no `luma://`, and no
+//! filesystem access at all — the only thing it could exfiltrate is what the
+//! host already chose to serve it, and the page itself is pinned to `'self'`
+//! by the CSP header the static route sends.
+//!
 //! # What protects the port
 //!
 //! - Sharing is off until somebody turns it on, on that machine.
-//! - Turning it on requires a passphrase, and **every** request carries it —
-//!   the file route as much as the RPC one.
+//! - Turning it on requires a passphrase, and **every** data request carries a
+//!   credential — the file route as much as the RPC one. The desktop client
+//!   sends the passphrase itself in a header; a browser session sends the
+//!   cookie `POST /login` traded it for. The cookie exists because an
+//!   `<img src>` cannot carry a custom header, and it is a fresh random token
+//!   per sharing start, so stopping the server ends every browser session.
+//! - The SPA shell and the login route answer without a credential — a login
+//!   page nobody can load is not a login page — but they only ever hand out
+//!   the app's own static bytes.
 //! - Only private addresses are answered, and only private addresses may be
 //!   connected to. A library cannot be published to the internet by typing an
 //!   address into a box.
@@ -61,6 +81,29 @@ const PASSPHRASE_HEADER: &str = "x-luma-passphrase";
 const HELLO_ROUTE: &str = "/luma/v1/hello";
 const RPC_ROUTE: &str = "/luma/v1/rpc";
 const FILE_ROUTE: &str = "/luma/v1/file";
+const LOGIN_ROUTE: &str = "/luma/v1/login";
+const LOGOUT_ROUTE: &str = "/luma/v1/logout";
+
+/// The cookie a browser session holds instead of the passphrase.
+const SESSION_COOKIE: &str = "luma_session";
+
+/// Everything under here is the API; everything else is the static SPA.
+const API_PREFIX: &str = "/luma/";
+
+/// How the API's answers are cached: not at all. The file route advertises
+/// `immutable` because its content is content-addressed; an RPC answer or a
+/// greeting is neither, and a browser that cached a 200 from `/hello` would
+/// keep reporting a session that logging out already ended.
+const CACHE_NONE: &str = "no-store";
+const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
+
+/// What the served page may reach: itself and nothing else. This is the
+/// browser-client counterpart of the webview CSP in `tauri.conf.json` — the
+/// page can read what the host serves it, and has nowhere else to send it.
+/// `'unsafe-inline'` for styles because React writes `style=` attributes.
+const STATIC_CSP: &str = "default-src 'self'; script-src 'self'; \
+    style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; \
+    connect-src 'self'";
 
 /// How many requests the shared library answers at once.
 ///
@@ -467,6 +510,10 @@ fn cause(error: &reqwest::Error) -> String {
 pub type RpcHandler = Arc<dyn Fn(String, Value) -> Result<Value, String> + Send + Sync>;
 /// What this machine says about itself when asked.
 pub type Greeting = Arc<dyn Fn() -> Value + Send + Sync>;
+/// One static file of the built SPA, by its path relative to the bundle root
+/// (`index.html`, `assets/index-CAxT2q.js`). A closure rather than the
+/// `include_dir` type so tests can serve a bundle they made up.
+pub type AssetLookup = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 
 /// Everything a shared library answers with. Assembled by `lib.rs`, the only
 /// place holding the app handle the dispatcher needs.
@@ -477,6 +524,28 @@ pub struct Shared {
     pub rpc: RpcHandler,
     pub greeting: Greeting,
     pub passphrase: String,
+    /// The built SPA, for a browser with no desktop app — a phone.
+    pub assets: AssetLookup,
+}
+
+/// What the workers actually hold: the configuration plus the one secret that
+/// exists only while the server runs.
+struct Live {
+    shared: Shared,
+    /// The session-cookie value. Minted fresh on every `start`, so it is not
+    /// derivable from anything stored, and stopping the server — including the
+    /// stop inside a passphrase change — ends every browser session at once.
+    token: String,
+}
+
+/// 32 bytes from the OS CSPRNG, URL-safe. A guessable session cookie would be
+/// a second, weaker passphrase; this one is not guessable and never persisted.
+fn session_token() -> Result<String, String> {
+    use base64::Engine;
+    let mut buffer = [0_u8; 32];
+    getrandom::fill(&mut buffer)
+        .map_err(|error| format!("no system randomness for the session cookie: {error}"))?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buffer))
 }
 
 struct Running {
@@ -551,13 +620,16 @@ impl Sharing {
             return Err("set a passphrase before sharing".to_string());
         }
 
+        let live = Arc::new(Live {
+            shared,
+            token: session_token()?,
+        });
         let server = Arc::new(bind(self.port)?);
-        let shared = Arc::new(shared);
 
         let workers = (0..WORKERS)
             .map(|_| {
                 let server = Arc::clone(&server);
-                let shared = Arc::clone(&shared);
+                let live = Arc::clone(&live);
                 std::thread::spawn(move || {
                     // Ends when the server is unblocked, which is how `stop`
                     // collects these.
@@ -574,7 +646,7 @@ impl Sharing {
                         // caller gets a 500 it can put in a toast, and the
                         // worker takes the next request.
                         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                            || answer(&shared, request),
+                            || answer(&live, request),
                         ));
                         if outcome.is_err() {
                             eprintln!("[luma] a remote request panicked; worker continuing");
@@ -630,23 +702,38 @@ impl Sharing {
     }
 }
 
-fn answer(shared: &Shared, mut request: tiny_http::Request) {
+/// The `luma_session` cookie's value, if the request carries one.
+fn cookie_token(request: &tiny_http::Request) -> Option<String> {
+    let header = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("Cookie"))?;
+    header.value.as_str().split(';').find_map(|pair| {
+        let (name, value) = pair.trim().split_once('=')?;
+        (name == SESSION_COOKIE).then(|| value.to_string())
+    })
+}
+
+/// `SameSite=Strict` is the CSRF story: the API changes state on bare POSTs,
+/// and Strict means no other origin can make the browser attach this cookie —
+/// not even on a top-level navigation. The SPA itself never navigates
+/// cross-site into an API route, so Strict costs nothing here. `HttpOnly`
+/// because the page has no reason to read it — `fetch` sends it on its own.
+fn session_cookie(token: &str) -> String {
+    format!("{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=7776000")
+}
+
+fn expired_cookie() -> String {
+    format!("{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
+}
+
+fn answer(live: &Live, mut request: tiny_http::Request) {
+    let shared = &live.shared;
     let peer = request.remote_addr().map(|addr| addr.ip());
     if !peer.is_some_and(is_lan) {
         // Terse and identical to the unauthorized reply's shape: an endpoint
         // that explains itself to a stranger is an endpoint that helps them.
-        respond(request, FileReply::failure(403, "not a local address"));
-        return;
-    }
-
-    let offered = request
-        .headers()
-        .iter()
-        .find(|header| header.field.equiv(PASSPHRASE_HEADER))
-        .map(|header| header.value.as_str().to_string())
-        .unwrap_or_default();
-    if !same_passphrase(&offered, &shared.passphrase) {
-        respond(request, FileReply::failure(401, "wrong passphrase"));
+        respond(request, FileReply::failure(403, "not a local address"), CACHE_NONE);
         return;
     }
 
@@ -654,14 +741,79 @@ fn answer(shared: &Shared, mut request: tiny_http::Request) {
     let route = url.split('?').next().unwrap_or_default().to_string();
     let method = request.method().clone();
 
+    // Anything outside the API namespace is the SPA — served without a
+    // credential, because it is the login page among other things, and it
+    // carries no library data. GET only; the app shell has no other verb.
+    if !route.starts_with(API_PREFIX) {
+        if method != tiny_http::Method::Get {
+            respond(request, FileReply::failure(404, "no such route"), CACHE_NONE);
+            return;
+        }
+        let (reply, cache) = serve_asset(shared, &route);
+        respond(request, reply, cache);
+        return;
+    }
+
+    // Trading the passphrase for a cookie is the one API operation that is
+    // reachable without either.
+    if route == LOGIN_ROUTE && method == tiny_http::Method::Post {
+        let mut body = String::new();
+        if request.as_reader().read_to_string(&mut body).is_err() {
+            respond(request, json_reply(400, json!({ "error": "unreadable request" })), CACHE_NONE);
+            return;
+        }
+        let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+        let offered = parsed
+            .get("passphrase")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !same_passphrase(offered, &shared.passphrase) {
+            respond(request, FileReply::failure(401, "wrong passphrase"), CACHE_NONE);
+            return;
+        }
+        // The greeting in the body, so one round trip both authenticates and
+        // tells the page whose library it is now looking at.
+        respond_with(
+            request,
+            json_reply(200, (shared.greeting)()),
+            CACHE_NONE,
+            Some(session_cookie(&live.token)),
+        );
+        return;
+    }
+    if route == LOGOUT_ROUTE && method == tiny_http::Method::Post {
+        // No auth check: expiring a cookie the caller does not hold is a no-op,
+        // and a logout that can fail with 401 is a logout that cannot be
+        // trusted to always work.
+        respond_with(request, json_reply(200, json!({})), CACHE_NONE, Some(expired_cookie()));
+        return;
+    }
+
+    // Everything else in the API needs a credential: the passphrase header the
+    // desktop client sends, or the cookie a browser login earned. Both go
+    // through the digest comparison — the token is not secret-shaped enough to
+    // deserve a timing oracle either.
+    let offered = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv(PASSPHRASE_HEADER))
+        .map(|header| header.value.as_str().to_string())
+        .unwrap_or_default();
+    let authorized = same_passphrase(&offered, &shared.passphrase)
+        || cookie_token(&request).is_some_and(|token| same_passphrase(&token, &live.token));
+    if !authorized {
+        respond(request, FileReply::failure(401, "wrong passphrase"), CACHE_NONE);
+        return;
+    }
+
     match (&method, route.as_str()) {
         (tiny_http::Method::Get, HELLO_ROUTE) => {
-            respond(request, json_reply(200, (shared.greeting)()));
+            respond(request, json_reply(200, (shared.greeting)()), CACHE_NONE);
         }
         (tiny_http::Method::Post, RPC_ROUTE) => {
             let mut body = String::new();
             if request.as_reader().read_to_string(&mut body).is_err() {
-                respond(request, json_reply(400, json!({ "error": "unreadable request" })));
+                respond(request, json_reply(400, json!({ "error": "unreadable request" })), CACHE_NONE);
                 return;
             }
             let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
@@ -671,7 +823,7 @@ fn answer(shared: &Shared, mut request: tiny_http::Request) {
                 .unwrap_or_default()
                 .to_string();
             if name.is_empty() {
-                respond(request, json_reply(400, json!({ "error": "no operation named" })));
+                respond(request, json_reply(400, json!({ "error": "no operation named" })), CACHE_NONE);
                 return;
             }
             let args = parsed.get("args").cloned().unwrap_or(Value::Null);
@@ -681,11 +833,11 @@ fn answer(shared: &Shared, mut request: tiny_http::Request) {
                 Ok(value) => json!({ "ok": value }),
                 Err(message) => json!({ "error": message }),
             };
-            respond(request, json_reply(200, reply));
+            respond(request, json_reply(200, reply), CACHE_NONE);
         }
         (tiny_http::Method::Get, FILE_ROUTE) => {
             let Some(path) = extract_path(&url) else {
-                respond(request, FileReply::failure(400, "missing ?path= parameter"));
+                respond(request, FileReply::failure(400, "missing ?path= parameter"), CACHE_NONE);
                 return;
             };
             let range = request
@@ -694,10 +846,79 @@ fn answer(shared: &Shared, mut request: tiny_http::Request) {
                 .find(|header| header.field.equiv("Range"))
                 .map(|header| header.value.as_str().to_string());
             let reply = crate::protocol::serve(&shared.roots, &path, range.as_deref());
-            respond(request, reply);
+            // Immutable is safe here for the same reason it is on `luma://`:
+            // content-addressed derived files, and the watcher drops the row
+            // when a source changes.
+            respond(request, reply, CACHE_IMMUTABLE);
         }
-        _ => respond(request, FileReply::failure(404, "no such route")),
+        _ => respond(request, FileReply::failure(404, "no such route"), CACHE_NONE),
     }
+}
+
+/// The MIME types Vite actually emits, plus the PWA odds and ends.
+fn asset_mime(name: &str) -> &'static str {
+    match name.rsplit('.').next() {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript",
+        Some("css") => "text/css",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("ico") => "image/x-icon",
+        Some("webmanifest") => "application/manifest+json",
+        Some("woff2") => "font/woff2",
+        _ => "application/octet-stream",
+    }
+}
+
+/// One file of the SPA, and how long a browser may keep it.
+fn serve_asset(shared: &Shared, route: &str) -> (FileReply, &'static str) {
+    let name = route.trim_start_matches('/');
+    // The embedded bundle is looked up by relative key, so `..` cannot match
+    // anything — but refusing it outright costs one line and no thought.
+    if name.contains("..") {
+        return (FileReply::failure(404, "not found"), CACHE_NONE);
+    }
+    let name = if name.is_empty() { "index.html" } else { name };
+
+    let (name, bytes) = match (shared.assets)(name) {
+        Some(bytes) => (name, bytes),
+        // No extension means it was a page path, not a file: hand back the
+        // shell and let the SPA make sense of it. A missing *file* stays 404 —
+        // an <img> that gets HTML instead renders a broken tile with no clue.
+        None if !name.contains('.') => match (shared.assets)("index.html") {
+            Some(bytes) => ("index.html", bytes),
+            None => return (unbuilt_notice(), CACHE_NONE),
+        },
+        None if name == "index.html" => return (unbuilt_notice(), CACHE_NONE),
+        None => return (FileReply::failure(404, "not found"), CACHE_NONE),
+    };
+
+    let reply = FileReply {
+        status: 200,
+        mime: asset_mime(name).to_string(),
+        bytes,
+        content_range: None,
+    };
+    // Vite hashes everything under assets/, so those are immutable by
+    // construction. The shell is what changes between builds — a year-long
+    // cache on it would pin a phone to a stale app.
+    let cache = if name.starts_with("assets/") {
+        CACHE_IMMUTABLE
+    } else {
+        CACHE_NONE
+    };
+    (reply, cache)
+}
+
+/// What a browser sees when the host has never built the web app — a dev
+/// machine running `cargo` alone. Plain text on purpose: this is a message for
+/// the person at the other machine, not a page.
+fn unbuilt_notice() -> FileReply {
+    FileReply::failure(
+        503,
+        "the web app is not built into this host — run `pnpm --filter @luma/web build` \
+         there and restart it",
+    )
 }
 
 fn json_reply(status: u16, body: Value) -> FileReply {
@@ -709,7 +930,17 @@ fn json_reply(status: u16, body: Value) -> FileReply {
     }
 }
 
-fn respond(request: tiny_http::Request, reply: FileReply) {
+fn respond(request: tiny_http::Request, reply: FileReply, cache_control: &str) {
+    respond_with(request, reply, cache_control, None);
+}
+
+fn respond_with(
+    request: tiny_http::Request,
+    reply: FileReply,
+    cache_control: &str,
+    set_cookie: Option<String>,
+) {
+    let is_html = reply.mime.starts_with("text/html");
     let mut response = tiny_http::Response::from_data(reply.bytes)
         .with_status_code(tiny_http::StatusCode(reply.status));
     for (name, value) in [
@@ -717,9 +948,24 @@ fn respond(request: tiny_http::Request, reply: FileReply) {
         // Advertised for the same reason the local handler advertises it: it is
         // what tells a <video> it may seek instead of re-reading from zero.
         ("Accept-Ranges", "bytes"),
-        ("Cache-Control", "public, max-age=31536000, immutable"),
+        ("Cache-Control", cache_control),
     ] {
         if let Ok(header) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+            response.add_header(header);
+        }
+    }
+    // Only pages get the CSP — it means nothing on JSON or JPEG bytes, and
+    // pinning it to the mime keeps the policy impossible to forget on a new
+    // HTML route.
+    if is_html {
+        if let Ok(header) =
+            tiny_http::Header::from_bytes(b"Content-Security-Policy".as_slice(), STATIC_CSP.as_bytes())
+        {
+            response.add_header(header);
+        }
+    }
+    if let Some(cookie) = set_cookie {
+        if let Ok(header) = tiny_http::Header::from_bytes(b"Set-Cookie".as_slice(), cookie.as_bytes()) {
             response.add_header(header);
         }
     }
@@ -862,14 +1108,22 @@ mod tests {
 
     /// Minimal HTTP/1.1 by hand, so the server is exercised over a real socket
     /// rather than through a mock of one. `Connection: close` means the reply
-    /// ends at EOF and there is no chunk framing to parse.
-    fn request(port: u16, method: &str, route: &str, passphrase: &str, body: Option<&str>) -> (u16, String) {
+    /// ends at EOF and there is no chunk framing to parse. Returns the whole
+    /// response text — status line, headers, body — because the cookie tests
+    /// read headers.
+    fn request_raw(
+        port: u16,
+        method: &str,
+        route: &str,
+        extra_headers: &[(&str, &str)],
+        body: Option<&str>,
+    ) -> String {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
         let mut head = format!(
             "{method} {route} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n"
         );
-        if !passphrase.is_empty() {
-            head.push_str(&format!("X-Luma-Passphrase: {passphrase}\r\n"));
+        for (name, value) in extra_headers {
+            head.push_str(&format!("{name}: {value}\r\n"));
         }
         if let Some(body) = body {
             head.push_str(&format!(
@@ -884,7 +1138,10 @@ mod tests {
         stream.write_all(head.as_bytes()).expect("write");
         let mut raw = Vec::new();
         stream.read_to_end(&mut raw).expect("read");
-        let text = String::from_utf8_lossy(&raw).to_string();
+        String::from_utf8_lossy(&raw).to_string()
+    }
+
+    fn split_response(text: &str) -> (u16, String) {
         let status = text
             .split_whitespace()
             .nth(1)
@@ -892,6 +1149,23 @@ mod tests {
             .unwrap_or(0);
         let body = text.split("\r\n\r\n").nth(1).unwrap_or_default().to_string();
         (status, body)
+    }
+
+    fn request(port: u16, method: &str, route: &str, passphrase: &str, body: Option<&str>) -> (u16, String) {
+        let headers: &[(&str, &str)] = if passphrase.is_empty() {
+            &[]
+        } else {
+            &[("X-Luma-Passphrase", passphrase)]
+        };
+        split_response(&request_raw(port, method, route, headers, body))
+    }
+
+    /// The `luma_session=…` value out of a login response's `Set-Cookie`.
+    fn cookie_from(text: &str) -> Option<String> {
+        text.lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("set-cookie:"))
+            .and_then(|line| line.split_once(':'))
+            .and_then(|(_, value)| value.trim().split(';').next().map(str::to_string))
     }
 
     struct Fixture {
@@ -941,6 +1215,12 @@ mod tests {
                 }),
                 greeting: Arc::new(|| json!({ "app": "luma-vault", "host": "TESTBOX", "folders": 1, "items": 7 })),
                 passphrase: passphrase.to_string(),
+                // A bundle small enough to assert on, shaped like Vite's output.
+                assets: Arc::new(|name| match name {
+                    "index.html" => Some(b"<html>app shell</html>".to_vec()),
+                    "assets/index-CAxT2q.js" => Some(b"js bytes".to_vec()),
+                    _ => None,
+                }),
             })
             .expect("start");
         let port = sharing.bound_port();
@@ -1056,10 +1336,163 @@ mod tests {
         let (status, body) = request(fixture.port, "GET", &route, "open sesame", None);
         assert_eq!(status, 403, "got: {body}");
 
-        let (status, _) = request(fixture.port, "GET", "/nope", "open sesame", None);
+        // An unknown *API* route is a 404; an unknown page path is the SPA
+        // shell, which is what makes a deep link on a phone land in the app.
+        let (status, _) = request(fixture.port, "GET", "/luma/v1/nope", "open sesame", None);
         assert_eq!(status, 404);
 
         fixture.sharing.stop();
+    }
+
+    #[test]
+    fn the_spa_and_its_login_are_reachable_without_a_credential_and_nothing_else_is() {
+        let fixture = shared_library("open sesame");
+
+        // The shell, an asset, and a page path — all without any credential,
+        // because the login page has to load before anyone can log in.
+        let (status, body) = request(fixture.port, "GET", "/", "", None);
+        assert_eq!(status, 200);
+        assert_eq!(body, "<html>app shell</html>");
+        let (status, body) = request(fixture.port, "GET", "/assets/index-CAxT2q.js", "", None);
+        assert_eq!(status, 200);
+        assert_eq!(body, "js bytes");
+        let (status, body) = request(fixture.port, "GET", "/some/page", "", None);
+        assert_eq!(status, 200, "a page path falls back to the shell");
+        assert_eq!(body, "<html>app shell</html>");
+
+        // A missing *file* is a 404, not the shell — an <img> handed HTML
+        // renders a broken tile with nothing to debug from.
+        let (status, _) = request(fixture.port, "GET", "/missing.png", "", None);
+        assert_eq!(status, 404);
+
+        // And the data stays behind the credential wall.
+        let (status, _) = request(fixture.port, "GET", HELLO_ROUTE, "", None);
+        assert_eq!(status, 401);
+
+        // The shell page carries the CSP; the API's JSON does not need it.
+        let raw = request_raw(fixture.port, "GET", "/", &[], None);
+        assert!(
+            raw.contains("Content-Security-Policy:"),
+            "the served page must be pinned to 'self': {raw}"
+        );
+        assert!(raw.contains("Cache-Control: no-store"), "the shell must not be pinned to a build");
+        let raw = request_raw(fixture.port, "GET", "/assets/index-CAxT2q.js", &[], None);
+        assert!(
+            raw.contains("Cache-Control: public, max-age=31536000, immutable"),
+            "hashed assets are immutable by construction: {raw}"
+        );
+
+        fixture.sharing.stop();
+    }
+
+    #[test]
+    fn logging_in_trades_the_passphrase_for_a_cookie_the_api_accepts() {
+        let fixture = shared_library("open sesame");
+
+        // The wrong passphrase earns nothing — and no cookie.
+        let raw = request_raw(
+            fixture.port,
+            "POST",
+            LOGIN_ROUTE,
+            &[],
+            Some(r#"{"passphrase":"guess"}"#),
+        );
+        let (status, _) = split_response(&raw);
+        assert_eq!(status, 401);
+        assert!(cookie_from(&raw).is_none(), "a refusal must not set a cookie: {raw}");
+
+        // The right one answers with the greeting and the session cookie.
+        let raw = request_raw(
+            fixture.port,
+            "POST",
+            LOGIN_ROUTE,
+            &[],
+            Some(r#"{"passphrase":"open sesame"}"#),
+        );
+        let (status, body) = split_response(&raw);
+        assert_eq!(status, 200);
+        assert!(body.contains("\"host\":\"TESTBOX\""), "login should greet: {body}");
+        let set_cookie = raw
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("set-cookie:"))
+            .expect("login sets the session cookie")
+            .to_string();
+        assert!(set_cookie.contains("HttpOnly"), "got: {set_cookie}");
+        assert!(set_cookie.contains("SameSite=Strict"), "got: {set_cookie}");
+        let cookie = cookie_from(&raw).expect("cookie value");
+
+        // The cookie now carries hello, rpc and the file route — the three
+        // things the phone's page, fetches and <img> tags actually send.
+        let (status, body) = split_response(&request_raw(
+            fixture.port,
+            "GET",
+            HELLO_ROUTE,
+            &[("Cookie", &cookie)],
+            None,
+        ));
+        assert_eq!(status, 200);
+        assert!(body.contains("\"host\":\"TESTBOX\""), "got: {body}");
+
+        let (status, body) = split_response(&request_raw(
+            fixture.port,
+            "POST",
+            RPC_ROUTE,
+            &[("Cookie", &cookie)],
+            Some(r#"{"name":"query_media","args":{"limit":3}}"#),
+        ));
+        assert_eq!(status, 200);
+        assert!(body.contains("\"ran\":\"query_media\""), "got: {body}");
+
+        let allowed = fixture.watched.join("a.jpg");
+        let route = format!(
+            "{FILE_ROUTE}?path={}",
+            utf8_percent_encode(&allowed.to_string_lossy(), NON_ALPHANUMERIC)
+        );
+        let (status, body) = split_response(&request_raw(
+            fixture.port,
+            "GET",
+            &route,
+            &[("Cookie", &cookie)],
+            None,
+        ));
+        assert_eq!(status, 200);
+        assert_eq!(body, "picture bytes");
+
+        // A made-up cookie is not a credential.
+        let (status, _) = split_response(&request_raw(
+            fixture.port,
+            "GET",
+            HELLO_ROUTE,
+            &[("Cookie", "luma_session=forged")],
+            None,
+        ));
+        assert_eq!(status, 401);
+
+        fixture.sharing.stop();
+    }
+
+    #[test]
+    fn a_cookie_dies_with_the_server_that_minted_it() {
+        // The sequence is a passphrase change: stop, start again, same port.
+        // If the token were derived from anything stored, the old cookie would
+        // come back to life here — and so would every browser session that was
+        // ever handed one.
+        let first = shared_library("open sesame");
+        let port = first.port;
+        let raw = request_raw(port, "POST", LOGIN_ROUTE, &[], Some(r#"{"passphrase":"open sesame"}"#));
+        let cookie = cookie_from(&raw).expect("cookie");
+        first.sharing.stop();
+
+        let second = shared_library_on(port, "open sesame");
+        let (status, _) = split_response(&request_raw(
+            port,
+            "GET",
+            HELLO_ROUTE,
+            &[("Cookie", &cookie)],
+            None,
+        ));
+        assert_eq!(status, 401, "an old session must not survive a restart");
+        second.sharing.stop();
     }
 
     #[test]

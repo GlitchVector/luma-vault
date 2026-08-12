@@ -55,7 +55,8 @@ use crate::pipeline::Pipeline;
 use crate::protocol::ProtocolRoots;
 use crate::remote::RemoteState;
 use crate::types::{
-    CharacterCount, DeviantArtAccount, DeviantArtDraft, DeviantArtSummary, Folder, LibraryStats,
+    CharacterCount, DeviantArtAccount, DeviantArtDraft, DeviantArtGallery, DeviantArtSummary,
+    Folder, LibraryStats,
     MediaFrame, MediaItem, MediaPage, MediaQuery, RemoteStatus, ScanProgress, ShareStatus,
     SourceOrigin, TimelineBucket,
 };
@@ -321,6 +322,13 @@ async fn deviantart_disconnect(state: State<'_, AppState>) -> Result<(), String>
 }
 
 #[tauri::command(async)]
+async fn deviantart_galleries(
+    state: State<'_, AppState>,
+) -> Result<Vec<DeviantArtGallery>, String> {
+    api::deviantart_galleries(&state).await
+}
+
+#[tauri::command(async)]
 async fn deviantart_send(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -534,6 +542,14 @@ fn last_address(state: &AppState) -> Option<String> {
     state.db.setting(remote::LAST_ADDRESS_SETTING).ok().flatten()
 }
 
+/// The built SPA, embedded at compile time so the share server can hand it to
+/// a phone's browser. In a bundle there is no dist directory on disk to serve
+/// from — the frontend exists only inside the binary — and embedding a second
+/// copy costs a couple of megabytes. build.rs creates the directory when it is
+/// missing (a fresh clone, CI) so the crate still compiles; the server then
+/// answers with a build-it-first notice instead of a page.
+static WEB_DIST: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
+
 /// What this machine answers with while it is sharing.
 ///
 /// The RPC closure blocks on the dispatcher. That is correct here and nowhere
@@ -545,6 +561,7 @@ fn shared_library(app: &tauri::AppHandle, state: &AppState, passphrase: String) 
 
     remote::Shared {
         roots: Arc::clone(&state.roots),
+        assets: Arc::new(|name| WEB_DIST.get_file(name).map(|file| file.contents().to_vec())),
         rpc: Arc::new(move |name, args| {
             let handle = dispatch_handle.clone();
             tauri::async_runtime::block_on(async move {
@@ -766,6 +783,7 @@ pub fn run() {
             deviantart_set_redirect,
             deviantart_connect,
             deviantart_disconnect,
+            deviantart_galleries,
             deviantart_send,
             deviantart_mark,
             set_rating_override,
@@ -778,4 +796,38 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("cannot start luma-vault");
+}
+
+#[cfg(test)]
+mod web_dist_tests {
+    use super::WEB_DIST;
+
+    /// Meaningful only when the web app has been built — CI compiles against
+    /// the empty directory build.rs created, and skips. Locally this pins the
+    /// one thing the remote tests' injected assets cannot see: that the
+    /// embedded bundle answers URL-style (forward-slash) lookups, which is
+    /// what `serve_asset` sends it on every platform. include_dir stores the
+    /// path separator the build OS uses, so this is exactly the kind of thing
+    /// that works on one machine and 404s every asset on another.
+    #[test]
+    fn the_embedded_bundle_answers_url_style_paths() {
+        if WEB_DIST.entries().is_empty() {
+            return;
+        }
+        assert!(
+            WEB_DIST.get_file("index.html").is_some(),
+            "the shell must be addressable by its bare name"
+        );
+        let asset = WEB_DIST
+            .get_dir("assets")
+            .expect("a built bundle has an assets directory")
+            .files()
+            .find_map(|file| file.path().to_str().map(str::to_string))
+            .expect("a built bundle has hashed assets");
+        let url_style = asset.replace('\\', "/");
+        assert!(
+            WEB_DIST.get_file(&url_style).is_some(),
+            "assets must answer forward-slash lookups; embedded as {asset:?}"
+        );
+    }
 }

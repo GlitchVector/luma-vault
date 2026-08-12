@@ -22,6 +22,14 @@ interface FilterBarProps {
   /** Whether the timeline strip is open under this bar. */
   timeline: boolean
   onToggleTimeline: () => void
+  /**
+   * Open the library sidebar, on screens too narrow to keep it in view.
+   *
+   * The button lives here rather than floating over the grid because this bar
+   * is the one strip of chrome a phone always shows — and a control that
+   * covers pictures is a control someone has to move to see past.
+   */
+  onOpenLibrary: () => void
   onChange: (patch: Partial<MediaQuery>) => void
 }
 
@@ -106,6 +114,7 @@ export function FilterBar({
   onToggleSelecting,
   timeline,
   onToggleTimeline,
+  onOpenLibrary,
   onChange,
 }: FilterBarProps) {
   const [more, setMore] = useState(false)
@@ -119,11 +128,23 @@ export function FilterBar({
     (query.minLongestEdge !== null ? 1 : 0)
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-white/5 bg-zinc-950/40 px-4 py-2">
+    <div className="border-b border-white/5 bg-zinc-950/40 px-4 py-2">
+      {/* The pills are one row that wraps on a desktop and *scrolls* on a
+          phone: wrapped, thirty pills stack into a column that pushes the grid
+          off the screen entirely — which is the first thing the phone showed.
+          The More panel sits outside the scrolling row, because a w-full child
+          inside a nowrap row is just one more thing to scroll past. */}
+      <div className="flex flex-wrap items-center gap-1.5 max-md:flex-nowrap max-md:overflow-x-auto max-md:pb-1">
       {/* No search box here. It lives above the grid, where it is large enough
           to read a prompt fragment back and close enough to the results to be
           obviously about them. Two fields bound to one value is two places to
           look for the text you typed. */}
+
+      {/* Only where the sidebar is off screen. On a desktop it is always
+          beside the grid and a second way in would be noise. */}
+      <Pill active={false} onClick={onOpenLibrary} ariaLabel="Open the library panel" className="md:hidden">
+        ☰
+      </Pill>
 
       <Pill active={query.kind === null} onClick={() => onChange({ kind: null })}>
         All
@@ -135,7 +156,7 @@ export function FilterBar({
         Videos
       </Pill>
 
-      <span className="mx-1 h-4 w-px bg-white/10" />
+      <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
 
       <Pill
         active={query.sexyOnly}
@@ -160,7 +181,7 @@ export function FilterBar({
         </Pill>
       ))}
 
-      <span className="mx-1 h-4 w-px bg-white/10" />
+      <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
 
       {TAGS.map((tag) => {
         const only = query.tag === tag.value
@@ -314,13 +335,13 @@ export function FilterBar({
         4K
       </Pill>
 
-      <span className="mx-1 h-4 w-px bg-white/10" />
+      <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
 
       <select
         aria-label="Sort order"
         value={query.sort}
         onChange={(event) => onChange({ sort: event.target.value as SortOrder })}
-        className="h-7 rounded-full bg-white/5 px-2.5 text-xs text-zinc-300 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-400"
+        className="h-7 shrink-0 rounded-full bg-white/5 px-2.5 text-xs text-zinc-300 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-400"
       >
         {SORTS.map((sort) => (
           <option key={sort.value} value={sort.value} className="bg-zinc-900">
@@ -373,12 +394,13 @@ export function FilterBar({
         More{activeExtras > 0 ? ` · ${activeExtras}` : ''}
       </Pill>
 
-      <span className="ml-auto text-[11px] tabular-nums text-zinc-500">
+      <span className="ml-auto shrink-0 pl-2 text-[11px] tabular-nums text-zinc-500">
         {shown.toLocaleString()} / {total.toLocaleString()}
       </span>
+      </div>
 
       {more ? (
-        <div className="flex w-full flex-wrap items-center gap-1.5 border-t border-white/5 pt-2">
+        <div className="mt-1.5 flex w-full flex-wrap items-center gap-1.5 border-t border-white/5 pt-2">
           {/* Two rungs of the same filter rather than two filters. 1000px is
               "big enough to be worth looking at", which is a different question
               from "is this 4K", and both send the same field — so the grid's 4K
@@ -394,7 +416,7 @@ export function FilterBar({
             ≥{BIG_EDGE}px
           </Pill>
 
-          <span className="mx-1 h-4 w-px bg-white/10" />
+          <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
 
           <span className="text-[11px] text-zinc-500">Kind</span>
           {/* Animation is not a `kind`: a GIF and a PNG are both images, and
@@ -421,7 +443,7 @@ export function FilterBar({
             Stills only
           </Pill>
 
-          <span className="mx-1 h-4 w-px bg-white/10" />
+          <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
 
           {/* The other end of the ★4+ pill on the bar above. Down here because
               it answers a rarer question — what did I look at and not think
@@ -450,7 +472,7 @@ export function FilterBar({
             ★ &lt;4
           </Pill>
 
-          <span className="mx-1 h-4 w-px bg-white/10" />
+          <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
 
           <span className="text-[11px] text-zinc-500">Colour</span>
           {/* Read from the colour signature the duplicate finder already
@@ -472,7 +494,7 @@ export function FilterBar({
             Colour
           </Pill>
 
-          <span className="mx-1 h-4 w-px bg-white/10" />
+          <span className="mx-1 h-4 w-px shrink-0 bg-white/10" />
 
           {/* Every label the detector found, not the one the verdict names.
               `topLabel` is picked by rating weight, so the labels carrying

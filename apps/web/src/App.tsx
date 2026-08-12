@@ -24,6 +24,7 @@ import { toast } from '#/lib/toasts.ts'
 import { UpscaleResults } from '#/components/UpscaleResults.tsx'
 import { askConfirm, showMessage } from '#/lib/dialogs.ts'
 import {
+  backend,
   deleteMedia,
   deviantArtMark,
   forgeStatus,
@@ -31,12 +32,15 @@ import {
   onUpscaleProgress,
   setStarsMany,
   upscaleMedia,
+  type Backend,
   type ForgeStatus,
   type UpscaleProgress,
   type UpscaleSummary,
 } from '#/lib/native.ts'
+import { HostLogin } from '#/components/HostLogin.tsx'
 import { useLibrary } from '#/lib/useLibrary.ts'
 import { useRemote } from '#/lib/useRemote.ts'
+import { MD_BREAKPOINT, useViewportWidth } from '#/lib/useViewport.ts'
 
 const TILE_SIZE_KEY = 'luma.tileSize'
 
@@ -81,11 +85,72 @@ function storedTileSize(): number {
 export function App() {
   const library = useLibrary()
   const remote = useRemote()
+  // Which world the page woke up in. Synchronous for the desktop shell, so the
+  // common case never sees a blank frame; a browser has to ask the server that
+  // served it, and renders nothing for the round trip — a flash of the wrong
+  // screen (the notice, then the login) would be worse than a beat of black.
+  const [world, setWorld] = useState<Backend | null>(() => (isTauri() ? { kind: 'tauri' } : null))
+  useEffect(() => {
+    if (world) return
+    void backend().then(setWorld)
+  }, [world])
   const [showRemote, setShowRemote] = useState(false)
+  // The sidebar, on screens where it is a drawer rather than a column. Closed
+  // by default: a phone opens onto the grid, which is the app.
+  const [showLibrary, setShowLibrary] = useState(false)
   const [openId, setOpenId] = useState<number | null>(null)
+
+  // The lightbox as a history entry, so the phone's back gesture closes it
+  // instead of leaving the app — swiping in from the edge is the reflex for
+  // "get out of this picture", and without an entry of its own it navigates
+  // the whole page away. One entry per *opening*, not per step: walking a
+  // folder is one place, and fifty entries deep would be fifty backs to leave.
+  const lightboxInHistory = useRef(false)
+  useEffect(() => {
+    if (openId !== null && !lightboxInHistory.current) {
+      lightboxInHistory.current = true
+      globalThis.history?.pushState({ lightbox: true }, '', '#lightbox')
+    }
+    if (openId === null && lightboxInHistory.current) {
+      lightboxInHistory.current = false
+      // Closed from inside the app — a button, Escape, a delete. The entry
+      // has to go with it, or the next back gesture eats a press undoing a
+      // navigation that already looks undone.
+      if (globalThis.location?.hash === '#lightbox') globalThis.history?.back()
+    }
+  }, [openId])
+  useEffect(() => {
+    // The gesture itself: the browser has already popped the entry, so only
+    // the state has to follow it.
+    const onPop = () => {
+      lightboxInHistory.current = false
+      setOpenId(null)
+    }
+    window.addEventListener('popstate', onPop)
+    // A reload mid-lightbox leaves the hash with nothing behind it; strip it
+    // so the URL does not claim a lightbox that is not open.
+    if (globalThis.location?.hash === '#lightbox') {
+      globalThis.history?.replaceState(
+        null,
+        '',
+        globalThis.location.pathname + globalThis.location.search,
+      )
+    }
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
   // Read once, on mount — not on every render, and never written back on a
   // render that did not change it.
   const [tileSize, setTileSize] = useState(storedTileSize)
+  const viewportWidth = useViewportWidth()
+  // What the grid actually draws with. On a phone the remembered desktop size
+  // would mean one column and a strip of wasted margin, so it is clamped to at
+  // least two across — while the stored value stays what it was, so the next
+  // desktop session is not surprised by a phone having visited. 40 is the
+  // grid's own spacing: p-4 either side plus one gap-2.
+  const gridTileSize =
+    viewportWidth < MD_BREAKPOINT
+      ? Math.min(tileSize, Math.floor((viewportWidth - 40) / 2))
+      : tileSize
   // Selecting is a mode rather than a modifier, because the actions it leads to
   // are destructive or expensive and "I clicked a picture" must keep meaning
   // "open it" the rest of the time.
@@ -705,7 +770,9 @@ export function App() {
       .filter((path): path is string => Boolean(path))
   }, [items, openIndex])
 
-  if (!isTauri()) {
+  if (!world) return <div className="h-dvh bg-zinc-950" />
+  if (world.kind === 'login') return <HostLogin />
+  if (world.kind === 'none') {
     return (
       <div className="grid h-dvh place-items-center bg-zinc-950 text-zinc-400">
         <EmptyState
@@ -716,67 +783,101 @@ export function App() {
     )
   }
 
+  // One sidebar, two homes: a column beside the grid on a desktop, a drawer
+  // over it on a phone. Built once so the two cannot drift; only the wrapper
+  // differs. Picking a folder or a character closes the drawer — on a phone
+  // that click means "show me those", and the answer is behind the panel.
+  const sidebar = (
+    <FolderSidebar
+      folders={folders}
+      stats={library.stats}
+      characters={library.characters}
+      // The name is a ready-made search term: detection found it verbatim
+      // in the prompt, and search runs over prompts.
+      onCharacter={(name) => {
+        setQuery({ search: name })
+        setShowLibrary(false)
+      }}
+      tileSize={tileSize}
+      onTileSize={(size) => {
+        setTileSize(size)
+        // Written on change rather than in an effect: an effect would also
+        // fire on mount and write back the value it just read.
+        globalThis.localStorage?.setItem(TILE_SIZE_KEY, String(size))
+      }}
+      selectedFolderId={query.folderId}
+      onSelect={(folderId) => {
+        setQuery({ folderId })
+        setShowLibrary(false)
+      }}
+      onAdd={() => void actions.addFolder()}
+      onRemove={(id) => void actions.removeFolder(id)}
+      onRescan={(id) => void actions.rescanFolder(id)}
+      onRetryFailed={() => void actions.retryFailed(query.folderId)}
+      exclusions={library.exclusions}
+      onInclude={(path) => {
+        // Undoing deletes the `.lumaignore` again, so this fails for the
+        // same reasons excluding does — and for one more: a marker someone
+        // wrote themselves is left where it is rather than overwritten.
+        void actions.includeFolder(path).catch((error: unknown) => {
+          void showMessage(String(error), { title: 'Could not scan that folder again' })
+        })
+      }}
+      onImportRatings={() => {
+        void actions.importRatings().then((summary) => {
+          if (!summary) return
+          // A modal, not a toast: this runs once and the numbers matter
+          // enough to be worth reading. `applied` and `staged` differ
+          // whenever the folders are not scanned yet, which is the
+          // expected order rather than a failure.
+          void showMessage(
+            [
+              `Imported ${summary.staged.toLocaleString()} of ${summary.found.toLocaleString()} ratings.`,
+              `${summary.applied.toLocaleString()} matched files already in the library; ` +
+                'the rest attach as their folders are scanned.',
+              summary.unrecognised > 0
+                ? `${summary.unrecognised.toLocaleString()} had no recognisable output path and were skipped.`
+                : '',
+            ]
+              .filter(Boolean)
+              .join('\n\n'),
+            { title: 'Ratings imported' },
+          )
+        })
+      }}
+    />
+  )
+
   return (
     <div className="flex h-dvh flex-col bg-zinc-950 text-zinc-200">
       <div className="flex min-h-0 flex-1">
-        <FolderSidebar
-          folders={folders}
-          stats={library.stats}
-          characters={library.characters}
-          // The name is a ready-made search term: detection found it verbatim
-          // in the prompt, and search runs over prompts.
-          onCharacter={(name) => setQuery({ search: name })}
-          tileSize={tileSize}
-          onTileSize={(size) => {
-            setTileSize(size)
-            // Written on change rather than in an effect: an effect would also
-            // fire on mount and write back the value it just read.
-            globalThis.localStorage?.setItem(TILE_SIZE_KEY, String(size))
-          }}
-          selectedFolderId={query.folderId}
-          onSelect={(folderId) => setQuery({ folderId })}
-          onAdd={() => void actions.addFolder()}
-          onRemove={(id) => void actions.removeFolder(id)}
-          onRescan={(id) => void actions.rescanFolder(id)}
-          onRetryFailed={() => void actions.retryFailed(query.folderId)}
-          exclusions={library.exclusions}
-          onInclude={(path) => {
-            // Undoing deletes the `.lumaignore` again, so this fails for the
-            // same reasons excluding does — and for one more: a marker someone
-            // wrote themselves is left where it is rather than overwritten.
-            void actions.includeFolder(path).catch((error: unknown) => {
-              void showMessage(String(error), { title: 'Could not scan that folder again' })
-            })
-          }}
-          onImportRatings={() => {
-            void actions.importRatings().then((summary) => {
-              if (!summary) return
-              // A modal, not a toast: this runs once and the numbers matter
-              // enough to be worth reading. `applied` and `staged` differ
-              // whenever the folders are not scanned yet, which is the
-              // expected order rather than a failure.
-              void showMessage(
-                [
-                  `Imported ${summary.staged.toLocaleString()} of ${summary.found.toLocaleString()} ratings.`,
-                  `${summary.applied.toLocaleString()} matched files already in the library; ` +
-                    'the rest attach as their folders are scanned.',
-                  summary.unrecognised > 0
-                    ? `${summary.unrecognised.toLocaleString()} had no recognisable output path and were skipped.`
-                    : '',
-                ]
-                  .filter(Boolean)
-                  .join('\n\n'),
-                { title: 'Ratings imported' },
-              )
-            })
-          }}
-        />
+        {/* Desktop: the column. `contents` so the aside participates in this
+            flex row exactly as it did when it was inline here. */}
+        <div className="hidden md:contents">{sidebar}</div>
+
+        {/* Phone: the drawer. Mounted only while open, so a closed drawer
+            costs nothing and its scroll position resets — which is right, a
+            drawer is opened to go somewhere, not resumed. */}
+        {showLibrary ? (
+          <div className="fixed inset-0 z-40 md:hidden">
+            <button
+              type="button"
+              aria-label="Close the library panel"
+              onClick={() => setShowLibrary(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <div className="absolute inset-y-0 left-0 flex overflow-y-auto bg-zinc-950 shadow-2xl">
+              {sidebar}
+            </div>
+          </div>
+        ) : null}
 
         <main className="flex min-w-0 flex-1 flex-col">
           <FilterBar
             query={query}
             total={library.total}
             shown={items.length}
+            onOpenLibrary={() => setShowLibrary(true)}
             showBoxes={showBoxes}
             onToggleBoxes={() => setShowBoxes((previous) => !previous)}
             timeline={showTimeline}
@@ -852,13 +953,14 @@ export function App() {
               it: a count that covers pictures is a count you have to move to
               read. */}
           {selecting ? (
-            <div className="flex items-center gap-2 border-b border-indigo-400/20 bg-indigo-500/10 px-4 py-1.5 text-xs">
+            <div className="flex items-center gap-2 border-b border-indigo-400/20 bg-indigo-500/10 px-4 py-1.5 text-xs max-md:flex-wrap">
               <span className="tabular-nums text-indigo-200">
                 {selected.size === 0
                   ? 'Nothing selected'
                   : `${selected.size.toLocaleString()} selected`}
               </span>
-              <span className="text-indigo-300/50">
+              {/* Keyboard advice, on the one layout that has a keyboard. */}
+              <span className="text-indigo-300/50 max-md:hidden">
                 Click to pick one, shift-click for everything between
               </span>
               <button
@@ -972,7 +1074,7 @@ export function App() {
                       onReachEnd={library.loadMore}
                       showBoxes={showBoxes}
                       groupDuplicates={query.duplicatesOnly}
-                      tileSize={tileSize}
+                      tileSize={gridTileSize}
                       selected={selected}
                       folderTerm={query.searchPaths ? query.search : ''}
                     />
