@@ -151,6 +151,12 @@ export function App() {
     viewportWidth < MD_BREAKPOINT
       ? Math.min(tileSize, Math.floor((viewportWidth - 40) / 2))
       : tileSize
+  // The ceiling for animated tiles, which ignore the slider and take their own
+  // pixel size. Only a stop against one huge GIF widening the wall past the
+  // window, so the viewport is close enough — with the library drawer open the
+  // content column is narrower than this, and the handful of files large enough
+  // to notice would poke a little way under it rather than off the screen.
+  const maxTileWidth = Math.max(MIN_TILE_SIZE, viewportWidth - 40)
   // Selecting is a mode rather than a modifier, because the actions it leads to
   // are destructive or expensive and "I clicked a picture" must keep meaning
   // "open it" the rest of the time.
@@ -1075,6 +1081,7 @@ export function App() {
                       showBoxes={showBoxes}
                       groupDuplicates={query.duplicatesOnly}
                       tileSize={gridTileSize}
+                      maxTileWidth={maxTileWidth}
                       selected={selected}
                       folderTerm={query.searchPaths ? query.search : ''}
                     />

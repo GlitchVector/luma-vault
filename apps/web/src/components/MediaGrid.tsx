@@ -26,8 +26,16 @@ interface MediaGridProps {
   showBoxes: boolean
   /** Draw each set of duplicates inside its own frame. */
   groupDuplicates: boolean
-  /** Longest edge of a tile, in CSS pixels. */
+  /** Longest edge of a tile, in CSS pixels. Animated tiles ignore it. */
   tileSize: number
+  /**
+   * The widest any one tile may be drawn.
+   *
+   * Only animated tiles reach it — they take their own pixel size rather than
+   * `tileSize` — and it exists so that a single oversized GIF cannot make the
+   * wall wider than the window.
+   */
+  maxTileWidth?: number
   /** Ids drawn as picked. Empty when the grid is not selecting. */
   selected: ReadonlySet<number>
   /**
@@ -91,6 +99,7 @@ export function MediaGrid({
   showBoxes,
   groupDuplicates,
   tileSize,
+  maxTileWidth,
   selected,
   folderTerm,
 }: MediaGridProps) {
@@ -166,6 +175,7 @@ export function MediaGrid({
                     onOpen={handleOpen}
                     showBoxes={showBoxes}
                     size={tileSize}
+                    maxTileWidth={maxTileWidth}
                     selected={selected.has(item.id)}
                     folderTerm={folderTerm}
                   />
@@ -183,6 +193,7 @@ export function MediaGrid({
               onOpen={handleOpen}
               showBoxes={showBoxes}
               size={tileSize}
+              maxTileWidth={maxTileWidth}
               selected={selected.has(item.id)}
               folderTerm={folderTerm}
             />

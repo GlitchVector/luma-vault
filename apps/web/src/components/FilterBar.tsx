@@ -424,14 +424,14 @@ export function FilterBar({
               video pills above so "stills only" can be both at once. */}
           <Pill
             active={query.animated === true}
-            title="Only animated images — GIF, WebP and AVIF"
+            title="Only GIFs — the one extension that is always an animation"
             onClick={() => onChange({ animated: query.animated === true ? null : true })}
           >
             GIFs
           </Pill>
           <Pill
             active={query.animated === false && query.kind === 'image'}
-            title="Only still pictures: no videos, and no GIFs or other animated images"
+            title="Only still pictures: no videos, no GIFs, and no WebP or AVIF — those can animate and the name does not say"
             onClick={() =>
               onChange(
                 query.animated === false && query.kind === 'image'

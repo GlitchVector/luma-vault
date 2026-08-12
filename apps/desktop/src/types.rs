@@ -374,7 +374,7 @@ pub struct MediaQuery {
     /// on 85,000 rows — can never appear there at all.
     #[serde(default)]
     pub label: Option<String>,
-    /// Only animated images (true), or only still ones (false).
+    /// Only GIFs (true), or only still ones (false).
     ///
     /// By extension, which is what [`crate::types::MediaKind`] cannot express:
     /// a GIF and a PNG are both `image`. The two directions read different

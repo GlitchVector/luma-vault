@@ -59,6 +59,7 @@ export {
   toParameterBlock,
   kindOf,
   isAnimatedImage,
+  isGif,
   FOUR_K_EDGE,
   isFourK,
   fitWithin,

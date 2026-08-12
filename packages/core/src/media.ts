@@ -253,6 +253,22 @@ export function isAnimatedImage(path: string): boolean {
 }
 
 /**
+ * Certainly an animation, rather than merely able to be one.
+ *
+ * The distinction matters wherever being wrong costs something. Rendering the
+ * original is cheap to be wrong about — a static WebP drawn from its source
+ * looks identical — so {@link isAnimatedImage} is the right test there. Drawing
+ * a tile at its own pixel size instead of the grid's is *not*: it would hand
+ * every static WebP in the library a cell the size slider cannot reach.
+ *
+ * Mirrors `CERTAINLY_ANIMATED` in `apps/desktop/src/db.rs`, which the GIFs
+ * filter reads.
+ */
+export function isGif(path: string): boolean {
+  return extensionOf(path) === 'gif'
+}
+
+/**
  * Fit `(width, height)` inside a square of `bound`, preserving aspect ratio and
  * never scaling up. Returns integers, because a fractional CSS pixel on a tile
  * is what produces the 1px seams between grid rows.

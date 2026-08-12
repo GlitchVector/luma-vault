@@ -504,11 +504,15 @@ export const mediaQuerySchema = z.object({
    */
   label: z.string().nullable().default(null),
   /**
-   * Only animated images (true), or only still ones (false).
+   * Only GIFs (true), or only still ones (false).
    *
    * By extension, because `kind` cannot express it — a GIF and a PNG are both
    * `image`. "Everything except videos and GIFs" is this set to false *and*
    * `kind` set to image; they are two questions and stay separable.
+   *
+   * Asymmetric on purpose: `true` matches `.gif` only, because that is the one
+   * extension that always animates, while `false` also excludes WebP and AVIF,
+   * which might. A name can prove animation and cannot disprove it.
    */
   animated: z.boolean().nullable().default(null),
   /** Only black-and-white rows (true), or only colour ones (false). */

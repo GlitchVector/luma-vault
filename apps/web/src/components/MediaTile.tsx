@@ -6,6 +6,7 @@ import {
   formatDuration,
   isAnimatedImage,
   isFourK,
+  isGif,
   type MediaItem,
 } from '@luma/core'
 import { cn } from '@luma/ui'
@@ -30,6 +31,18 @@ export const MIN_TILE_SIZE = 140
 /** How large. Past this a "grid" is a single column of pictures. */
 export const MAX_TILE_SIZE = 480
 
+/**
+ * How wide an animated tile may be drawn when the grid does not say.
+ *
+ * Animated tiles ignore the size slider and take their own pixel size, so they
+ * need a ceiling that the slider no longer provides. Only a backstop — the grid
+ * passes its real width — and 1200 comes from the library this was written
+ * against: 99% of its 2,396 GIFs are shorter than that on the longest edge, so
+ * the cap binds on the two dozen that would otherwise break the wall and on
+ * nothing else.
+ */
+export const MAX_ANIMATED_SIZE = 1200
+
 /** The date on the DeviantArt badge's tooltip. Locale order, no time of day. */
 function formatPostedAt(postedAt: number): string {
   return new Date(postedAt).toLocaleDateString()
@@ -46,8 +59,20 @@ interface MediaTileProps {
    */
   onOpen: (id: number, range: boolean) => void
   showBoxes: boolean
-  /** Longest edge, in CSS pixels. See {@link DEFAULT_TILE_SIZE}. */
+  /**
+   * Longest edge, in CSS pixels. See {@link DEFAULT_TILE_SIZE}.
+   *
+   * Animated tiles ignore it — see {@link maxTileWidth}.
+   */
   size: number
+  /**
+   * The widest a tile may be drawn, for the animated ones that ignore `size`.
+   *
+   * The grid passes its own usable width so that a single oversized GIF cannot
+   * push the wall past the window. Defaults to {@link MAX_ANIMATED_SIZE} for
+   * callers that have no width to give.
+   */
+  maxTileWidth?: number
   /** Drawn as picked. Only meaningful while the grid is selecting. */
   selected?: boolean
   /**
@@ -87,6 +112,7 @@ export const MediaTile = memo(function MediaTile({
   onOpen,
   showBoxes,
   size,
+  maxTileWidth = MAX_ANIMATED_SIZE,
   selected = false,
   folderTerm = '',
 }: MediaTileProps) {
@@ -110,11 +136,40 @@ export const MediaTile = memo(function MediaTile({
   const animated = item.kind === 'image' && isAnimatedImage(item.path)
   const source = animated ? item.path : item.thumbPath
 
-  // Fall back to the source dimensions when a thumbnail has not been generated
-  // yet, so a mid-scan tile still gets a correctly-shaped placeholder.
-  const intrinsicWidth = item.thumbWidth ?? item.width
-  const intrinsicHeight = item.thumbHeight ?? item.height
-  const { width, height } = fitWithin(intrinsicWidth || 1, intrinsicHeight || 1, size)
+  // Two different questions, and only one of them is this one. Rendering the
+  // original is cheap to get wrong — a static WebP drawn from its source looks
+  // the same — so it takes the generous test above. Ignoring the size slider is
+  // not: on the generous test every static WebP in the library would take a
+  // cell the slider cannot reach.
+  const naturalSize = item.kind === 'image' && isGif(item.path)
+
+  // Measured from whichever file will actually be drawn: the source for an
+  // animated tile, the thumbnail otherwise — falling back to the source while
+  // one is still being made, so a mid-scan tile still gets a correctly-shaped
+  // placeholder. The two agree on aspect ratio, but not on pixels, and pixels
+  // are what an animated tile is sized in.
+  const intrinsicWidth = (naturalSize ? item.width : (item.thumbWidth ?? item.width)) || 1
+  const intrinsicHeight = (naturalSize ? item.height : (item.thumbHeight ?? item.height)) || 1
+
+  // A GIF ignores the size slider and is drawn at its own pixel size.
+  // Shrinking an animation into a uniform cell is what a thumbnail already
+  // does; the whole reason this tile renders the original instead is to see the
+  // file as it is, and in the library this was written against 44% of GIFs are
+  // larger than the default cell.
+  //
+  // Costs no memory that was not already being spent: the original is fetched
+  // and decoded either way, and CSS size does not change decode size. This is a
+  // layout change, not a load one.
+  //
+  // The cap is a guard rail rather than a layout. Tiles are `shrink-0`, so one
+  // 2508px-wide GIF would push the wall past the window and give the whole page
+  // a horizontal scrollbar — one file spoiling every other. Clamping the
+  // *longest* edge is what keeps a tall picture inside it too: 2508x3456 capped
+  // at 1200 comes out 871 wide.
+  const bound = naturalSize
+    ? Math.min(Math.max(intrinsicWidth, intrinsicHeight), maxTileWidth)
+    : size
+  const { width, height } = fitWithin(intrinsicWidth, intrinsicHeight, bound)
 
   const verdict = item.verdict
   const rating = effectiveRating(item)

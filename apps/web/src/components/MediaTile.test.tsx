@@ -112,6 +112,93 @@ describe('MediaTile', () => {
       )
     })
 
+    it('draws an animated tile at its own pixel size, ignoring the slider', () => {
+      render(
+        <MediaTile
+          item={{ ...item, path: '/media/loop.gif', name: 'loop.gif', width: 640, height: 480 }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+
+      // 640x480 at 260 would be a 260px cell. The slider does not apply here:
+      // shrinking the animation into a uniform cell is what the thumbnail
+      // already does, and this tile renders the original precisely to avoid it.
+      const tile = screen.getByTitle('loop.gif')
+      expect(tile.style.width).toBe('640px')
+      expect(tile.style.height).toBe('480px')
+    })
+
+    it('measures an animated tile from the source, not its thumbnail', () => {
+      // The regression this guards: sizing from `thumbWidth` and asking for the
+      // source's dimensions gives 512px, because `fitWithin` never scales up.
+      render(
+        <MediaTile
+          item={{ ...item, path: '/media/loop.gif', name: 'loop.gif', width: 900, height: 900 }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+
+      expect(screen.getByTitle('loop.gif').style.width).toBe('900px')
+    })
+
+    it('still shrinks an animated tile too wide for the wall', () => {
+      // Tiles are `shrink-0`, so an uncapped one would push the wall past the
+      // window and give the whole page a horizontal scrollbar. The longest edge
+      // is what gets clamped, which is what keeps a tall picture inside it too.
+      render(
+        <MediaTile
+          item={{ ...item, path: '/media/loop.gif', name: 'loop.gif', width: 2508, height: 3456 }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+          maxTileWidth={1200}
+        />,
+      )
+
+      const tile = screen.getByTitle('loop.gif')
+      expect(tile.style.height).toBe('1200px')
+      expect(tile.style.width).toBe('871px')
+    })
+
+    it('keeps a webp on the slider, though it still renders from the original', () => {
+      // The two rules are deliberately different widths. A WebP might animate,
+      // so it renders from its source — cheap to be wrong about. It might also
+      // be one of the 972 static ones in this library, so it does *not* get to
+      // ignore the slider, which is not cheap to be wrong about.
+      render(
+        <MediaTile
+          item={{ ...item, path: '/media/still.webp', name: 'still.webp', width: 900, height: 900 }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+
+      expect(document.querySelector('img')?.getAttribute('src')).toBe(
+        `luma://localhost/?path=${encodeURIComponent('/media/still.webp')}`,
+      )
+      expect(screen.getByTitle('still.webp').style.width).toBe('260px')
+    })
+
+    it('leaves a still image on the slider, animation being the only exception', () => {
+      render(
+        <MediaTile
+          item={{ ...item, width: 640, height: 480 }}
+          onOpen={() => {}}
+          showBoxes={false}
+          size={DEFAULT_TILE_SIZE}
+        />,
+      )
+
+      const tile = screen.getByTitle('holiday.jpg')
+      expect(tile.style.width).toBe('260px')
+      expect(tile.style.height).toBe('195px')
+    })
+
     it('falls back to source dimensions when no thumbnail exists yet', () => {
       render(
         <MediaTile

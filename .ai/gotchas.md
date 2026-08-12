@@ -59,6 +59,20 @@ re-encodes pointlessly.
 animation, which for a GIF library is the entire point of the file. They still
 *get* a thumbnail — that is what the classifier reads.
 
+**A GIF also ignores the size slider and is drawn at its own pixel size**, capped
+at the grid's usable width so one 2508px file cannot widen the wall past the
+window. Costs no memory that was not already spent: the original is fetched and
+decoded either way, and CSS size does not change decode size.
+
+**Two predicates, deliberately different widths.** `isAnimatedImage` (gif, webp,
+avif) decides *which file* to render, where guessing wrong is free — a static
+WebP drawn from its source looks identical. `isGif` decides what ignores the
+slider and what the GIFs filter matches, where guessing wrong is not: on the
+wider test every static WebP in the library would take a cell the slider cannot
+reach, and the filter would be full of pictures that do not move. Same reason
+the `animated` query filter is asymmetric — `true` is `.gif`, `false` excludes
+all three.
+
 **JPEG quality is 82, not 100.** viewer-net wrote quality 100 and produced some
 thumbnails larger than their sources.
 

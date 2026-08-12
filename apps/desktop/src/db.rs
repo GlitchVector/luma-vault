@@ -2343,10 +2343,19 @@ impl Db {
             binds.push(Box::new(LABEL_MIN_SCORE));
         }
         if let Some(animated) = query.animated {
-            // Built from one list so the two directions cannot drift apart, and
-            // matching `isAnimatedImage` in `@luma/core` — the UI badges what
-            // this filters.
-            let clauses: Vec<String> = ANIMATED_EXTENSIONS
+            // The two directions ask different questions, so they read
+            // different lists — which is not the drift an earlier version of
+            // this guarded against, but the asymmetry the extensions force.
+            //
+            // A name can prove a file *is* an animation and cannot prove it is
+            // not: `.gif` always animates, `.webp` only might. So the positive
+            // direction takes only what it can vouch for — a "GIFs" filter full
+            // of static WebPs is not showing what it says — and the negative
+            // direction excludes anything that might move, because a "stills
+            // only" list with an animation in it is wrong in the way that
+            // actually matters.
+            let list: &[&str] = if animated { &CERTAINLY_ANIMATED } else { &MAYBE_ANIMATED };
+            let clauses: Vec<String> = list
                 .iter()
                 .map(|extension| format!("lower(media.name) LIKE '%{extension}'"))
                 .collect();
@@ -2827,12 +2836,18 @@ const CHROMA_INDEX_VERSION: &str = "1-mean-channel-spread";
 /// unimportant — 1 and 5 select 5.3% and 7.6% of the same population.
 const MAX_GREYSCALE_CHROMA: f64 = 3.0;
 
-/// The image containers that can hold an animation.
+/// What the GIFs filter matches: the extension that is *certainly* an animation.
+///
+/// Mirrors `isGif` in `@luma/core`.
+const CERTAINLY_ANIMATED: [&str; 1] = [".gif"];
+
+/// The image containers that *can* hold an animation, which is not the same
+/// question.
 ///
 /// Mirrors `isAnimatedImage` in `@luma/core`. A *static* WebP is caught by this
 /// too: the name is all there is short of decoding every file, and a filter
 /// that opens 155,000 images to answer is not a filter.
-const ANIMATED_EXTENSIONS: [&str; 3] = [".gif", ".webp", ".avif"];
+const MAYBE_ANIMATED: [&str; 3] = [".gif", ".webp", ".avif"];
 
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
@@ -3710,8 +3725,16 @@ mod tests {
 
         assert_eq!(
             names(MediaQuery { animated: Some(true), ..query() }),
-            ["maybe.webp", "moving.GIF"],
-            "case-insensitive, and webp counts because the container can animate",
+            ["moving.GIF"],
+            "case-insensitive, and a webp is left out because it is only maybe an animation",
+        );
+        // The asymmetry, stated: the same webp that is not shown by "GIFs" is
+        // still kept out of "stills only". One direction can be proved from the
+        // name and the other cannot, so each takes the reading that cannot
+        // mislead.
+        assert_eq!(
+            names(MediaQuery { animated: Some(false), kind: Some(MediaKind::Image), ..query() }),
+            ["still.png"],
         );
         // The filter the request called "all but videos and gifs".
         assert_eq!(
