@@ -30,12 +30,17 @@ question also carries Other, which is where anything not on the list goes.
 
 ### C — Focus
 
-| Option | Rung | Framing tags |
-|---|---|---|
-| Ass focus, low angle | `cowboy shot` | `cowboy shot, from behind, ass focus, from below, looking back` |
-| Hip focus (front) | `close-up` | `close-up, hip focus` |
-| Breast close-up | `close-up` | `close-up, breast focus` |
-| Ass close-up | `close-up` | `close-up, ass focus, from behind` |
+| Option | Rung | Framing tags | Canvas |
+|---|---|---|---|
+| Ass focus, low angle | `cowboy shot` | `cowboy shot, from behind, ass focus, from below, looking back` | portrait |
+| Hip focus (front) | `close-up` | `close-up, hip focus` | portrait |
+| Breast close-up | `close-up` | `close-up, breast focus` | portrait |
+| Ass close-up | `close-up` | `close-up, ass focus, from behind` | **landscape, `--size 1216x832`** |
+
+**The ass close-up renders landscape.** The crop is wider than it is tall —
+hips fill the frame sideways — and on the portrait canvas the shot stacks
+empty space above and below the one thing it is about. Asked for by name after
+a real set and kept since.
 
 ### D — Angle and distance
 
@@ -90,8 +95,87 @@ is actually in. `character sheet` is **not a tag at all** — `reference sheet`
 (11,529) and `multiple views` (119,546) are what produce one, and the second is
 doing most of the work.
 
-The character sheet is the one shot that overrides the portrait canvas, and it
-is the case the rule was written for: the user asked for landscape in words.
+The character sheet overrides the portrait canvas, and it is the case the rule
+was written for: the user asked for landscape in words. The ass close-up in
+group C is the other landscape shot — see its note there.
+
+## The size ladders
+
+`/shot` does not ask for sizes any more — it **detects** them from the block
+and keeps the set on the input's figure. Each axis maps onto a ladder of
+rungs, and the rung index is what the variation brackets below step along.
+
+| Rung | Breasts | Ass | Hips | Thighs |
+|---|---|---|---|---|
+| 0 | *(unnamed)* | *(unnamed)* | *(unnamed)* | *(unnamed)* |
+| 1 | `small breasts` | `big ass` | `wide hips` | `thick thighs` |
+| 2 | `medium breasts` | `huge ass` | `(wide hips:1.4)` | `(thick thighs:1.4)` |
+| 3 | `large breasts` | `gigantic ass` | `(wide hips:1.7)` | `(thick thighs:1.7)` |
+| 4 | `huge breasts` | `(gigantic ass:1.5)` | `(wide hips:2)` | `(thick thighs:2)` |
+| 5 | `gigantic breasts` | — | — | — |
+| 6 | `(gigantic breasts:1.4)` | — | — | — |
+
+Vocabulary honesty, measured against `selected_tags.csv`: every breast rung is
+a learned tag (`small` 413k, `medium` 770k, `large` 1.3M, `huge` 173k,
+`gigantic` 7.4k). On the ass ladder only `huge ass` (14.5k) is learned —
+`big ass` and `gigantic ass` are compositional, and `gigantic ass` is the one
+this file already vouches for from real renders. `wide hips` (32k) and
+`thick thighs` (83k) are single words, so their rungs are weights.
+
+**Detecting the rung.** Read the block's body tags, weights included. A bare
+word sits on its rung; a weight between rungs rounds to the nearest; a weight
+on a word that has a *next word* — `(huge ass:1.5)`, `(huge ass:2)` — sits
+half a step up: one smaller is the bare word, one bigger is the next word,
+bare. `gigantic hips` and `hyper hips` read as hips rung 4. `curvy` and
+`narrow waist` are not on ladders — they travel in the shared text untouched.
+Say the four detected levels out loud in the announcement, so "the input's
+figure" is a statement rather than a shrug.
+
+**Stepping the figure.** A bracket step moves **every in-frame axis one rung
+on its own ladder, together** — the whole silhouette scales, which is what
+keeps a step reading as the same woman slightly bigger rather than one part
+outgrowing her. Per-shot frame filtering still applies first: a breast
+close-up steps breasts alone, an ass close-up steps ass, hips and thighs. On
+front-facing shots the ass weight has already been swapped onto the hips (the
+two-sides rule), so the step moves the hips rung it became. A step below rung
+0 drops the tag; a step past the top holds at the top — which is why the
+bracket picks its two-step direction by headroom.
+
+## Variation brackets
+
+Seven shots render as a **bracket of five** whenever they are ticked, because
+they are the frames size is judged in. Everything else stays a single render.
+
+- Side profile
+- Cowboy shot (front)
+- Cowboy shot (from behind)
+- Cowboy from below
+- Full body (from behind)
+- Ass close-up
+- Breast close-up
+
+The five, in render order, each captioned with what it is:
+
+| # | Suffix | What |
+|---|---|---|
+| 1 | `base` | the detected sizing — the set's shared figure |
+| 2 | `again` | the same prompt, fresh seed — a free re-roll |
+| 3 | `smaller` | every in-frame axis one rung down |
+| 4 | `bigger` | every in-frame axis one rung up |
+| 5 | `bigger2` / `smaller2` | two rungs — **up when every in-frame axis has the headroom, otherwise down**. Bigger is preferred; the ladder end is what forces the other direction |
+
+**The breast close-up gets a sixth: the wardrobe flip.** Read the block's
+chest state first. A clothed chest renders once more `topless` with the top
+garments dropped; a topless one renders once more wearing a **matching top** —
+derived from the outfit that is already there (its colours and style: a lace
+set begets a matching lace bra, a white hoodie a white crop top), because an
+invented mismatched garment breaks the set the same way a drifting wardrobe
+does. Caption it `flip`.
+
+Name bracket files `<n>-<shot>-<suffix>.png` so a set of fifty stays sortable,
+and **say the count and the time before starting**: a full board — ten singles
+plus seven brackets and the flip — is ~46 renders, around 25 minutes warm.
+Unannounced, that is not a quiet quarter of an hour, it is a hang.
 
 ## Rules that make the table work
 **Filter size tags. Never filter the wardrobe.** Cutting the outfit out of a

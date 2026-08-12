@@ -14,7 +14,8 @@ them lands, this is where you come for the rest of the set. It asks one
 question, and nothing it asks is about the subject.
 
 One shot or twelve, the question is the same; only what happens afterwards
-changes, and that is decided for you.
+changes, and that is decided for you. **`/shotall`** is this command with the
+selection skipped — the whole catalogue, brackets and all, no questions.
 
 ## 1. Read the block
 
@@ -22,12 +23,16 @@ changes, and that is decided for you.
 pnpm migrate-prompt $ARGUMENTS --show
 ```
 
-Two things to take from it, and nothing else needs deciding:
+Three things to take from it, and nothing else needs deciding:
 
 - **The framing it already has** — the ladder rung if it carries one, plus
   `from behind`, `looking back`, `ass focus` and the rest. That is the shot to
   mark as detected in the question below.
 - **The checkpoint it was made on**, from `Model:`.
+- **The figure, as four rungs.** Map the block's breast, ass, hip and thigh
+  tags — weights included — onto the size ladders in `.claude/shot-tags.md`,
+  and say the four detected levels in the announcement. The whole set keeps
+  this figure; the variation brackets are where size moves.
 
 Do not open the picture. This changes the camera and nothing else, so what the
 prompt fails to say about the subject is not its business — that is what `/sdxl`
@@ -47,32 +52,25 @@ and the user did not ask for that.
 
 A model named positionally — `/shot 00205 aniverse` — overrides both.
 
-## 2. Ask the two sizes, then where the camera goes
+## 2. Ask the two extra shots, then where the camera goes
 
 Two `AskUserQuestion` calls, because the shot table needs all four question
 slots of its own and the tool caps a call at four.
 
-### Call 1 — breasts and ass
+### Call 1 — the two shots that do not fit the table
 
-Both single-select, both defaulting to what the source already has. They come
-first because they change the body every shot shares, and because a set is only
-a set if the figure is the same in all of them.
-
-Four questions, because the call has four slots and the shot table needs all of
-its own — so the two shots that do not fit that table are asked here.
+The sizes are **not asked any more** — they are detected in step 1, and the
+set keeps the input's figure. Exploring other sizes is what the variation
+brackets do (see `.claude/shot-tags.md`), shot by shot where size is actually
+judged, rather than one global answer up front.
 
 | Question | Options |
 |---|---|
-| Breasts | as seen · `large breasts` · `huge breasts` · `gigantic breasts` |
-| Ass | as seen · `huge ass` · `gigantic ass` · `(gigantic ass:1.5)` |
 | Legs (hips down) | no · yes |
 | Character sheet | no · yes — **landscape**, front/back/side in one frame |
 
-Read the source's current tags out of the block and say what they are in the
-question, so "as seen" is a real choice rather than a shrug.
-
-**What is picked here is still filtered per shot in step 3.** A face close-up
-gets neither of them whatever was chosen — that is not the question being
+**Detected sizes are still filtered per shot in step 3.** A face close-up gets
+none of them whatever was detected — that is not the detection being
 overruled, it is the tag not being in frame. Say so when it happens.
 
 ### Call 2 — where the camera goes
@@ -115,6 +113,10 @@ The first line is that shot's framing tags, weighted the way the migration
 would: `(full body:1.3)` and `(wide shot:1.3)` go in weighted because a bare
 wide rung loses to body tags pulling the camera in; tight rungs go in bare.
 
+A shot the catalogue marks **landscape** — the ass close-up, the character
+sheet — takes `--size 1216x832` on its send. Everything else stays on the
+script's portrait default.
+
 **Cut the body tags to what is in frame.** The rule that matters most, measured
 the hard way: a 15-shot set where every single one came back as the same
 from-behind ass shot, `portrait, face focus` and `close-up, breast focus`
@@ -152,7 +154,12 @@ entitled to know they are not in that render.
 
 ## 4. One or two open as tabs; three or more render in the background
 
-Decided by the count, not by preference. `.claude/shot-tags.md` has the
+Decided by the count, not by preference — and **a bracketed shot counts as its
+five renders** (six for the breast close-up's wardrobe flip), so any bracket
+in the selection already puts the run in `--render` territory. The bracket
+shots, the five steps and the flip live in `.claude/shot-tags.md` under
+"Variation brackets"; render a bracket's five in order, base first, each
+captioned with its suffix. `.claude/shot-tags.md` has the
 measurements under "Getting the shots rendered"; the short version is that a
 Forge page's `load` handler runs on Gradio's queue, which drains one event at a
 time, so past two tabs they wedge behind each other and no amount of waiting
@@ -200,6 +207,8 @@ Number them, because they are indistinguishable once they arrive:
 Then, once rather than per shot:
 
 - **The model**, and whether it is the original's own or a fallback.
+- **The detected figure** — the four rungs the set was built on — and, for
+  each bracket, which direction its two-step went and why (headroom).
 - **What the framing rules removed or weighted**, from the notes. Identical
   across the set apart from the reframe line — say which line differed.
 - **A tag from a free-text shot that is not in the vocabulary.** Other accepts
