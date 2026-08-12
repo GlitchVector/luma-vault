@@ -29,6 +29,7 @@ import {
   forgeSelectCheckpoint,
   forgeUrl,
   generationParameters,
+  isHttpSession,
   mediaById,
   mediaByPath,
   mediaFrames,
@@ -42,6 +43,7 @@ import { RatingOverrideDialog } from '#/components/RatingOverrideDialog.tsx'
 import { askConfirm, askToEdit, showMessage } from '#/lib/dialogs.ts'
 import { preloadImages } from '#/lib/preload.ts'
 import { toast } from '#/lib/toasts.ts'
+import { MD_BREAKPOINT, useViewportWidth } from '#/lib/useViewport.ts'
 
 /**
  * How long a row has to stay on screen before its original is fetched.
@@ -75,6 +77,47 @@ const ZOOM_STEP = 1.15
  * impossible to perform — a mouse moves a pixel or two under a normal press.
  */
 const CLICK_SLOP = 4
+
+/**
+ * How far a touch has to travel sideways to count as a swipe between rows.
+ *
+ * Well above {@link CLICK_SLOP}, because the space between them is where an
+ * imprecise tap lands — travelled too far to be a click, not far enough to
+ * have meant anything. Stepping on that would change the picture under a
+ * finger that only wobbled.
+ */
+const SWIPE_STEP = 56
+
+/**
+ * How close together two taps must land to count as one gesture.
+ *
+ * On a phone a double tap favourites and a single tap zooms — so every single
+ * tap waits this long before acting, which is the price of telling the two
+ * apart. Tighter than the 500ms a double-tap of Ctrl gets in App.tsx: screen
+ * taps repeat faster than deliberate key presses, and this wait is paid on
+ * every zoom.
+ */
+const DOUBLE_TAP_WINDOW_MS = 300
+
+/**
+ * What a phone shows before any zoom: the picture at the full width of the
+ * screen, vertically centred.
+ *
+ * On a width-limited picture this is exactly the fitted view. On a
+ * height-limited one — a portrait with the prompt panel up — fitting shrinks
+ * the picture into a strip with black bars either side, wasting the one
+ * dimension a phone has plenty of. Filling the width instead crops the
+ * overflow behind the stage's clip, and the tap-to-fullscreen mode is where
+ * the whole picture lives.
+ */
+function coverWidthView(
+  natural: { width: number; height: number },
+  viewport: { width: number; height: number },
+): View {
+  if (natural.width <= 0 || viewport.width <= 0) return { scale: 1, x: 0, y: 0 }
+  const scale = viewport.width / natural.width
+  return { scale, x: 0, y: (viewport.height - natural.height * scale) / 2 }
+}
 
 interface LightboxProps {
   mediaId: number
@@ -335,6 +378,11 @@ export function Lightbox({
     travelled: number
   } | null>(null)
   const [panning, setPanning] = useState(false)
+  // Which zoom model applies — see `coverWidthView` and the pinning effect
+  // below. The number, not a CSS class, because this decides behaviour.
+  const isPhone = useViewportWidth() < MD_BREAKPOINT
+  /** A tap waiting to become a zoom, unless a second one lands on it first. */
+  const pendingTap = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Set when a rating is applied locally, so a reply that was already in flight
   // when the key was pressed cannot undo it.
   const rated = useRef(false)
@@ -372,7 +420,16 @@ export function Lightbox({
     // different image, with no way to tell that is what happened.
     setZoom(null)
     const timer = setTimeout(() => setShowOriginal(true), ORIGINAL_DELAY_MS)
-    return () => clearTimeout(timer)
+    return () => {
+      clearTimeout(timer)
+      // A tap still waiting out its double-tap window belongs to the row that
+      // was on screen when it landed — zooming the next picture with it would
+      // apply a stale view to an image it was never aimed at.
+      if (pendingTap.current !== null) {
+        clearTimeout(pendingTap.current)
+        pendingTap.current = null
+      }
+    }
   }, [mediaId])
 
   // Warm the neighbours' thumbnails while this row is on screen. Two forwards
@@ -461,6 +518,26 @@ export function Lightbox({
     return () => stage.removeEventListener('wheel', onWheel)
   }, [stage, naturalWidth, naturalHeight, stageWidth, stageHeight])
 
+  // On a phone, a zoom is THE zoom: fullscreen, the picture as tall as the
+  // screen. Entering it hides the chrome, the stage grows into the freed
+  // viewport, and this pins the scale to whatever height the stage settles
+  // at — so the tap may compute with the small stage and still end up exactly
+  // full-height once the resize lands. A horizontal pan survives the re-pin
+  // because panning moves x, not scale.
+  useEffect(() => {
+    if (!isPhone || naturalHeight <= 0 || stageHeight <= 0) return
+    setZoom((current) => {
+      if (!current) return current
+      const scale = stageHeight / naturalHeight
+      if (Math.abs(current.scale - scale) < 0.001) return current
+      return clampView(
+        { scale, x: (stageWidth - naturalWidth * scale) / 2, y: 0 },
+        { width: naturalWidth, height: naturalHeight },
+        { width: stageWidth, height: stageHeight },
+      )
+    })
+  }, [isPhone, stageWidth, stageHeight, naturalWidth, naturalHeight])
+
   // Shared by the Delete button and the Delete key, so the two cannot drift
   // into asking differently about the same irreversible thing.
   const confirmDelete = useCallback(() => {
@@ -503,6 +580,56 @@ export function Lightbox({
     })
   }, [item, onDeleted])
 
+  /**
+   * "I have decided about this one": rate it and move on. Four is ArrowUp on
+   * a keyboard and the + button on a phone — the judgement made dozens of
+   * times in a pass; five is a favourite, and on a phone that is the double
+   * tap. One implementation so none of them can drift, the same arrangement
+   * `confirmDelete` has with the Delete key.
+   *
+   * Rating takes the row back out of the pile. Stepping back to reconsider
+   * something you picked and rating it instead is a *change of mind*, and
+   * leaving it picked would mean the batch action later runs over a picture
+   * you decided to keep. Guarded rather than toggled: `onToggleSelect` on an
+   * unpicked row would add it, so judging an ordinary picture would silently
+   * start a selection.
+   *
+   * Ends on a step, like the pick below it: both mean the decision is made,
+   * and the decision is nearly always followed by moving on.
+   */
+  const judge = useCallback(
+    (stars: 4 | 5, alsoUpscale: boolean) => {
+      if (!item) return
+      rated.current = true
+      setFetched({ ...item, stars })
+      void setStars(item.id, stars)
+      if (selected) {
+        toast(`Unpicked ${item.name}`, 'muted')
+        onToggleSelect(item.id)
+      }
+      if (alsoUpscale) onUpscale(item)
+      onStep(1)
+    },
+    [item, selected, onToggleSelect, onUpscale, onStep],
+  )
+
+  /**
+   * Pick this row for the selection — or take it back out — and move on.
+   * ArrowDown on a keyboard, the − button on a phone.
+   *
+   * Said out loud, because there is nothing on this screen to see it happen
+   * on — the selection lives in a grid the lightbox is covering. Read before
+   * the toggle: `selected` is the state being left. The step is what turns a
+   * pass through a folder into one repeated press rather than two — the
+   * difference between reviewing three hundred pictures and deciding not to.
+   */
+  const togglePick = useCallback(() => {
+    if (!item) return
+    toast(`${selected ? 'Unpicked' : 'Picked'} ${item.name}`, selected ? 'muted' : 'picked')
+    onToggleSelect(item.id)
+    onStep(1)
+  }, [item, selected, onToggleSelect, onStep])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // Never while something is being typed into. The search field lives
@@ -526,59 +653,19 @@ export function Lightbox({
       // Up rates, down picks. Both are one-handed on the same key cluster as
       // the arrows that step, because the whole point is going through a
       // folder without moving your hand: look, judge, move on.
-      //
-      // Four rather than five for Up: five is a favourite and deserves a
-      // deliberate keypress, while four is "this one is good" — the
-      // judgement you make dozens of times in a pass.
       if (event.key === 'ArrowUp' && item) {
         event.preventDefault()
-        rated.current = true
-        setFetched({ ...item, stars: 4 })
-        void setStars(item.id, 4)
-        // The two verdict keys are alternatives, so rating takes the row back
-        // out of the pile. Stepping back to reconsider something you picked and
-        // rating it instead is a *change of mind*, and leaving it picked would
-        // mean the batch action later runs over a picture you decided to keep.
-        //
-        // Guarded rather than toggled: `onToggleSelect` on an unpicked row
-        // would add it, so pressing Up on an ordinary picture would silently
-        // start a selection.
-        if (selected) {
-          toast(`Unpicked ${item.name}`, 'muted')
-          onToggleSelect(item.id)
-        }
         // Shift says "and it is worth the pixels": same verdict, same step, and
         // a 4K upscale queued behind it. On the same key rather than its own
         // because it is the same judgement with one more consequence — you
         // decide a picture is good and that it deserves the resolution in one
         // motion, without stopping the pass to go and find a button.
-        if (event.shiftKey) onUpscale(item)
-        // On to the next, like the pick below it. Both keys mean "I have decided
-        // about this one", and the decision is nearly always followed by moving
-        // on — so the pass stays a single repeated key whichever you press.
-        // Adjusting a rating you have just given is what 1-5 are for, and they
-        // deliberately stay put — but they take the row out of the pile too,
-        // because any rating is the verdict that says this one is not a
-        // candidate.
-        onStep(1)
+        judge(4, event.shiftKey)
         return
       }
       if (event.key === 'ArrowDown' && item) {
         event.preventDefault()
-        // Said out loud, because there is nothing on this screen to see it
-        // happen on — the selection lives in a grid the lightbox is covering.
-        // Read before the toggle: `selected` is the state being left.
-        toast(
-          `${selected ? 'Unpicked' : 'Picked'} ${item.name}`,
-          selected ? 'muted' : 'picked',
-        )
-        onToggleSelect(item.id)
-        // And on to the next one. Picking is nearly always followed by moving
-        // on, so a pass through a folder becomes one key rather than two —
-        // which is the difference between reviewing three hundred pictures and
-        // deciding not to. Still a toggle: come back to one already picked and
-        // the same key takes it out again.
-        onStep(1)
+        togglePick()
         return
       }
 
@@ -622,7 +709,7 @@ export function Lightbox({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, onStep, item, zoom, confirmDelete, onToggleSelect, onUpscale, selected])
+  }, [onClose, onStep, item, zoom, confirmDelete, onToggleSelect, selected, judge, togglePick])
 
   // Resolve the original behind an Extras upscale, once the row says it is
   // one. Keyed on the id so stepping re-resolves; harmless when the panel is
@@ -756,14 +843,22 @@ export function Lightbox({
       ? fitInside(item.width, item.height, stageSize.width, stageSize.height)
       : null
 
-  // Everything the pan/zoom layer needs, in one place. `view` is the fitted one
-  // until the user chooses otherwise, so there is a single rendering path
-  // rather than a fitted mode and a zoomed mode that can disagree.
+  // Everything the pan/zoom layer needs, in one place. `view` is the resting
+  // one until the user chooses otherwise, so there is a single rendering path
+  // rather than a resting mode and a zoomed mode that can disagree.
   const natural = { width: naturalWidth, height: naturalHeight }
   const viewport = { width: stageWidth, height: stageHeight }
   const canZoom = item.kind === 'image' && box !== null
-  const view = zoom ?? fitView(natural, viewport)
-  const zoomedIn = canZoom && isZoomed(view, natural, viewport)
+  // A phone rests on the width-filling view and treats any explicit zoom as
+  // the fullscreen mode; a desktop fits and zooms freely. `zoomedIn` on a
+  // phone is therefore "is fullscreen on" — which is also what keeps the
+  // swipe stepping while the cover view technically exceeds the fitted scale.
+  const view =
+    zoom ?? (isPhone && canZoom ? coverWidthView(natural, viewport) : fitView(natural, viewport))
+  const zoomedIn = canZoom && (isPhone ? zoom !== null : isZoomed(view, natural, viewport))
+  // Fullscreen on a phone: the picture takes the whole screen and the chrome
+  // — header, panel, footer, the touch buttons — gets out of the way.
+  const immersive = isPhone && zoomedIn
 
   return (
     <div
@@ -772,13 +867,24 @@ export function Lightbox({
       aria-modal="true"
       aria-label={item.name}
     >
-      <header className="flex items-center gap-3 px-4 py-2 text-xs text-zinc-400">
+      {/* On a phone the row scrolls sideways rather than crushing itself: every
+          control stays reachable, and the filename keeps enough width to read.
+          The safe-area inset keeps the first buttons out of the notch corner. */}
+      <header
+        className={cn(
+          'flex items-center gap-3 px-4 py-2 text-xs text-zinc-400 max-md:overflow-x-auto max-md:pl-[max(1rem,env(safe-area-inset-left))]',
+          immersive && 'max-md:hidden',
+        )}
+      >
         {/* The folder truncates, never the filename.
             `truncate` ellipsises the *end* of a string, which on a path throws
             away the only part anyone is looking for. Splitting them means a
             deep path loses its middle and still shows where the file is and
             what it is called. */}
-        <span className="flex min-w-0 flex-1 items-baseline gap-1" title={displayPath(item.path)}>
+        <span
+          className="flex min-w-0 flex-1 items-baseline gap-1 max-md:w-44 max-md:flex-none max-md:overflow-hidden"
+          title={displayPath(item.path)}
+        >
           {folder ? <span className="truncate text-zinc-500">{folder}</span> : null}
           <span className="shrink-0 text-zinc-200">{item.name}</span>
         </span>
@@ -846,9 +952,13 @@ export function Lightbox({
         <Button size="sm" onClick={onToggleBoxes}>
           {showBoxes ? 'Hide boxes' : 'Show boxes'}
         </Button>
-        <Button size="sm" onClick={() => void revealInFileManager(item.path)}>
-          Reveal
-        </Button>
+        {/* Not in a browser session: Explorer is on the host, and a button
+            that silently does nothing teaches people the app is broken. */}
+        {isHttpSession() ? null : (
+          <Button size="sm" onClick={() => void revealInFileManager(item.path)}>
+            Reveal
+          </Button>
+        )}
         {/* Here because this is where you find out you want it: you open
             something, see a normal map, and want the whole pack gone. The
             folder is right there on screen and nothing else has to be found. */}
@@ -908,15 +1018,33 @@ export function Lightbox({
       </header>
 
       {/* `relative` so the prompt panel can float over this row instead of
-          taking width from it. */}
-      <div className="relative flex min-h-0 flex-1">
+          taking width from it. On a phone the row becomes a **scrolling
+          column**: the picture at full width and its full height, the panel
+          under it, and the page scrolls to reach whatever does not fit — the
+          shape every phone gallery has taught. Fullscreen mode fills the
+          column exactly, so there is nothing to scroll while it is on. */}
+      <div className="relative flex min-h-0 flex-1 max-md:flex-col max-md:overflow-y-auto">
       {/* Clicking the backdrop closes. `onClick` on this container rather than
           the overlay root so the header's buttons are not covered, and the
           target check rather than a bare handler so a click that lands on the
           image, the video, a nav arrow or a detection box does not close it —
           only one that hits the empty space around them. */}
       <div
-        className="relative flex min-h-0 flex-1 p-4"
+        // p-0 on a phone: the picture spans edge to edge, which is the point
+        // of the cover view — a 16px frame on a 390px screen is 8% of it.
+        className={cn(
+          'relative flex min-h-0 flex-1 p-4 max-md:p-0',
+          immersive && 'max-md:h-full',
+        )}
+        // The picture's own shape sizes this box on a phone: full width times
+        // the image's aspect means the whole image is visible and the scroll
+        // carries on past it into the panel. Inline because the ratio is data,
+        // not design. Fullscreen drops it and fills the column instead.
+        style={
+          isPhone && !immersive && naturalWidth > 0 && naturalHeight > 0
+            ? { aspectRatio: `${naturalWidth} / ${naturalHeight}`, flex: 'none' }
+            : undefined
+        }
         onClick={(event) => {
           if (event.target === event.currentTarget) onClose()
         }}
@@ -958,7 +1086,13 @@ export function Lightbox({
              to keep panning. */
           <div
             className={cn(
-              'absolute inset-0 touch-none select-none',
+              'absolute inset-0 select-none',
+              // A resting phone leaves the vertical axis to the page — that
+              // is how the panel below the picture is reached — and claims
+              // only taps and sideways swipes. Fullscreen takes the finger
+              // for its own panning, and a desktop has no scroll to share
+              // the gesture with.
+              isPhone && !zoomedIn ? 'touch-pan-y' : 'touch-none',
               !canZoom
                 ? 'flex items-center justify-center'
                 : panning
@@ -1002,8 +1136,21 @@ export function Lightbox({
               drag.current = null
               setPanning(false)
               if (!current || current.pointerId !== event.pointerId) return
-              // A drag is not a click, however it ends.
-              if (current.travelled > CLICK_SLOP) return
+              // A drag is not a click, however it ends. On a touch over the
+              // whole picture — not zoomed in, so the drag panned nothing — a
+              // clearly sideways one is a swipe, and a swipe is a step. Mouse
+              // drags are left out: a mouse has arrow keys an inch away, and
+              // accidental sideways drags are how a mouse selects things.
+              if (current.travelled > CLICK_SLOP) {
+                if (!zoomedIn && event.pointerType === 'touch') {
+                  const dx = event.clientX - current.startX
+                  const dy = event.clientY - current.startY
+                  if (Math.abs(dx) > SWIPE_STEP && Math.abs(dx) > Math.abs(dy) * 1.5) {
+                    onStep(dx < 0 ? 1 : -1)
+                  }
+                }
+                return
+              }
 
               const rect = event.currentTarget.getBoundingClientRect()
               const at = { x: event.clientX - rect.left, y: event.clientY - rect.top }
@@ -1013,13 +1160,45 @@ export function Lightbox({
                 onClose()
                 return
               }
+              if (isPhone) {
+                // Two gestures share the tap here: a second one inside the
+                // window is a favourite — five stars, and on to the next —
+                // while a lone tap becomes the zoom toggle once the window
+                // has passed. The zoom is captured now and fired later, so
+                // it acts on the view the finger actually touched.
+                if (pendingTap.current !== null) {
+                  clearTimeout(pendingTap.current)
+                  pendingTap.current = null
+                  toast(`★★★★★ ${item.name}`, 'picked')
+                  judge(5, false)
+                  return
+                }
+                const wasZoomed = zoomedIn
+                pendingTap.current = setTimeout(() => {
+                  pendingTap.current = null
+                  if (wasZoomed) {
+                    setZoom(null)
+                    return
+                  }
+                  setShowOriginal(true)
+                  // Fullscreen: as tall as the screen. Computed from the
+                  // window rather than the stage, because the stage is about
+                  // to grow — the chrome hides on this same tap — and the
+                  // window's height is what it grows to. The pinning effect
+                  // above settles any difference once the resize lands.
+                  // `zoomAbout` keeps the spot tapped under the finger.
+                  const scale = (globalThis.innerHeight || viewport.height) / natural.height
+                  setZoom(zoomAbout(view, natural, viewport, scale, at))
+                }, DOUBLE_TAP_WINDOW_MS)
+                return
+              }
               if (zoomedIn) {
                 setZoom(null)
                 return
               }
+              setShowOriginal(true)
               // Straight to original size, about the point clicked — so the
               // detail you aimed at is the one you land on.
-              setShowOriginal(true)
               setZoom(zoomAbout(view, natural, viewport, 1, at))
             }}
             onPointerCancel={() => {
@@ -1115,11 +1294,14 @@ export function Lightbox({
         )}
         </div>
 
+        {/* The slim edge arrows are a pointer's control — precise, out of the
+            way, hover-lit. On a phone they are replaced by the bottom cluster
+            below, sized for thumbs. */}
         <button
           type="button"
           onClick={() => onStep(-1)}
           aria-label="Previous"
-          className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/5 px-3 py-6 text-zinc-400 hover:bg-white/10 hover:text-zinc-100"
+          className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full bg-white/5 px-3 py-6 text-zinc-400 hover:bg-white/10 hover:text-zinc-100 max-md:hidden"
         >
           ‹
         </button>
@@ -1128,7 +1310,7 @@ export function Lightbox({
           onClick={() => onStep(1)}
           aria-label="Next"
           className={cn(
-            'absolute top-1/2 z-20 -translate-y-1/2 rounded-full bg-white/5 px-3 py-6 text-zinc-400 transition-[right] hover:bg-white/10 hover:text-zinc-100',
+            'absolute top-1/2 z-20 -translate-y-1/2 rounded-full bg-white/5 px-3 py-6 text-zinc-400 transition-[right] hover:bg-white/10 hover:text-zinc-100 max-md:hidden',
             // Steps aside for the panel, which overlays this area rather than
             // taking width from it. Left where it is, it would sit underneath.
             panelOpen ? 'right-[21rem]' : 'right-2',
@@ -1136,16 +1318,91 @@ export function Lightbox({
         >
           ›
         </button>
+
+        {/* The phone's controls: judgements in the corners where thumbs
+            already rest — + rates, − picks, ArrowUp and ArrowDown made
+            touchable — and stepping in the centre pair, ArrowLeft and
+            ArrowRight likewise. `fixed` rather than absolute because the
+            page behind them scrolls: they float in reach whatever part of
+            the picture or panel is on screen, just above the footer. (The
+            root's backdrop-blur makes it the containing block, so fixed here
+            still means the lightbox, not whatever page is underneath.)
+            Hidden where the keys exist. */}
+        <button
+          type="button"
+          onClick={() => judge(4, false)}
+          aria-label="Rate 4 stars and show the next"
+          className={cn(
+            'fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom))] left-4 z-20 grid size-12 place-items-center rounded-full bg-white/10 text-2xl leading-none text-amber-200 backdrop-blur-sm active:bg-amber-400/40 md:hidden',
+            // Fullscreen means fullscreen: nothing floats over the picture,
+            // and every one of these is a tap away behind one exit tap.
+            immersive && 'hidden',
+          )}
+        >
+          +
+        </button>
+        <div
+          className={cn(
+            'fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom))] left-1/2 z-20 flex -translate-x-1/2 gap-3 md:hidden',
+            immersive && 'hidden',
+          )}
+        >
+          <button
+            type="button"
+            onClick={() => onStep(-1)}
+            aria-label="Previous"
+            className="grid size-12 place-items-center rounded-full bg-white/10 text-2xl leading-none text-zinc-200 backdrop-blur-sm active:bg-white/25"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            onClick={() => onStep(1)}
+            aria-label="Next"
+            className="grid size-12 place-items-center rounded-full bg-white/10 text-2xl leading-none text-zinc-200 backdrop-blur-sm active:bg-white/25"
+          >
+            ›
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={togglePick}
+          aria-pressed={selected}
+          aria-label={
+            selected ? 'Unpick and show the next' : 'Pick for the selection and show the next'
+          }
+          className={cn(
+            'fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom))] right-4 z-20 grid size-12 place-items-center rounded-full text-2xl leading-none backdrop-blur-sm md:hidden',
+            // Lit while the row is picked — the header badge says it too,
+            // but the thumb is looking here, and the toast fades.
+            selected
+              ? 'bg-indigo-500/50 text-indigo-100'
+              : 'bg-white/10 text-zinc-200 active:bg-indigo-500/40',
+            immersive && 'hidden',
+          )}
+        >
+          −
+        </button>
       </div>
 
-      {/* An overlay, not a column.
-          Taking width from the flex row re-laid-out and re-scaled the picture
-          every time the panel opened — so the thing you opened the panel to
-          compare against moved and changed size underneath you. Floating it
-          keeps the image fixed; it covers a strip of the right-hand side, which
-          is a far smaller cost than resizing the whole image. */}
+      {/* An overlay on a desktop, a column on a phone — deliberately opposite
+          answers to the same trade. Wide screens float the panel because taking
+          width from the flex row re-laid-out and re-scaled the picture every
+          time it opened: the thing you opened the panel to compare against
+          moved underneath you, and the strip it covers instead is spare. A
+          phone has no spare strip — an overlay wide enough to read *is* the
+          screen — so there the panel takes the bottom, the stage remeasures,
+          and the picture refits above it. */}
       {showGeneration && item.generation && panelGeneration ? (
-        <aside className="absolute inset-y-0 right-0 z-10 w-80 overflow-y-auto border-l border-white/10 bg-zinc-950/95 p-3 text-[11px] shadow-2xl backdrop-blur-sm">
+        <aside
+          className={cn(
+            // No height cap on a phone: the panel flows below the picture in
+            // the same scroll, so its full length is a scroll away rather
+            // than a scroll *inside* a scroll.
+            'z-10 overflow-y-auto border-white/10 bg-zinc-950/95 p-3 text-[11px] shadow-2xl backdrop-blur-sm max-md:w-full max-md:shrink-0 max-md:border-t md:absolute md:inset-y-0 md:right-0 md:w-80 md:border-l',
+            immersive && 'max-md:hidden',
+          )}
+        >
           <div className="flex items-baseline justify-between gap-2">
             <span className="font-medium text-zinc-300">{panelGeneration.tool}</span>
             {panelGeneration.prompt ? (
@@ -1377,7 +1634,12 @@ export function Lightbox({
       ) : null}
       </div>
 
-      <footer className="border-t border-white/5 px-4 py-2">
+      <footer
+        className={cn(
+          'border-t border-white/5 px-4 py-2 max-md:pb-[max(0.5rem,env(safe-area-inset-bottom))]',
+          immersive && 'max-md:hidden',
+        )}
+      >
         {/* The verdict grows and wraps; the resolution is a fixed readout
             pinned to the right of it, so it stays in one place rather than
             drifting with the length of a label. */}

@@ -2029,6 +2029,34 @@ impl Db {
         Ok(rows)
     }
 
+    /// The frames behind a row — and for an app-made 4K variant, behind its
+    /// **original**. A variant inherits its original's verdict at insert and
+    /// never goes through classification, so it has no frame rows of its own
+    /// (see `.ai/gotchas.md`) — and the lightbox's detection boxes are drawn
+    /// from frames, which is how "Show boxes" on an upscale showed nothing.
+    /// The original's detections are measurements of the same picture, and a
+    /// box is stored as fractions of the image, so it fits the upscale
+    /// exactly. An Extras-tab upscale was scanned and classified as its own
+    /// file, so it answers from its own frames and never reaches the
+    /// fallback; an original that has left the library leaves the answer
+    /// empty, exactly as it was before the fallback existed.
+    pub fn frames_for_media_or_original(&self, media_id: i64) -> Result<Vec<MediaFrame>> {
+        let frames = self.frames_for_media(media_id)?;
+        if !frames.is_empty() {
+            return Ok(frames);
+        }
+        let Some(source_path) = self
+            .media_by_id(media_id)?
+            .and_then(|item| item.upscaled_from)
+        else {
+            return Ok(frames);
+        };
+        match self.media_by_path(&source_path)? {
+            Some(original) => self.frames_for_media(original.id),
+            None => Ok(frames),
+        }
+    }
+
     pub fn frames_for_media(&self, media_id: i64) -> Result<Vec<MediaFrame>> {
         let conn = self.connection();
         let mut stmt = conn.prepare(
@@ -3065,6 +3093,62 @@ mod tests {
             sexy_frame_count: 1,
             poster_frame_index: Some(0),
         }
+    }
+
+    #[test]
+    fn a_4k_variant_answers_show_boxes_with_its_originals_frames() {
+        // The reported failure: "Show boxes" on an upscale drew nothing. A
+        // variant inherits its original's *verdict* at insert but never goes
+        // through classification, so it has no frame rows — and the boxes are
+        // drawn from frames. The original's are the right answer: it is the
+        // same picture, and a box is stored as fractions of it.
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/media", 1).expect("add folder");
+        db.insert_media_batch(folder, &[file("/media/a.jpg", MediaKind::Image, 300)], 1)
+            .unwrap();
+        let original = db.media_by_path("/media/a.jpg").unwrap().expect("original");
+        db.replace_frames(
+            original.id,
+            &[NewFrame {
+                frame_index: 0,
+                timestamp_sec: 0.0,
+                path: "/thumbs/ab/cd/a.jpg".to_string(),
+                verdict_json: r#"{"person":true,"sexy":true,"nude":false,"rating":"suggestive","topLabel":"BELLY_EXPOSED","topLabelTitle":"Belly","topScore":0.78,"detections":[{"label":"BELLY_EXPOSED","score":0.78,"box":[0.1,0.2,0.3,0.4]}]}"#.to_string(),
+            }],
+        )
+        .unwrap();
+
+        // The variant arrives later, named by the convention the pairing rides on.
+        db.insert_media_batch(
+            folder,
+            &[file("/media/a_upscaled_4k.jpg", MediaKind::Image, 300)],
+            2,
+        )
+        .unwrap();
+        let variant = db.media_by_path("/media/a_upscaled_4k.jpg").unwrap().expect("variant");
+        assert_eq!(variant.upscaled_from.as_deref(), Some("/media/a.jpg"));
+
+        // Its own frames are empty — the gap this exists to close…
+        assert!(db.frames_for_media(variant.id).unwrap().is_empty());
+        // …and the display call answers with the original's measurements.
+        let frames = db.frames_for_media_or_original(variant.id).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].media_id, original.id);
+        assert_eq!(frames[0].verdict.detections.len(), 1);
+
+        // A row with its own frames never reaches the fallback.
+        assert_eq!(db.frames_for_media_or_original(original.id).unwrap().len(), 1);
+
+        // A variant whose original is not in the library keeps the honest
+        // answer: nothing, exactly as before the fallback existed.
+        db.insert_media_batch(
+            folder,
+            &[file("/media/ghost_upscaled_4k.jpg", MediaKind::Image, 300)],
+            3,
+        )
+        .unwrap();
+        let orphan = db.media_by_path("/media/ghost_upscaled_4k.jpg").unwrap().expect("orphan");
+        assert!(db.frames_for_media_or_original(orphan.id).unwrap().is_empty());
     }
 
     #[test]

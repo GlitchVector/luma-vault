@@ -358,14 +358,18 @@ slideshow. Hence the stack name on the panel: it is not organisation for its own
 sake, it is what turns the merge into two clicks instead of hunting twenty files
 out of a flat list.
 
-**An upscaled variant has no frame rows.** It inherits its original's *verdict*
-at insert, but `replace_frames` only ever runs during classification and a
-variant never goes through it — so `media_frames` is empty for it and
-`mediaFrames()` returns nothing. This is not an edge case: the grid **hides an
-original once a variant exists**, so a variant is what most selections are made
-of. Anything that wants per-detection data for a selected row will find none.
-The pose rule reads `verdict.topLabel` for exactly this reason, which is also
-the more correct source — `rateFrame` defines it as the highest-scoring *rated*
+**An upscaled variant has no frame rows of its own.** It inherits its
+original's *verdict* at insert, but `replace_frames` only ever runs during
+classification and a variant never goes through it. This is not an edge case:
+the grid **hides an original once a variant exists**, so a variant is what most
+selections are made of. `media_frames` therefore answers a frameless variant
+with its **original's** frames (`frames_for_media_or_original`) — same picture,
+and a box is stored as fractions of it, which is what put detection boxes back
+on 4K upscales in the lightbox. The raw table is still empty for the variant,
+and an original that left the library leaves the answer empty; anything reading
+`media_frames` directly in SQL will still find nothing. The pose rule predates
+the fallback and reads `verdict.topLabel` instead, which is also the more
+correct source — `rateFrame` defines it as the highest-scoring *rated*
 detection, so a 0.99 face already never beats a 0.6 exposure there.
 
 **Two label families are excluded from the pose rule, and both exclusions are

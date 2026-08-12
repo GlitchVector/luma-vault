@@ -17,6 +17,8 @@ let originCalls = 0
 let answerOrigin: (() => void) | null = null
 /** Every rating correction sent to the backend, so the wire call can be read. */
 const corrections: Array<{ ids: number[]; rating: string | null }> = []
+/** Every star rating written, so the judgement buttons' effect can be read. */
+const starWrites: Array<{ id: number; stars: number | null }> = []
 import { ToastHost } from '#/components/ToastHost.tsx'
 import { resetPreloads } from '#/lib/preload.ts'
 import { DialogHost } from './DialogHost.tsx'
@@ -73,6 +75,7 @@ let backend: MediaItem[] = []
 let answer: (() => void) | null = null
 
 vi.mock('#/lib/native.ts', () => ({
+  isHttpSession: () => false,
   fileUrl: (path: string) => `luma://localhost/?path=${encodeURIComponent(path)}`,
   // Deliberately never resolved by default. Every assertion below is about what
   // is on screen *before* the backend answers, so a test that only passes once
@@ -84,7 +87,10 @@ vi.mock('#/lib/native.ts', () => ({
   mediaByPath: (path: string) =>
     Promise.resolve(backend.find((row) => row.path === path) ?? null),
   mediaFrames: () => Promise.resolve([]),
-  setStars: () => Promise.resolve(),
+  setStars: (id: number, stars: number | null) => {
+    starWrites.push({ id, stars })
+    return Promise.resolve()
+  },
   setRatingOverride: (ids: number[], rating: string | null) => {
     corrections.push({ ids, rating })
     return Promise.resolve(ids.length)
@@ -135,9 +141,12 @@ beforeEach(() => {
     'PointerEvent',
     class extends MouseEvent {
       pointerId: number
+      pointerType: string
       constructor(type: string, init: PointerEventInit = {}) {
         super(type, init)
         this.pointerId = init.pointerId ?? 0
+        // Carried for the swipe cases — the handler steps only for 'touch'.
+        this.pointerType = init.pointerType ?? ''
       }
     },
   )
@@ -176,6 +185,7 @@ afterEach(() => {
   originCalls = 0
   answerOrigin = null
   corrections.length = 0
+  starWrites.length = 0
   vi.unstubAllGlobals()
 })
 
@@ -439,13 +449,27 @@ describe('zooming and panning', () => {
     })
   }
 
-  function pointer(type: 'pointerDown' | 'pointerMove' | 'pointerUp', x: number, y: number) {
+  function pointer(
+    type: 'pointerDown' | 'pointerMove' | 'pointerUp',
+    x: number,
+    y: number,
+    init: Record<string, unknown> = {},
+  ) {
     fireEvent[type](stage().firstElementChild ?? stage(), {
       pointerId: 1,
       button: 0,
       clientX: x,
       clientY: y,
+      ...init,
     })
+  }
+
+  /** A finger dragged across the picture, from one point to another. */
+  function swipe(fromX: number, toX: number, y: number) {
+    const touch = { pointerType: 'touch' }
+    pointer('pointerDown', fromX, y, touch)
+    pointer('pointerMove', toX, y + 10, touch)
+    pointer('pointerUp', toX, y + 10, touch)
   }
 
   /** A click is a press and release that went nowhere. */
@@ -508,14 +532,49 @@ describe('zooming and panning', () => {
 
   it('does nothing on a drag while the whole picture is visible', () => {
     const onClose = vi.fn()
-    renderLightbox({ seed: makeItem(1), onClose })
+    const onStep = vi.fn()
+    renderLightbox({ seed: makeItem(1), onClose, onStep })
 
     pointer('pointerDown', 500, 400)
     pointer('pointerMove', 560, 460)
     pointer('pointerUp', 560, 460)
 
+    // A clearly sideways *mouse* drag, well past the swipe distance. Only a
+    // touch may step — this is the drag a mouse makes by accident.
+    pointer('pointerDown', 600, 400)
+    pointer('pointerMove', 460, 410)
+    pointer('pointerUp', 460, 410)
+
     expect(poster()?.style.width).toBe(FITTED)
     expect(onClose).not.toHaveBeenCalled()
+    expect(onStep).not.toHaveBeenCalled()
+  })
+
+  it('steps on a sideways touch swipe over the whole picture', () => {
+    // The phone's gesture. A mouse drag deliberately does not step — a mouse
+    // has arrow keys an inch away, and sideways drags are how it selects.
+    const onStep = vi.fn()
+    renderLightbox({ seed: makeItem(1), onStep })
+
+    swipe(600, 480, 400)
+    expect(onStep).toHaveBeenCalledWith(1)
+
+    swipe(480, 600, 400)
+    expect(onStep).toHaveBeenCalledWith(-1)
+    expect(onStep).toHaveBeenCalledTimes(2)
+  })
+
+  it('never steps from a swipe while zoomed in — that gesture pans', () => {
+    const onStep = vi.fn()
+    renderLightbox({ seed: makeItem(1), onStep })
+    click(500, 400)
+    expect(poster()?.style.width).toBe(ORIGINAL)
+
+    swipe(600, 480, 400)
+
+    expect(onStep).not.toHaveBeenCalled()
+    // Still zoomed: the swipe moved the picture, it did not change it.
+    expect(poster()?.style.width).toBe(ORIGINAL)
   })
 
   it('leaves the zoom on the first Escape and the picture on the second', () => {
@@ -584,6 +643,120 @@ describe('zooming and panning', () => {
     )
 
     expect(poster()?.style.width).toBe(FITTED)
+  })
+
+  describe('on a phone', () => {
+    // Rendered at a phone width; the stage stub stays 1000×800, because what
+    // the behaviour switches on is the breakpoint, not the stage. innerHeight
+    // is pinned to the stage height so the tap's first guess and the pinning
+    // effect agree — on a device they differ for one resize tick. Fake timers
+    // because a phone tap defers by the double-tap window before acting.
+    beforeEach(() => {
+      Object.defineProperty(window, 'innerWidth', { value: 390, configurable: true, writable: true })
+      Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true, writable: true })
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true, writable: true })
+      Object.defineProperty(window, 'innerHeight', { value: 768, configurable: true, writable: true })
+    })
+
+    /** Tall enough that covering the width and fitting disagree loudly. */
+    const tall = () => makeItem(1, { width: 1000, height: 4000 })
+
+    /** A lone tap: press, release, and wait out the double-tap window. */
+    function tap(x: number, y: number) {
+      click(x, y)
+      act(() => {
+        vi.advanceTimersByTime(350)
+      })
+    }
+
+    it('rests on the width-filling view, not the fitted one', () => {
+      // Fitted, this draws 200px wide in a 1000px stage — a strip between
+      // black bars. Covering draws it at the stage's own width and crops the
+      // vertical overflow behind the clip.
+      renderLightbox({ seed: tall() })
+      expect(poster()?.style.width).toBe('1000px')
+      expect(poster()?.style.height).toBe('4000px')
+    })
+
+    it('a tap goes fullscreen at the viewport height, a second tap comes back', () => {
+      renderLightbox({ seed: tall() })
+
+      tap(500, 400)
+      expect(poster()?.style.height).toBe('800px')
+
+      tap(500, 400)
+      expect(poster()?.style.width).toBe('1000px')
+      expect(poster()?.style.height).toBe('4000px')
+    })
+
+    it('a double tap favourites — five stars — and moves on, without zooming', () => {
+      const onStep = vi.fn()
+      renderLightbox({ seed: tall(), onStep })
+
+      click(500, 400)
+      click(500, 400)
+
+      expect(starWrites).toEqual([{ id: 1, stars: 5 }])
+      expect(onStep).toHaveBeenCalledWith(1)
+      // The two taps spent themselves on the favourite: no zoom fires when
+      // the window that the first tap opened would have run out.
+      act(() => {
+        vi.advanceTimersByTime(400)
+      })
+      expect(poster()?.style.width).toBe('1000px')
+      expect(poster()?.style.height).toBe('4000px')
+    })
+
+    it('hides the chrome while fullscreen and brings it back after', () => {
+      renderLightbox({ seed: tall() })
+      const header = () => document.querySelector('header')?.className ?? ''
+
+      expect(header()).not.toContain('max-md:hidden')
+      tap(500, 400)
+      expect(header()).toContain('max-md:hidden')
+      expect(document.querySelector('footer')?.className).toContain('max-md:hidden')
+
+      tap(500, 400)
+      expect(header()).not.toContain('max-md:hidden')
+    })
+
+    it('still steps on a swipe from the width-filling view', () => {
+      // The cover view technically exceeds the fitted scale, which is what
+      // `isZoomed` measures — the swipe must not read that as "zoomed" and
+      // start panning instead of stepping.
+      const onStep = vi.fn()
+      renderLightbox({ seed: tall(), onStep })
+
+      swipe(600, 480, 400)
+
+      expect(onStep).toHaveBeenCalledWith(1)
+    })
+
+    it('sizes the stage from the picture and lends the vertical axis to the page', () => {
+      // The whole image visible at full width, the panel a scroll below it:
+      // the stage box takes the picture's own aspect ratio, and vertical
+      // drags are left to the browser (`touch-pan-y`) so they scroll rather
+      // than being swallowed by the swipe handler.
+      renderLightbox({ seed: tall() })
+      const stageParent = stage().parentElement as HTMLElement
+      const surface = () => stage().firstElementChild as HTMLElement
+
+      // jsdom expands the `none` shorthand; what matters is that it is no
+      // longer the flexing box the desktop layout uses.
+      expect(stageParent.style.flex).toBe('0 0 auto')
+      expect(stageParent.getAttribute('style') ?? '').toContain('aspect-ratio')
+      expect(surface().className).toContain('touch-pan-y')
+
+      // Fullscreen drops the aspect box — it fills the screen — and takes
+      // the finger back for its own panning.
+      tap(500, 400)
+      expect(stageParent.style.flex).toBe('')
+      expect(surface().className).toContain('touch-none')
+    })
   })
 })
 
@@ -1317,5 +1490,55 @@ describe('the character name in a prompt', () => {
     item.generation.prompt = 'masterpiece, 1girl, blue hair'
     renderLightbox({ seed: item, showGeneration: true })
     expect(document.querySelector('.text-pink-400')).toBeNull()
+  })
+})
+
+describe('the touch judgement buttons', () => {
+  // The + and − in the picture's bottom corners are ArrowUp and ArrowDown for
+  // a screen with no keys. They call the same callbacks the key handler does,
+  // so these cases pin the effect once — a drift between key and button would
+  // fail here and in the App-level shortcut suite together.
+  it('the + rates 4 and steps on, exactly as ArrowUp does', () => {
+    const onStep = vi.fn()
+    renderLightbox({ seed: makeItem(1), onStep })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rate 4 stars and show the next' }))
+
+    expect(starWrites).toEqual([{ id: 1, stars: 4 }])
+    expect(onStep).toHaveBeenCalledWith(1)
+  })
+
+  it('the − picks and steps on, exactly as ArrowDown does', () => {
+    const onStep = vi.fn()
+    const onToggleSelect = vi.fn()
+    renderLightbox({ seed: makeItem(1), onStep, onToggleSelect })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Pick for the selection and show the next' }),
+    )
+
+    expect(onToggleSelect).toHaveBeenCalledWith(1)
+    expect(onStep).toHaveBeenCalledWith(1)
+    // Picking is a verdict about the pile, not about quality — no stars move.
+    expect(starWrites).toEqual([])
+  })
+
+  it('rating with + takes a picked row back out of the pile', () => {
+    // The same change-of-mind rule the key has: a rating says "keep", so the
+    // row must leave the batch the − put it in.
+    const onToggleSelect = vi.fn()
+    renderLightbox({ seed: makeItem(1), selected: true, onToggleSelect })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rate 4 stars and show the next' }))
+
+    expect(onToggleSelect).toHaveBeenCalledWith(1)
+    expect(starWrites).toEqual([{ id: 1, stars: 4 }])
+  })
+
+  it('the − says unpick on a row already picked, and is lit', () => {
+    renderLightbox({ seed: makeItem(1), selected: true })
+
+    const button = screen.getByRole('button', { name: 'Unpick and show the next' })
+    expect(button.getAttribute('aria-pressed')).toBe('true')
   })
 })

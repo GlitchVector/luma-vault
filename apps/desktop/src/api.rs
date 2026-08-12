@@ -132,7 +132,10 @@ pub fn recent_media(state: &AppState, limit: i64) -> Result<Vec<MediaItem>, Stri
 }
 
 pub fn media_frames(state: &AppState, media_id: i64) -> Result<Vec<MediaFrame>, String> {
-    state.db.frames_for_media(media_id).map_err(stringify)
+    // The `_or_original` is what puts detection boxes on an app-made 4K
+    // variant: it has no frame rows of its own, and its original's boxes are
+    // fractions of the same picture.
+    state.db.frames_for_media_or_original(media_id).map_err(stringify)
 }
 
 /// One item by id — the detail view re-reads rather than trusting the copy it
