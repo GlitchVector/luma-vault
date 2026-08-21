@@ -224,6 +224,31 @@ count and fills the library with 100px duplicates of everything.
 away thumbnails and verdicts for an entire library the first time a backup tool
 rewrites mtimes.
 
+**Which is also why a smarter parser changes nothing on its own.** Rows already
+indexed are never re-opened, so improving `generated.rs` improves only files
+scanned after it. `reparse_phase` is the pass that closes that gap: bump
+`generated::PARSER_VERSION` and it re-reads the containers the change could
+affect, once, guarded by the `parameter_parser` setting. Guarded by a *version*
+rather than an emptying queue on purpose — "rows with no prompt" never empties,
+because most of them genuinely have none.
+
+**EXIF text is usually UTF-16, and searching it for ASCII silently finds
+nothing.** A `UserComment` opens with eight bytes naming its character set, and
+Forge writes `UNICODE` — UTF-16 in the byte order the TIFF header declares, so
+every character carries a NUL beside it. `find(head, b"Negative prompt:")`
+cannot match that, and neither can any marker in `MARKERS`. The result is not a
+half-read row, it is a file holding a complete parameter block indexing as *not
+generated at all*. Read it with `exif_user_comment`, which walks the IFD for the
+declared length and decodes by the declared order; do not add UTF-16 needles to
+the ASCII search instead.
+
+**Forge saves a JPEG copy of anything over 4 megapixels.** `export_for_4chan`
+with `img_downscale_threshold` — and a 1216x832 render through a 2x hires pass
+is 2432x1664, which is 4.05MP and over the line by 1.2%. Every one of those
+lands beside its PNG as a lossy duplicate carrying the same parameters in EXIF.
+It is a Forge setting, not something this app can turn off, so the index has to
+read them.
+
 **An unreachable folder must never be pruned from.** `glob_phase` deletes rows
 for files the walk did not find, and an unmounted NAS looks exactly like a
 folder whose every file was deleted — so without a guard, unplugging a drive

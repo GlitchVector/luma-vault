@@ -1324,6 +1324,30 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Rows a smarter parameter reader might now get more out of than it did.
+    ///
+    /// Narrow on purpose, because the alternative is re-reading the library. A
+    /// PNG keeps its block in a chunk that has always been walked, so a PNG
+    /// with no prompt genuinely has none and re-reading it would cost an SMB
+    /// round trip to learn nothing. The containers below are the ones that keep
+    /// it in EXIF, which is the part that was being missed — and only the rows
+    /// where something is actually absent, so a library already fully read
+    /// finds nothing to do and the pass costs one query.
+    pub fn rows_missing_parameters(&self) -> Result<Vec<(i64, String)>> {
+        let conn = self.connection();
+        let mut stmt = conn.prepare(
+            "SELECT id, path FROM media
+              WHERE error IS NULL
+                AND (prompt IS NULL OR prompt = '')
+                AND (lower(path) LIKE '%.jpg'
+                     OR lower(path) LIKE '%.jpeg'
+                     OR lower(path) LIKE '%.webp'
+                     OR lower(path) LIKE '%.avif')",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// How many rows a phase has already finished, so progress can be reported
     /// against the library rather than against one run of the app.
     ///
@@ -1723,6 +1747,22 @@ impl Db {
             params![id, now],
         )?;
         tx.commit()?;
+        Ok(())
+    }
+
+    /// Add the `generated` tag without disturbing the rest.
+    ///
+    /// `set_tags` replaces, which is right for the pass that derives every tag
+    /// a row has and wrong for one that learned a single new fact: re-reading a
+    /// parameter block says nothing about what the anime tagger found, and
+    /// replacing the set would silently discard it. `labelled_at` is left alone
+    /// for the same reason — the row was labelled when it was labelled.
+    pub fn tag_as_generated(&self, id: i64) -> Result<()> {
+        let conn = self.connection();
+        conn.execute(
+            "INSERT OR IGNORE INTO media_tags (media_id, tag) VALUES (?1, 'generated')",
+            params![id],
+        )?;
         Ok(())
     }
 
@@ -5339,6 +5379,56 @@ mod tests {
         let ready = db.pending_classification(100).unwrap();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].thumb_path.as_deref(), Some("/thumbs/a.jpg"));
+    }
+
+    #[test]
+    fn the_reparse_queue_holds_only_containers_that_could_be_hiding_one() {
+        let (db, _) = seeded();
+
+        // A PNG keeps its block in a chunk that has always been walked, so a
+        // PNG with no prompt genuinely has none — re-reading it would spend an
+        // SMB round trip to learn nothing. Only EXIF containers are candidates,
+        // and a video is not a candidate at all.
+        let queued: Vec<String> =
+            db.rows_missing_parameters().unwrap().into_iter().map(|(_, path)| path).collect();
+        assert_eq!(queued, vec!["/media/a.jpg".to_string()]);
+
+        let id = db.rows_missing_parameters().unwrap()[0].0;
+        db.set_generation(
+            id,
+            Some(&crate::generated::Generation {
+                tool: "Stable Diffusion".to_string(),
+                prompt: Some("1girl, ocean".to_string()),
+                ..Default::default()
+            }),
+        )
+        .expect("set");
+
+        // Once a row has a prompt it stops matching, which is what stops the
+        // pass rediscovering the same files on the next version bump.
+        assert!(db.rows_missing_parameters().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_row_that_gains_a_prompt_keeps_the_tags_it_already_had() {
+        let (db, _) = seeded();
+        let id = db.rows_missing_parameters().unwrap()[0].0;
+
+        // The anime tagger's answer, from a pass that has already run.
+        db.set_tags(id, &["anime".to_string()], 5).unwrap();
+        db.tag_as_generated(id).unwrap();
+
+        // Both, not one: replacing the set here would silently discard work
+        // that re-reading a parameter block says nothing about.
+        let page = db.query_media(&MediaQuery { tag: Some("anime".into()), ..query() }).unwrap();
+        assert_eq!(page.total, 1, "the tagger's tag survives");
+        let page = db.query_media(&MediaQuery { tag: Some("generated".into()), ..query() }).unwrap();
+        assert_eq!(page.total, 1, "and the new one is there too");
+
+        // Idempotent, because the pass reruns whenever it was interrupted.
+        db.tag_as_generated(id).unwrap();
+        let page = db.query_media(&MediaQuery { tag: Some("generated".into()), ..query() }).unwrap();
+        assert_eq!(page.total, 1);
     }
 
     #[test]

@@ -407,6 +407,12 @@ pub fn run_startup(pipeline: Arc<Pipeline>, app: AppHandle) {
         //    this launch deserves a rating before an already-rated file
         //    deserves a better one.
         anime_phase(&pipeline, &app);
+
+        // 7. Last, because nothing else waits on it and it is the one pass that
+        //    re-opens files the index already has. On a current library it is a
+        //    single query; on one built by an older reader it is tens of
+        //    thousands of header reads, and none of them may delay a thumbnail.
+        reparse_phase(&pipeline, &app);
     }));
 
     if outcome.is_err() {
@@ -689,6 +695,98 @@ fn rerate_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
     // strand the remainder on the old rules forever.
     let _ = pipeline.db.set_rating_version(rating::RATING_VERSION);
     eprintln!("[luma] re-rating complete");
+}
+
+/// The index's record of which parameter reader built it.
+const PARSER_SETTING: &str = "parameter_parser";
+
+/// Read the parameter block again wherever a better reader might now find one.
+///
+/// A scan leaves rows it has already seen alone. That is what makes it
+/// restartable, and it is also why `generated`'s reader getting smarter
+/// improves nothing already indexed — the files are never opened again. This is
+/// the pass that closes that gap.
+///
+/// Guarded by a version rather than by an emptying queue, because "rows with no
+/// prompt" is not a queue that empties: most of them are photographs and
+/// downloads that genuinely have none, so without the guard every launch would
+/// re-read all of them for ever.
+///
+/// Narrow by construction — only containers that keep the block in EXIF, and
+/// only rows actually missing one. On the library this was written for that is
+/// 65,000 rows of 158,000, and the ones it recovers are the JPEG copies Forge
+/// saves of any render over its size threshold: a full parameter block that
+/// indexed as not generated at all, beside a PNG twin that read perfectly.
+fn reparse_phase(pipeline: &Arc<Pipeline>, app: &AppHandle) {
+    let recorded = pipeline
+        .db
+        .setting(PARSER_SETTING)
+        .ok()
+        .flatten()
+        .and_then(|stored| stored.parse::<i64>().ok())
+        .unwrap_or(0);
+    if recorded >= generated::PARSER_VERSION {
+        return;
+    }
+
+    let Ok(rows) = pipeline.db.rows_missing_parameters() else {
+        return;
+    };
+    let total = rows.len() as i64;
+    if rows.is_empty() {
+        let _ = pipeline.db.set_setting(PARSER_SETTING, &generated::PARSER_VERSION.to_string());
+        return;
+    }
+
+    eprintln!(
+        "[luma] parameter reader moved {recorded} -> {}; re-reading {total} rows",
+        generated::PARSER_VERSION
+    );
+
+    let done = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let found = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let pool = phase_pool(pipeline, "reparse");
+
+    let work = || {
+        rows.par_iter().for_each(|(id, path)| {
+            // Only a row that gains something is written. Most of these files
+            // have nothing to find, and an UPDATE apiece would rewrite most of
+            // the table to store the NULL that is already there.
+            if let Some(generation) = generated::read_generation(Path::new(path)) {
+                let _ = pipeline.db.set_generation(*id, Some(&generation));
+                let _ = pipeline.db.tag_as_generated(*id);
+                found.fetch_add(1, Ordering::SeqCst);
+            }
+
+            let finished = done.fetch_add(1, Ordering::SeqCst) + 1;
+            if finished % 500 == 0 {
+                pipeline.publish(
+                    app,
+                    ScanProgress {
+                        phase: JobPhase::Labelling,
+                        folder_id: None,
+                        done: finished,
+                        total,
+                        current: Some(path.clone()),
+                        errors: Vec::new(),
+                    },
+                );
+            }
+        });
+    };
+    match pool.as_ref() {
+        Some(pool) => pool.install(work),
+        None => work(),
+    }
+
+    // Only once the sweep completes: a version written on a partial pass would
+    // strand the remainder on the old reader for good. Interrupted, it simply
+    // runs again next launch, and the rows it already fixed no longer match.
+    let _ = pipeline.db.set_setting(PARSER_SETTING, &generated::PARSER_VERSION.to_string());
+    eprintln!(
+        "[luma] re-read {total} rows, recovered {} parameter blocks",
+        found.load(Ordering::SeqCst)
+    );
 }
 
 /// Record every file's dimensions, so the grid can lay out before it can paint.

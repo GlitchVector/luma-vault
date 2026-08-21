@@ -18,6 +18,11 @@
 //! photograph here. Measured over 1,200 random files from a real library: 25%
 //! of PNGs carried a marker against 0.3% of JPEGs. Measured over the untouched
 //! output folders of two Stable Diffusion installs, 89% still carried theirs.
+//!
+//! That JPEG figure was taken while EXIF `UserComment` went unread, and it
+//! understates them: re-measured over 400 library JPEGs this parser called
+//! ungenerated, 1.5% carried a full parameter block in UTF-16 that nothing was
+//! decoding — about 950 files in a 158,000-row library.
 //! This finds images that *declare* themselves, which is a different and much
 //! smaller set than "images that were generated". A hint, never proof of
 //! absence.
@@ -35,6 +40,16 @@ use serde::{Deserialize, Serialize};
 /// thumbnail ahead of the comment. 96KB clears both without ever reading a
 /// multi-megabyte image body.
 const HEAD_BYTES: usize = 96 * 1024;
+
+/// Bumped when this module learns to read something it could not read before.
+///
+/// A scan deliberately leaves existing rows alone, so a parser that gets better
+/// improves nothing already indexed until something re-reads those files. The
+/// startup pass compares this against what the index was last built with and
+/// re-reads the containers the change could affect — see `reparse_phase`.
+///
+/// 2: EXIF `UserComment` in UTF-16, which every JPEG Forge writes uses.
+pub const PARSER_VERSION: i64 = 2;
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
@@ -121,9 +136,14 @@ fn needs_source_image(text: &str) -> bool {
 
 /// Markers and the tool that writes them, most specific first.
 ///
-/// Used only when the structured parse finds nothing — a JPEG carrying an
-/// A1111 block in EXIF has no PNG chunk to walk, and knowing *that* it was
-/// generated is worth recording even when the parameters cannot be recovered.
+/// Used only when every structured read finds nothing: a last resort that
+/// records *that* a file was generated when its parameters cannot be recovered.
+///
+/// Every needle here is ASCII, and that is a limit rather than an oversight to
+/// be fixed in place. EXIF text is routinely UTF-16, where each of these
+/// characters is interleaved with a NUL and none of them can ever match —
+/// which is why `exif_user_comment` decodes the comment properly first, and
+/// this runs on whatever is left.
 const MARKERS: &[(&[u8], &str)] = &[
     (b"NovelAI", "NovelAI"),
     (b"invokeai_metadata", "InvokeAI"),
@@ -208,8 +228,19 @@ fn parse_raw(head: &[u8]) -> Option<Generation> {
         }
     }
 
-    // No usable chunk. A JPEG carrying an A1111 block in EXIF still reads as
-    // generated, and the block itself is plain text inside the EXIF payload.
+    // No usable chunk. A JPEG has none to walk and carries the block in EXIF
+    // `UserComment` instead — structured, with a declared length and a declared
+    // encoding, so it is read before the plain-text sweep below rather than
+    // after it.
+    let comment = exif_user_comment(head);
+    if let Some(text) = comment.as_deref() {
+        if text.contains("Negative prompt:") || text.contains("Steps: ") {
+            return Some(parse_a1111(text));
+        }
+    }
+
+    // A block sitting in the head as plain text: an EXIF payload some other
+    // tool wrote as ASCII, or a sidecar's contents embedded verbatim.
     if let Some(start) = find(head, b"Negative prompt:").or_else(|| find(head, b"Steps: ")) {
         let from = head[..start].iter().rposition(|b| *b == 0).map_or(0, |i| i + 1);
         if let Ok(text) = std::str::from_utf8(&head[from..]) {
@@ -217,7 +248,14 @@ fn parse_raw(head: &[u8]) -> Option<Generation> {
         }
     }
 
-    find_marker(head).map(|tool| Generation { tool: tool.to_string(), ..Default::default() })
+    // The comment first: a marker inside it is the file describing itself,
+    // where one loose in the head could be any byte sequence that happens to
+    // match. Same needles either way, so this only changes which is believed.
+    comment
+        .as_deref()
+        .and_then(|text| find_marker(text.as_bytes()))
+        .or_else(|| find_marker(head))
+        .map(|tool| Generation { tool: tool.to_string(), ..Default::default() })
 }
 
 /// Walk a PNG's `tEXt`/`iTXt` chunks.
@@ -288,6 +326,104 @@ fn png_text_chunks(head: &[u8]) -> Vec<(String, String)> {
         }
     }
     found
+}
+
+/// The Exif sub-IFD pointer, and `UserComment` inside it. Spec tag numbers.
+const TAG_EXIF_IFD: u16 = 0x8769;
+const TAG_USER_COMMENT: u16 = 0x9286;
+
+/// Read a file's EXIF `UserComment`, decoded from whatever it says it is.
+///
+/// This is where a JPEG keeps what a PNG keeps in `parameters`, so it is the
+/// same job as `png_text_chunks` in a different container — and a real IFD walk
+/// for the same reason: the entry carries the value's length, and that length
+/// is the only thing that says where the comment ends. `Exif\0\0` locates the
+/// block exactly as the PNG signature locates the chunk stream; every offset
+/// after it is read rather than guessed.
+///
+/// **The encoding is the whole point.** A `UserComment` opens with eight bytes
+/// naming its character set, and Forge writes `UNICODE` — UTF-16, in the byte
+/// order the TIFF header declares. Hunting those bytes for `Negative prompt:`
+/// as ASCII cannot ever match, because every character carries a NUL beside it.
+/// That is not a hypothetical: it is why a JPEG holding a complete parameter
+/// block used to index as not generated at all, and why 4-megapixel renders
+/// (Forge saves a JPEG copy of anything over its threshold) arrived with no
+/// prompt while their PNG twins were read perfectly.
+fn exif_user_comment(head: &[u8]) -> Option<String> {
+    let at = find(head, b"Exif\x00\x00")?;
+    let tiff = head.get(at.checked_add(6)?..)?;
+    // The TIFF header opens by naming its own byte order, and everything below
+    // — including the comment's text — is read in it.
+    let big = match tiff.get(..2)? {
+        b"MM" => true,
+        b"II" => false,
+        _ => return None,
+    };
+
+    let ifd0 = u32_at(tiff, 4, big)? as usize;
+    let (_, pointer_at) = ifd_entry(tiff, ifd0, TAG_EXIF_IFD, big)?;
+    let exif_ifd = u32_at(tiff, pointer_at, big)? as usize;
+    let (count, value_at) = ifd_entry(tiff, exif_ifd, TAG_USER_COMMENT, big)?;
+
+    let count = count as usize;
+    // Four bytes or fewer sit in the entry itself; anything longer — which
+    // every parameter block is — is an offset from the TIFF header. A head that
+    // stops mid-comment is the normal case for a long prompt rather than an
+    // error, so take what is there, exactly as the chunk walk does.
+    let body = if count <= 4 {
+        tiff.get(value_at..value_at.checked_add(count)?)?
+    } else {
+        let from = u32_at(tiff, value_at, big)? as usize;
+        let to = from.saturating_add(count).min(tiff.len());
+        tiff.get(from..to)?
+    };
+
+    let (code, text) = body.split_at(body.len().min(8));
+    match code {
+        b"UNICODE\0" => {
+            let units: Vec<u16> = text
+                .chunks_exact(2)
+                .map(|pair| {
+                    let pair = [pair[0], pair[1]];
+                    if big { u16::from_be_bytes(pair) } else { u16::from_le_bytes(pair) }
+                })
+                // A comment padded out to its declared length ends at the first
+                // NUL; without this the prompt picks up a tail of them.
+                .take_while(|unit| *unit != 0)
+                .collect();
+            Some(String::from_utf16_lossy(&units))
+        }
+        // The plain-text sweep would find this one anyway. Reading it here
+        // bounds it by the declared length instead of running to the end of the
+        // head and failing UTF-8 on the pixel data behind it.
+        b"ASCII\0\0\0" => Some(String::from_utf8_lossy(text).trim_end_matches('\0').to_string()),
+        _ => None,
+    }
+}
+
+/// The value length and the offset of the value field for `tag` in one IFD.
+///
+/// An IFD is a 2-byte entry count followed by 12-byte entries: tag, type,
+/// count, then four bytes that are either the value or an offset to it.
+fn ifd_entry(tiff: &[u8], ifd: usize, tag: u16, big: bool) -> Option<(u32, usize)> {
+    let entries = u16_at(tiff, ifd, big)? as usize;
+    for index in 0..entries {
+        let entry = ifd.checked_add(2)?.checked_add(index.checked_mul(12)?)?;
+        if u16_at(tiff, entry, big)? == tag {
+            return Some((u32_at(tiff, entry.checked_add(4)?, big)?, entry.checked_add(8)?));
+        }
+    }
+    None
+}
+
+fn u16_at(bytes: &[u8], at: usize, big: bool) -> Option<u16> {
+    let pair: [u8; 2] = bytes.get(at..at.checked_add(2)?)?.try_into().ok()?;
+    Some(if big { u16::from_be_bytes(pair) } else { u16::from_le_bytes(pair) })
+}
+
+fn u32_at(bytes: &[u8], at: usize, big: bool) -> Option<u32> {
+    let quad: [u8; 4] = bytes.get(at..at.checked_add(4)?)?.try_into().ok()?;
+    Some(if big { u32::from_be_bytes(quad) } else { u32::from_le_bytes(quad) })
 }
 
 /// Parse the Automatic1111 / Forge parameter block.
@@ -758,6 +894,119 @@ pub fn characters_of(prompt: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A JPEG head carrying one EXIF `UserComment`, in the byte order asked
+    /// for. Hand-built because the offsets are the thing under test: every one
+    /// below is relative to the TIFF header, which is what a reader that
+    /// guessed instead of walking would get wrong.
+    fn exif_jpeg(comment: &str, big: bool) -> Vec<u8> {
+        let mut payload = b"UNICODE\0".to_vec();
+        for unit in comment.encode_utf16() {
+            payload.extend_from_slice(&if big { unit.to_be_bytes() } else { unit.to_le_bytes() });
+        }
+        exif_jpeg_payload(payload, big)
+    }
+
+    /// The same head around an already-built `UserComment` value, so a test can
+    /// choose the character code as well as the text.
+    fn exif_jpeg_payload(payload: Vec<u8>, big: bool) -> Vec<u8> {
+        let u16b = |value: u16| if big { value.to_be_bytes() } else { value.to_le_bytes() };
+        let u32b = |value: u32| if big { value.to_be_bytes() } else { value.to_le_bytes() };
+
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(if big { b"MM" } else { b"II" });
+        tiff.extend_from_slice(&u16b(42));
+        tiff.extend_from_slice(&u32b(8)); // IFD0 starts here
+
+        tiff.extend_from_slice(&u16b(1)); // IFD0: one entry
+        tiff.extend_from_slice(&u16b(TAG_EXIF_IFD));
+        tiff.extend_from_slice(&u16b(4)); // LONG
+        tiff.extend_from_slice(&u32b(1));
+        tiff.extend_from_slice(&u32b(26)); // the Exif sub-IFD
+        tiff.extend_from_slice(&u32b(0)); // no IFD1
+
+        tiff.extend_from_slice(&u16b(1)); // sub-IFD: one entry
+        tiff.extend_from_slice(&u16b(TAG_USER_COMMENT));
+        tiff.extend_from_slice(&u16b(7)); // UNDEFINED
+        tiff.extend_from_slice(&u32b(payload.len() as u32));
+        tiff.extend_from_slice(&u32b(44)); // where the payload sits
+        tiff.extend_from_slice(&u32b(0));
+        assert_eq!(tiff.len(), 44, "the entry above promises the payload starts here");
+        tiff.extend_from_slice(&payload);
+
+        let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe1];
+        jpeg.extend_from_slice(&((tiff.len() + 8) as u16).to_be_bytes());
+        jpeg.extend_from_slice(b"Exif\x00\x00");
+        jpeg.extend_from_slice(&tiff);
+        // Pixel data behind the metadata. Deliberately not valid UTF-8: the
+        // plain-text fallback runs to the end of the head, and this is what it
+        // chokes on when it is asked to carry a JPEG.
+        jpeg.extend_from_slice(&[0xff, 0xda, 0x9c, 0x00, 0xfe, 0x80, 0x7f]);
+        jpeg
+    }
+
+    const BLOCK: &str = concat!(
+        "1girl, solo, purple hair, gigantic ass\n",
+        "Negative prompt: worst quality, bad hands\n",
+        "Steps: 28, Sampler: Euler a, CFG scale: 5, Seed: 12345, Model: waiNSFWIllustrious_v110",
+    );
+
+    #[test]
+    fn reads_a_forge_parameter_block_out_of_utf16_exif() {
+        // The regression this module was fixed for: Forge saves a JPEG copy of
+        // any render over its size threshold, and every one of them indexed as
+        // not generated at all while its PNG twin read perfectly.
+        let found = parse(&exif_jpeg(BLOCK, true)).expect("a JPEG that says this much is generated");
+        assert_eq!(found.tool, "Stable Diffusion");
+        assert_eq!(found.prompt.as_deref(), Some("1girl, solo, purple hair, gigantic ass"));
+        assert_eq!(found.negative_prompt.as_deref(), Some("worst quality, bad hands"));
+        assert_eq!(found.steps.as_deref(), Some("28"));
+        assert_eq!(found.model.as_deref(), Some("waiNSFWIllustrious_v110"));
+    }
+
+    #[test]
+    fn honours_the_byte_order_the_tiff_header_declares() {
+        // Reading UTF-16 in the wrong order does not fail, it returns CJK
+        // mojibake — so a reader that assumed one order would quietly store a
+        // prompt of nonsense rather than nothing at all.
+        assert_eq!(parse(&exif_jpeg(BLOCK, true)), parse(&exif_jpeg(BLOCK, false)));
+        assert_eq!(
+            parse(&exif_jpeg(BLOCK, false)).and_then(|g| g.prompt).as_deref(),
+            Some("1girl, solo, purple hair, gigantic ass")
+        );
+    }
+
+    #[test]
+    fn stops_where_the_comment_does_rather_than_at_its_declared_length() {
+        // A `UserComment` is routinely padded out to a fixed size. Without the
+        // NUL guard the padding lands on the end of the settings line, and the
+        // field that suffers is whichever is last — here, the checkpoint.
+        let found = parse(&exif_jpeg(&format!("{BLOCK}\0\0\0\0"), true)).expect("generated");
+        assert_eq!(found.model.as_deref(), Some("waiNSFWIllustrious_v110"));
+    }
+
+    #[test]
+    fn an_ascii_user_comment_is_read_by_its_declared_length() {
+        // The other character code in the wild. It would also be found by the
+        // plain-text sweep, but only this path bounds it by the length instead
+        // of running into the pixel data behind it.
+        let mut payload = b"ASCII\0\0\0".to_vec();
+        payload.extend_from_slice(BLOCK.as_bytes());
+        let found = parse(&exif_jpeg_payload(payload, true)).expect("generated");
+        assert_eq!(found.prompt.as_deref(), Some("1girl, solo, purple hair, gigantic ass"));
+        assert_eq!(found.model.as_deref(), Some("waiNSFWIllustrious_v110"));
+    }
+
+    #[test]
+    fn a_jpeg_with_no_exif_says_nothing() {
+        // Precision matters more than recall here: a holiday photograph must
+        // not acquire a tool name because its bytes happened to line up.
+        let plain = [
+            0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, b'J', b'F', b'I', b'F', 0x00, 0x01, 0x02, 0x00,
+            0x9c, 0xfe, 0x80, 0x7f,
+        ];
+        assert_eq!(parse(&plain), None);
+    }
 
     #[test]
     fn the_checkpoint_is_read_from_model_not_model_hash() {
