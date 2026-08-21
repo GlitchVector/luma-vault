@@ -216,6 +216,9 @@ const dryRun = switchFlag('--dry-run')
 // What came back from that look. Replaces the migrated prompt wholesale — see
 // the option's doc comment in migrate.ts for why it lands late.
 const editedPrompt = unescapeNewlines(flag('--prompt'))
+// The other half of that look. A block reframed to a tight rung can find its
+// own rung sitting in the negative it inherited — see `MigrationTarget.negative`.
+const editedNegative = unescapeNewlines(flag('--negative'))
 const shot = flag('--shot')
 const body = flag('--body')
 // What the picture shows and its prompt never said. An img2img block keeps its
@@ -358,6 +361,7 @@ const { block: migrated, notes } = migrateGeneration(block, {
   style,
   cfg,
   prompt: editedPrompt,
+  negative: editedNegative,
 })
 
 console.log(`from  ${row.name}`)

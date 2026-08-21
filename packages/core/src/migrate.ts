@@ -143,6 +143,17 @@ export interface MigrationTarget {
    * description nobody agreed to.
    */
   prompt?: string
+  /**
+   * The negative prompt, replaced wholesale, for the same reason as `prompt`.
+   *
+   * A rung the shot asked for can already be sitting in the source's negative:
+   * a block made as a `cowboy shot` carries `close-up, portrait` there as the
+   * wide-rung backstop, and reframing it to `close-up` leaves the new rung
+   * negated by the old one. The backstop pass only ever *adds* — it cannot know
+   * which of the terms already there the caller now wants — so the removal has
+   * to come from outside.
+   */
+  negative?: string
 }
 
 export interface Migration {
@@ -1316,6 +1327,21 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       notes.push(
         'Prompt replaced with the edited one. The rewrites above still ran — their output is what ' +
           'was shown for editing — but the text they produced is superseded by this.',
+      )
+    }
+  }
+
+  // The same last look, on the other half of the block — see
+  // `MigrationTarget.negative`. Before the conflict pass below, so a term the
+  // caller has already removed is not reported as removed a second time.
+  if (target.negative !== undefined) {
+    const edited = target.negative.trim()
+    if (edited && edited !== nextNegative.trim()) {
+      nextNegative = edited
+      notes.push(
+        'Negative replaced with the edited one. The backstop and conflict passes still ran — ' +
+          'their output is what was shown for editing — but the text they produced is superseded ' +
+          'by this.',
       )
     }
   }
