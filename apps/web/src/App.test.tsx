@@ -62,6 +62,8 @@ const starBatches: Array<{ ids: number[]; stars: number | null }> = []
 const timelineQueries: Array<Record<string, unknown>> = []
 /** When set, the next timeline fetches reject with this message. */
 let timelineFailure: string | null = null
+/** When set, the grid's own query rejects as if the host had gone away. */
+let queryHostDown: string | null = null
 /** The character leaderboard the sidebar shows. Empty unless a case sets it. */
 let topCharactersState: Array<{ name: string; count: number }> = []
 /** Every query the leaderboard was asked with, so following can be asserted. */
@@ -116,7 +118,22 @@ let deviantArtAccountState = {
 /** The account's gallery folders. Swapped per test, empty by default. */
 let deviantArtGalleryList: Array<{ folderId: string; name: string }> = []
 
-vi.mock('#/lib/native.ts', () => ({
+vi.mock('#/lib/native.ts', () => {
+  // Declared inside the factory, not beside the other fakes: `vi.mock` is
+  // hoisted above every top-level statement, so a class declared out there is
+  // still in its temporal dead zone when the factory runs.
+  class HostUnreachableError extends Error {
+    constructor(readonly host: string | null) {
+      super(host ? `cannot reach ${host}` : 'cannot reach the host')
+      this.name = 'HostUnreachableError'
+    }
+  }
+
+  return {
+  // The real module exports this, and `useLibrary` tests errors against it with
+  // `instanceof`. Leaving it out does not fail loudly — `instanceof undefined`
+  // throws from inside the catch — so it has to be mocked too.
+  HostUnreachableError,
   isTauri: () => backendState.kind === 'tauri',
   backend: () => Promise.resolve(backendState),
   isHttpSession: () => backendState.kind === 'http',
@@ -138,6 +155,7 @@ vi.mock('#/lib/native.ts', () => ({
     ]),
   queryMedia: (query: { offset: number; limit: number; minStars?: number | null }) => {
     queries.push(query)
+    if (queryHostDown) return Promise.reject(new HostUnreachableError(queryHostDown))
     const matching =
       query.minStars == null ? library : library.filter((item) => (item.stars ?? 0) >= query.minStars!)
     return Promise.resolve({
@@ -294,7 +312,8 @@ vi.mock('#/lib/native.ts', () => ({
     library = library.filter((item) => !ids.includes(item.id))
     return Promise.resolve({ deleted: ids.length, missing: 0, failed: 0, errors: [] })
   },
-}))
+  }
+})
 
 beforeEach(() => {
   library = Array.from({ length: LIBRARY_SIZE }, (_, index) => makeItem(LIBRARY_SIZE - index))
@@ -303,6 +322,7 @@ beforeEach(() => {
   starBatches.length = 0
   timelineQueries.length = 0
   timelineFailure = null
+  queryHostDown = null
   topCharactersState = []
   topCharacterQueries.length = 0
   excludeCalls.length = 0
@@ -2235,6 +2255,42 @@ describe('what the timeline sends and how it fails', () => {
 
     expect(await screen.findByText(/The timeline could not be read/)).toBeTruthy()
     expect(screen.queryByText(/usable date/)).toBeNull()
+  })
+})
+
+describe('a host that stops answering', () => {
+  /**
+   * A remote session whose host went away showed "Nothing matches these
+   * filters" over an untouched library, hinting to clear a filter that was
+   * already "All" — and beside it a total left over from the last good query,
+   * which no successful query can produce, since `query_media` counts and pages
+   * over the same WHERE.
+   */
+  it('says it cannot reach the host rather than blaming the filters', async () => {
+    backendState = { kind: 'http', host: 'AGENTBOB', folders: 1, items: 12 }
+    queryHostDown = 'AGENTBOB'
+    render(<App />)
+
+    expect(await screen.findByText(/cannot reach AGENTBOB/)).toBeTruthy()
+    expect(screen.queryByText(/Nothing matches these filters/)).toBeNull()
+    expect(screen.queryByText(/Clear a filter/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+  })
+
+  it('retries the query when asked, and shows the grid once the host is back', async () => {
+    backendState = { kind: 'http', host: 'AGENTBOB', folders: 1, items: 12 }
+    queryHostDown = 'AGENTBOB'
+    // One row, so the assertion does not depend on where the default library's
+    // lowest id lands relative to the first page.
+    library = [makeItem(1)]
+    render(<App />)
+    await screen.findByText(/cannot reach AGENTBOB/)
+
+    queryHostDown = null
+    screen.getByRole('button', { name: 'Retry' }).click()
+
+    expect(await screen.findByTitle('image-1.png')).toBeTruthy()
+    expect(screen.queryByText(/cannot reach/)).toBeNull()
   })
 })
 

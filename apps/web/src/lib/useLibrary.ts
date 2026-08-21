@@ -12,6 +12,25 @@ import * as native from './native.ts'
 
 const PAGE_SIZE = 300
 
+/**
+ * Why the grid has no rows, when the reason is not "nothing matched".
+ *
+ * `unreachable` separates the two failures the UI has to word differently: a
+ * host that stopped answering is retryable and nothing to do with the query,
+ * while anything else is the call itself being refused.
+ */
+export type QueryFailure = { unreachable: boolean; message: string }
+
+function describeFailure(error: unknown): QueryFailure {
+  if (error instanceof native.HostUnreachableError) {
+    return { unreachable: true, message: error.message }
+  }
+  return {
+    unreachable: false,
+    message: error instanceof Error ? error.message : 'the query failed',
+  }
+}
+
 export const DEFAULT_QUERY: MediaQuery = {
   folderId: null,
   kind: null,
@@ -88,6 +107,11 @@ export function useLibrary() {
   // has to know where the results end without waiting for one.
   const totalRef = useRef(0)
   const [loading, setLoading] = useState(true)
+  // Non-null when the last query threw. Without it a failed query and a filter
+  // that genuinely matches nothing are the same thing on screen — both are
+  // just an empty `items` — and the grid tells you to clear a filter when the
+  // host is switched off.
+  const [failure, setFailure] = useState<QueryFailure | null>(null)
 
   const dirty = useRef(false)
   // Guards against an out-of-order response overwriting a newer one: a slow
@@ -129,6 +153,7 @@ export function useLibrary() {
       ])
       setCharacters(nextCharacters)
       if (ticket !== generation.current) return
+      setFailure(null)
       setItems((previous) => {
         const merged = append ? [...previous, ...page.items] : page.items
         loaded.current = merged.length
@@ -139,9 +164,16 @@ export function useLibrary() {
     } catch (error) {
       if (ticket === generation.current) {
         console.error('query failed', error)
+        setFailure(describeFailure(error))
         if (!append) {
           setItems([])
           loaded.current = 0
+          // A total from the last good query left beside zero rows is a state
+          // no successful query can produce — `query_media` counts and pages
+          // over the same WHERE — so it reads as the filters being broken
+          // rather than as nothing having been asked.
+          setTotal(0)
+          totalRef.current = 0
         }
       }
     } finally {
@@ -391,6 +423,7 @@ export function useLibrary() {
     items,
     total,
     loading,
+    failure,
     loadMore,
     reload,
     actions,

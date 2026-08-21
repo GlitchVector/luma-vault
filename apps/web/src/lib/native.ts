@@ -219,13 +219,42 @@ async function httpLogout(): Promise<void> {
   await fetch('/luma/v1/logout', { method: 'POST', credentials: 'same-origin' })
 }
 
+/**
+ * The host stopped answering mid-session.
+ *
+ * Worth its own type because it is the one failure where the library is fine
+ * and the wire is not. Every other throw here means a call was refused and
+ * saying so is enough; this one means nothing can be asked at all, and a caller
+ * that treats it as "no results" shows an empty grid blaming the filters for a
+ * machine being switched off.
+ */
+export class HostUnreachableError extends Error {
+  constructor(readonly host: string | null) {
+    super(host ? `cannot reach ${host}` : 'cannot reach the host')
+    this.name = 'HostUnreachableError'
+  }
+}
+
 async function httpCall<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const response = await fetch('/luma/v1/rpc', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: command, args: args ?? {} }),
-  })
+  let response: Response
+  try {
+    response = await fetch('/luma/v1/rpc', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: command, args: args ?? {} }),
+    })
+  } catch {
+    // `fetch` rejects only when the request never completed at all — the host
+    // is down, asleep, or off the network. Forget the cached detection on the
+    // way out: `backend()` caches on the premise that the world cannot change
+    // under a loaded page, which holds for the desktop shell and does not hold
+    // across a wire. Without this the page keeps believing in a host that
+    // stopped existing and every later call fails the same silent way.
+    const host = detected?.kind === 'http' ? detected.host : null
+    detected = null
+    throw new HostUnreachableError(host)
+  }
   if (response.status === 401) {
     // The host restarted sharing, which rotates the session token. Reloading
     // lands on the login screen — one honest state instead of a page where

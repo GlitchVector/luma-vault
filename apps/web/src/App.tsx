@@ -1064,7 +1064,29 @@ export function App() {
             ) : (
               <>
                 <div className="p-4">
-                  {items.length === 0 && !library.loading ? (
+                  {library.failure ? (
+                    // Checked before the empty case on purpose: a query that
+                    // threw also leaves `items` empty, and falling through to
+                    // "nothing matches" blames the filters for a host that
+                    // stopped answering.
+                    <EmptyState
+                      title={
+                        library.failure.unreachable
+                          ? library.failure.message
+                          : 'That query could not be run'
+                      }
+                      hint={
+                        library.failure.unreachable
+                          ? 'The library is still there — this page just cannot reach the machine sharing it. Check it is awake and still sharing, then retry.'
+                          : library.failure.message
+                      }
+                      action={
+                        <Button variant="primary" onClick={() => library.reload()}>
+                          Retry
+                        </Button>
+                      }
+                    />
+                  ) : items.length === 0 && !library.loading ? (
                     <EmptyState
                       title={query.search ? `Nothing matches "${query.search}"` : 'Nothing matches these filters'}
                       hint={
