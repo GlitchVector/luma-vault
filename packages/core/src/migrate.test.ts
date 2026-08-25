@@ -56,6 +56,18 @@ describe('migrateGeneration, SD1.5 to SDXL', () => {
     expect(settings).toMatch(/Hires upscale: 1\.6/)
   })
 
+  it('keeps the hires result under the four megapixels that make Forge write a JPEG twin', () => {
+    // The landscape shot is the one that reaches this. A portrait block
+    // reframed onto 1216x832 wants 2.19 and takes the 2x ceiling, which is
+    // 2432x1664 — 4.047 MP, just over. Forge then saves a downscaled JPEG
+    // beside the PNG and the scanner indexes it as a second row.
+    const landscape = migrateGeneration(SD15, { ...TO_XL, size: '1216x832' })
+    const factor = Number(/Hires upscale: ([\d.]+)/.exec(landscape.block)?.[1])
+
+    expect(factor).toBeLessThanOrEqual(1.95)
+    expect(1216 * factor * (832 * factor)).toBeLessThan(4_000_000)
+  })
+
   it('adds the quality tags booru-trained models expect', () => {
     expect(block).toContain('masterpiece, best quality')
   })

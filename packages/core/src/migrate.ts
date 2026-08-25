@@ -723,6 +723,16 @@ const V_PRED_SAFE = /^euler/i
  * rung — the encoder treats two as competing instructions, not a midpoint —
  * so a reframe removes every rung before adding the requested one.
  */
+/**
+ * Forge's `img_downscale_threshold`, in pixels.
+ *
+ * Its `export_for_4chan` setting saves an extra, downscaled JPEG of any render
+ * past this — a real file beside the PNG, which the scanner has no reason not
+ * to index, so the generation lands in the library twice. The setting is not
+ * ours to turn off from here, but the hires factor is ours to pick.
+ */
+const FOUR_MEGAPIXELS = 4_000_000
+
 const SHOT_LADDER = [
   'close-up',
   'portrait',
@@ -1591,6 +1601,35 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
             `${Math.round(finalHeight * clamped)}px.`
           : `Hires upscale ${upscale} → ${clamped}, keeping the final height near the original ` +
             `${aimed}px.`,
+      )
+    }
+  }
+
+  // Independent of the rescale above, and after it on purpose: whatever factor
+  // we end up asking for, the *result* must stay under Forge's four-megapixel
+  // line. Past it `export_for_4chan` writes a second, JPEG copy of the render
+  // beside the PNG, and since that copy is a real file the scanner indexes it
+  // as its own row — one generation arriving in the library twice.
+  //
+  // Measured: the landscape ass close-up is the only shot that reaches this.
+  // A 832x1216 block at 1.5 reframed onto 1216x832 wants 2.19 and takes the 2x
+  // ceiling, which is 2432x1664 — 4.047 MP, 1.2% over. 1.95 lands it at
+  // 2371x1622 and under, which no eye will pick out of a line-up.
+  //
+  // Only ever reduces: the ceiling is floored onto the same 0.05 grid, and a
+  // canvas already past the threshold on its own cannot be rescued by the hires
+  // factor at all, so the 1.1 floor still wins there rather than this.
+  const asked = Number(next.get('Hires upscale') ?? get('Hires upscale') ?? '0')
+  const shape = (next.get('Size') ?? '').match(/(\d+)x(\d+)/)
+  if (asked > 1 && shape) {
+    const pixels = Number(shape[1]) * Number(shape[2])
+    const ceiling = Math.floor(Math.sqrt(FOUR_MEGAPIXELS / pixels) * 20) / 20
+    const capped = Math.max(1.1, Math.min(asked, ceiling))
+    if (capped < asked) {
+      next.set('Hires upscale', String(capped))
+      notes.push(
+        `Hires upscale ${asked} → ${capped}, keeping the render under the four megapixels ` +
+          `past which Forge saves a second JPEG copy the library would index separately.`,
       )
     }
   }
