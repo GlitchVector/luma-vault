@@ -323,6 +323,10 @@ beforeEach(() => {
   timelineQueries.length = 0
   timelineFailure = null
   queryHostDown = null
+  // jsdom's default, which `useViewportWidth` falls back to. Reset because the
+  // phone case sets it, and a leaked narrow viewport silently shrinks the tiles
+  // every later test measures.
+  globalThis.innerWidth = 1024
   topCharactersState = []
   topCharacterQueries.length = 0
   excludeCalls.length = 0
@@ -2859,6 +2863,43 @@ describe('the phone layout', () => {
     await waitFor(() =>
       expect(screen.getAllByRole('button', { name: /All folders/ })).toHaveLength(1),
     )
+  })
+
+  /**
+   * The one phone decision that is arithmetic rather than CSS, so jsdom can
+   * actually check it.
+   *
+   * **The library here is portrait, and that is the point.** The first version
+   * of this test used the square default fixture, where `fitWithin` hands the
+   * bound straight to the width — so it passed while the real grid, full of
+   * 832x1216 renders, drew four across instead of three. A square fixture
+   * cannot see the bug this is here to catch.
+   *
+   * Asserted as the property — three fit, four do not — rather than against a
+   * pixel figure, so the spacing constants and the column count cannot drift
+   * apart without this failing.
+   */
+  it('fits exactly three portrait tiles across on a phone', async () => {
+    const PHONE = 390
+    const PADDING = 32 // p-4 either side
+    const GAP = 8 // gap-2 between each pair
+    const content = PHONE - PADDING
+    globalThis.innerWidth = PHONE
+    library = Array.from({ length: 12 }, (_, index) => ({
+      ...makeItem(index + 1),
+      width: 832,
+      height: 1216,
+      thumbWidth: 832,
+      thumbHeight: 1216,
+    }))
+
+    render(<App />)
+    const tile = await screen.findByTitle('image-1.png')
+    const width = Number.parseFloat(tile.style.width)
+
+    expect(width).toBeGreaterThan(0)
+    expect(3 * width + 2 * GAP).toBeLessThanOrEqual(content)
+    expect(4 * width + 3 * GAP).toBeGreaterThan(content)
   })
 
   it('closes the drawer from its backdrop without changing anything', async () => {

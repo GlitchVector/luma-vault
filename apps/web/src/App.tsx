@@ -44,6 +44,33 @@ import { MD_BREAKPOINT, useViewportWidth } from '#/lib/useViewport.ts'
 
 const TILE_SIZE_KEY = 'luma.tileSize'
 
+/** How many portrait tiles a phone row should hold. See {@link phoneTileBound}. */
+const PHONE_COLUMNS = 3
+/** The grid's own spacing: `p-4` either side, and a `gap-2` between each pair. */
+const GRID_PADDING = 32
+const GRID_GAP = 8
+/**
+ * The shape this vault is overwhelmingly made of — an SDXL portrait render.
+ *
+ * Named rather than folded into a magic divisor because it is the assumption
+ * the column count rests on: change what this library mostly holds and the
+ * arithmetic below stops meaning what it says.
+ */
+const PORTRAIT_ASPECT = 832 / 1216
+
+/**
+ * The largest tile bound that still fits {@link PHONE_COLUMNS} portrait tiles
+ * in a row of `width`.
+ *
+ * Solved for the *width* rather than the bound, because that is what actually
+ * has to fit: a portrait tile is `bound × PORTRAIT_ASPECT` wide, so the bound
+ * has to be scaled back up by that ratio to leave the intended room.
+ */
+function phoneTileBound(width: number): number {
+  const content = width - GRID_PADDING - GRID_GAP * (PHONE_COLUMNS - 1)
+  return Math.floor(content / PHONE_COLUMNS / PORTRAIT_ASPECT)
+}
+
 /**
  * How long a second bare tap of Ctrl has to arrive to count as a double tap.
  *
@@ -143,13 +170,26 @@ export function App() {
   const [tileSize, setTileSize] = useState(storedTileSize)
   const viewportWidth = useViewportWidth()
   // What the grid actually draws with. On a phone the remembered desktop size
-  // would mean one column and a strip of wasted margin, so it is clamped to at
-  // least two across — while the stored value stays what it was, so the next
-  // desktop session is not surprised by a phone having visited. 40 is the
-  // grid's own spacing: p-4 either side plus one gap-2.
+  // would mean one column and a strip of wasted margin, so it is clamped down
+  // — while the stored value stays what it was, so the next desktop session is
+  // not surprised by a phone having visited.
+  //
+  // **The clamp sets the tile's *bound*, not its width**, and that distinction
+  // is the whole reason this is not simply `width / 3`. `fitWithin` gives the
+  // bound to the longest edge, so a portrait picture comes out narrower than
+  // it: at bound 166 an 832x1216 render is 114 wide. Dividing the row by three
+  // therefore does not produce three columns — it produced four, because the
+  // tiles were each a third narrower than the arithmetic assumed.
+  //
+  // So the aspect has to be named. PHONE_COLUMNS is what this targets *for a
+  // portrait render*, which is what this vault overwhelmingly holds; squarer
+  // pictures take their bound as their width and fewer of them fit, which is
+  // correct rather than a bug. A wrapping grid of aspect-true tiles cannot
+  // promise a fixed column count across mixed shapes, and pretending otherwise
+  // is what made the last attempt wrong.
   const gridTileSize =
     viewportWidth < MD_BREAKPOINT
-      ? Math.min(tileSize, Math.floor((viewportWidth - 40) / 2))
+      ? Math.min(tileSize, phoneTileBound(viewportWidth))
       : tileSize
   // The ceiling for animated tiles, which ignore the slider and take their own
   // pixel size. Only a stop against one huge GIF widening the wall past the
