@@ -18,6 +18,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -107,6 +108,10 @@ struct Worker {
     /// Carried so a respawn reproduces the worker it replaces — a throttled
     /// worker that came back unthrottled would quietly undo the setting.
     env: Vec<(String, String)>,
+    /// Joined on drop. Detached, this thread outlives the pool and sits blocked
+    /// on a pipe read — allocating a `String` per line — while the process tears
+    /// its heap down around it.
+    reader: Option<JoinHandle<()>>,
 }
 
 impl Worker {
@@ -129,7 +134,7 @@ impl Worker {
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
 
         let (tx, rx) = bounded::<String>(64);
-        std::thread::spawn(move || {
+        let reader = std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
                 match line {
                     Ok(line) => {
@@ -150,6 +155,7 @@ impl Worker {
             python: python.to_path_buf(),
             script: script.to_path_buf(),
             env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            reader: Some(reader),
         };
 
         // The worker announces itself once the model is loaded. Waiting for it
@@ -246,6 +252,11 @@ impl Drop for Worker {
         let _ = self.stdin.flush();
         let _ = self.child.kill();
         let _ = self.child.wait();
+        // After the child is gone the pipe is at EOF, so this returns promptly
+        // rather than blocking on a read that would never complete.
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
     }
 }
 
