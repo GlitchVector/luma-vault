@@ -1080,6 +1080,39 @@ function dropTerms(text: string, unwanted: string[]): { text: string; removed: s
   return { text: kept.join(', '), removed }
 }
 
+/**
+ * The chunk separator, on its own line because Forge only reads it standing
+ * alone between whitespace.
+ */
+const BREAK_LINE = 'BREAK'
+
+/**
+ * Put imposed material into the prompt's leading chunk, opening one if needed.
+ *
+ * CLIP encodes 75 tokens per chunk and a migrated prompt routinely runs past
+ * that, so the boundary lands *somewhere* either way — the only question is
+ * whether the migration chooses it. Left alone the cut falls at whatever comma
+ * sits near token 75, which is reliably mid-outfit, and the tags either side of
+ * it stop informing each other.
+ *
+ * What this can choose is the boundary it already creates: everything the
+ * migration imposes (the reframe, the body override, the quality block) is not
+ * the user's wording and belongs together, ahead of the wording it inherited.
+ * It deliberately does *not* group the inherited text by concept — that means
+ * classifying and reordering someone's tags, which is `/recreate`'s job and the
+ * line between the two commands.
+ *
+ * A prompt that already carries BREAK was composed rather than inherited, so
+ * its first chunk is already the quality-and-framing group: imposed material
+ * joins that chunk instead of opening a second one in front of it.
+ */
+function prependImposed(prompt: string, imposed: string): string {
+  if (!prompt) return imposed
+  return prompt.includes(`\n${BREAK_LINE}\n`)
+    ? `${imposed},\n${prompt}`
+    : `${imposed}\n${BREAK_LINE}\n${prompt}`
+}
+
 /** `dropTerms`, one line at a time, so BREAK boundaries survive the rejoin. */
 function dropTermsByLine(text: string, unwanted: string[]): { text: string; removed: string[] } {
   const removed: string[] = []
@@ -1208,7 +1241,7 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
             : target.family === 'illustrious'
               ? ILLUSTRIOUS_QUALITY
               : XL_QUALITY
-      nextPrompt = `${quality},\n${nextPrompt}`
+      nextPrompt = prependImposed(nextPrompt, quality)
       notes.push(
         target.family === 'noob'
           ? "Added NoobAI's quality tags, which include the recency tag it was trained with."
@@ -1252,7 +1285,7 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       nextPrompt,
       families.flatMap(({ rungs }) => rungs),
     )
-    nextPrompt = cleared.text ? `${body},\n${cleared.text}` : body
+    nextPrompt = prependImposed(cleared.text, body)
     const replaced = [...new Set(cleared.removed.map((rung) => rung.toLowerCase()))]
     notes.push(
       `Imposed the asked-for body (${body})` +
@@ -1271,7 +1304,7 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
     // model satisfies them by cropping. Weighted in, with the tight rungs
     // named in the negative, it holds.
     const rung = wide ? `(${shot}:1.3)` : shot
-    nextPrompt = cleared.text ? `${rung},\n${cleared.text}` : rung
+    nextPrompt = prependImposed(cleared.text, rung)
     const replaced = [
       ...new Set(cleared.removed.map((r) => r.toLowerCase()).filter((r) => r !== shot)),
     ]
@@ -1317,7 +1350,12 @@ export function migrateGeneration(block: string, target: MigrationTarget): Migra
       else fresh.push(wanted)
     }
     if (fresh.length > 0) {
-      nextPrompt = nextPrompt ? `${nextPrompt},\n${fresh.join(', ')}` : fresh.join(', ')
+      // Its own chunk, for the same reason the imposed head gets one: these
+      // are the tags the prompt never had, and a fresh chunk stops the setting
+      // words they land behind from swallowing them at the 75-token boundary.
+      nextPrompt = nextPrompt
+        ? `${nextPrompt}\n${BREAK_LINE}\n${fresh.join(', ')}`
+        : fresh.join(', ')
       notes.push(
         `Added what the picture shows and the prompt never said: ${fresh.join(', ')}` +
           (repeated > 0 ? ` (${repeated} already there)` : '') +

@@ -252,23 +252,25 @@ free to change.** Once the tab is open the text is in Forge's box, and fixing it
 there means retyping it by hand.
 
 So show the dry run's prompt, then make a **fourth AskUserQuestion call** — one
-question, because this prompt has no BREAK chunks to split along:
+question, because the chunks a migrated prompt has are not concept groups to
+edit one at a time — the middle one is simply the wording it inherited:
 
 | Question | Options |
 |---|---|
-| The prompt below the first line | Send as migrated · Drop the tags `--add` appended · Restore the original wording |
+| The prompt below the head chunk | Send as migrated · Drop the tags `--add` appended · Restore the original wording |
 
 Put the editable text in the option `preview` so the user is judging the real
 thing rather than a description of it, and phrase the question so the escape is
 obvious — "…or choose Other and type what you want instead."
 
-**The first line is not editable, and that is what the split is for.** The
-migration puts the framing rung and the body tags on their own leading line,
-ahead of everything the person originally wrote — see the rewrite notes. Those
-are not description; they are call 2 and call 3's answers, weighted and
-deduplicated against the rungs already in the prompt. Hand-editing them is how a
-prompt ends up carrying two framing rungs that cancel. A framing or body change
-is those questions asked again, which means re-running step 4.
+**The head chunk is not editable, and that is what the split is for.** The
+migration puts the framing rung, the body tags and the quality block in a
+leading chunk of their own, ahead of everything the person originally wrote —
+see the rewrite notes. Those are not description; they are call 2 and call 3's
+answers, weighted and deduplicated against the rungs already in the prompt.
+Hand-editing them is how a prompt ends up carrying two framing rungs that
+cancel. A framing or body change is those questions asked again, which means
+re-running step 4.
 
 ### Sending it
 
@@ -278,11 +280,15 @@ pnpm migrate-prompt <image> <model> <the same flags> --prompt "<the whole prompt
 
 Three things about that flag, each of which silently ruins the result if missed:
 
-- **`--prompt` replaces the entire positive prompt, first line included.** So
-  re-attach that leading line verbatim in front of the user's text. Dropping it
-  throws away the framing and body answers with nothing saying so.
-- **Newlines are written `\n`.** pnpm on Windows cannot carry a real newline
-  through an argument. The script expands the escape.
+- **`--prompt` replaces the entire positive prompt, head chunk included.** So
+  re-attach that chunk verbatim — its lines *and* the `BREAK` after it — in
+  front of the user's text. Dropping the lines throws away the framing and body
+  answers with nothing saying so; dropping the `BREAK` silently hands the
+  boundary back to whatever comma sits near token 75.
+- **Newlines are written `\n`, and `BREAK` needs one either side.** pnpm on
+  Windows cannot carry a real newline through an argument; the script expands
+  the escape. Forge only reads `BREAK` standing alone between whitespace, so it
+  is `\nBREAK\n`, never a comma.
 - **Repeat every flag from step 4.** The run migrates from scratch; the block is
   rebuilt, not resumed, and a `--shot` left off the second run is a shot that
   never happens.

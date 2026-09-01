@@ -1215,6 +1215,75 @@ describe('the Illustrious family', () => {
   })
 })
 
+/**
+ * The chunk holding the prompt's inherited wording — the one after the head of
+ * imposed material. Located rather than indexed, because how many lines the
+ * imposed head runs to depends on which overrides were passed.
+ */
+const inheritedChunk = (block: string): string => {
+  const prompt = block.split('\nNegative prompt:')[0]!.split('\n')
+  const start = prompt.indexOf('BREAK')
+  return prompt.slice(start + 1).join('\n')
+}
+
+describe('the chunk boundaries a migration chooses', () => {
+  const BLOCK =
+    'a girl, blue hair, black dress, city street\nNegative prompt: lowres\nSteps: 20, Size: 512x768, Model: x'
+  const chunks = (block: string) =>
+    block
+      .split('\nNegative prompt:')[0]!
+      .split(`\nBREAK\n`)
+      .map((chunk) => chunk.trim())
+
+  it('puts everything it imposed ahead of the wording it inherited', () => {
+    // CLIP cuts every 75 tokens whether or not anyone chooses where. These
+    // three are not the user's words and belong together, in front.
+    const { block } = migrateGeneration(BLOCK, {
+      architecture: 'xl',
+      checkpoint: 'y',
+      family: 'illustrious',
+      shot: 'cowboy shot',
+      body: '(large breasts:1.5)',
+    })
+    const [head, inherited] = chunks(block)
+    expect(head).toContain('cowboy shot')
+    expect(head).toContain('large breasts')
+    expect(head).toContain('masterpiece')
+    expect(inherited).toContain('blue hair')
+    expect(inherited).toContain('city street')
+    // The inherited wording keeps its own order — this is not `/recreate`.
+    expect(inherited!.indexOf('blue hair')).toBeLessThan(inherited!.indexOf('city street'))
+  })
+
+  it('gives the tags it appended a chunk of their own', () => {
+    const { block } = migrateGeneration(BLOCK, {
+      architecture: 'xl',
+      checkpoint: 'y',
+      add: 'thigh strap, blue sky',
+    })
+    const last = chunks(block).at(-1)!
+    expect(last).toBe('thigh strap, blue sky')
+  })
+
+  it('joins a composed prompt rather than opening a chunk in front of it', () => {
+    // A prompt that already carries BREAK came from `/recreate`, so its first
+    // chunk is already the quality-and-framing group. A second head chunk
+    // would leave two of them arguing about what leads the prompt.
+    const composed =
+      'masterpiece, best quality\nBREAK\n1girl, blue hair\nBREAK\nblack dress' +
+      '\nNegative prompt: lowres\nSteps: 20, Size: 512x768, Model: x'
+    const { block } = migrateGeneration(composed, {
+      architecture: 'xl',
+      checkpoint: 'y',
+      shot: 'full body',
+    })
+    const parts = chunks(block)
+    expect(parts).toHaveLength(3)
+    expect(parts[0]).toContain('full body')
+    expect(parts[0]).toContain('masterpiece')
+  })
+})
+
 describe('the rendering style axis', () => {
   const BLOCK = 'a girl, blue hair\nNegative prompt: lowres\nSteps: 20, Size: 512x768, Model: x'
   const at = (style: '2d' | '2.5d' | '3d') =>
@@ -1239,12 +1308,12 @@ describe('the rendering style axis', () => {
     expect(rendered.block).toContain('realistic')
     const softNegative = soft.block.split('\n').find((l) => l.startsWith('Negative prompt:'))!
     expect(softNegative).toContain('photorealistic')
-    expect(rendered.block.split('\n')[1]).toContain('photorealistic')
+    expect(inheritedChunk(rendered.block)).toContain('photorealistic')
   })
 
   it('argues against the look it is not asking for', () => {
     const flat = at('2d')
-    expect(flat.block.split('\n')[1]).toContain('anime coloring')
+    expect(inheritedChunk(flat.block)).toContain('anime coloring')
     const negative = flat.block.split('\n').find((l) => l.startsWith('Negative prompt:'))!
     expect(negative).toContain('realistic')
   })
