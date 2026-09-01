@@ -517,6 +517,27 @@ What worked in one attempt was asking for the crop positively:
 is worth more than the shot: **a crop is something to ask for, not something to
 negate.** The negative removes content; it does not move the camera.
 
+**Keep the character tag in these crops — do not drop it.** The paragraph above
+says the *negation* lost against a prompt naming hair, eyes and a character, and
+that is easy to misread as "so remove those tags". Removing them was tried
+across a 46-shot set and is the wrong fix twice over: the crop holds perfectly
+well with the character tag present once the positive recipe is doing the work,
+and dropping it costs the wardrobe.
+
+That second half is the expensive part, and it only bites on a set whose outfit
+is *supplied by* the character tag rather than named in the wardrobe chunks —
+which is the normal shape when the character is well known. `hip focus`,
+`ass close-up` and `legs` are exactly the three shots that were dropping the
+tag, so those three came back in clothes belonging to nobody while the other
+fourteen were correct. Measured on a Pyra set: same three shots, three ways —
+tag dropped and wardrobe minimal (outfit lost), tag dropped and garments written
+out (outfit correct), tag kept and wardrobe minimal (**best** — outfit correct
+*and* the crop held).
+
+So the order is: ask for the crop positively, keep the character tag, and only
+write the garments out by hand if the character is obscure enough that its tag
+cannot carry them.
+
 **The backstop is per shot, not per run — and it cuts both ways.** `close-up,
 cropped, portrait, upper body` belongs in the negative of the `full body` and
 `wide shot` tabs and nowhere else; in a `close-up` tab it argues against the
