@@ -353,7 +353,7 @@ three. Do not halve them back without being asked.
 | 1b | Fellatio, kneeling | 8 | portrait | 4 base; 4 adding `(deepthroat:1.3), (tears:1.4)` |
 | 2 | He grips her bare breasts | 6 | portrait | `(close-up:1.6), (breast focus:1.6)`, `grabbing another's breast, groping, nipples` |
 | 3 | Missionary, legs held | 8 + 4 + 4 + 6 | portrait, then landscape | exposed → entering → `(deep penetration:1.3)` → `:1.5` + `testicles` (8 portrait across the ladder); 4 landscape repeats of the deep pair; 4 landscape `anal`; then **6 landscape with her legs wrapped around him** — `(leg lock:1.4), hug` (`legs around waist` is not a tag; `leg lock` is 3,432 and needs both the weight and the prop) |
-| 4a | Doggystyle | 6 + 10 + 6 | landscape | 6 vaginal, some with `arms behind back, (arm grab:1.4)`; then **10 anal** — plain, arm-pulled, and `(deep penetration:2), testicles` frames at the vocabulary's ceiling for depth; then **6 restrained** — `choker, collar, (chain:1.2), (chain leash:1.4), leash, (holding leash:1.3), (leash pull:1.3)` (mostly vaginal, some anal): a chained collar he holds and pulls her by. **Use a collar, not a bit gag**, and do **not** stack `head back` + `looking up` — that pair renders a head twisted past 90°. `bit gag` (2,810), `harness`, `pony play`, `head harness`, `bridle` and `reins` are all dead or near-dead; `choker` (320,504) and `collar` (157,883) hold reliably. Negate `bit gag, gag, harness` so the earlier gear does not creep in |
+| 4a | Doggystyle | 6 + 10 + 6 + 4 | landscape | 6 vaginal, some with `arms behind back, (arm grab:1.4)`; then **10 anal** — plain, arm-pulled, and `(deep penetration:2), testicles` frames at the vocabulary's ceiling for depth; then **6 restrained** — `choker, collar, (chain:1.2), (chain leash:1.4), leash, (holding leash:1.3), (leash pull:1.3)` (mostly vaginal, some anal): a chained collar he holds and pulls her by. **Use a collar, not a bit gag**, and do **not** stack `head back` + `looking up` — that pair renders a head twisted past 90°. `bit gag` (2,810), `harness`, `pony play`, `head harness`, `bridle` and `reins` are all dead or near-dead; `choker` (320,504) and `collar` (157,883) hold reliably. Negate `bit gag, gag, harness` so the earlier gear does not creep in; then **4 to close the act — she grabs her own glutes and spreads herself open**: `ass grab, (grabbing own ass:1.5), (spread ass:1.4), (spread anus:1.3), anus, ass focus, own hands together` (2 vaginal, 2 anal). The specific names are thin — `grabbing own ass` 5,574, `spread ass` 4,863 — so assemble from the thick ones (`ass grab` 25,306, `anus` 98,073, `ass focus` 21,648) and weight the specific ones as hints. **Negate `grabbing another's ass`** or the hands become his: that is the exact tag acts 6 and 7 use for him, and without the negation the beat inverts silently |
 | 4b | Presenting, gaped | 3 | portrait | **not doubled** — the one act that read fine at three. **after** the doggystyle, not before. 2 solo standing `bent over, presenting, (gaping:1.4)`; 1 solo `all fours, top-down bottom-up` with the ass **one rung up** |
 | 5 | Spooning / side fuck | 4 | landscape | `on side, sex from behind, leg lift`; negate `missionary`. Weakest act in the set — see below |
 | 5b | Standing, taken from behind | 6 | portrait | `standing, standing sex, sex from behind, bent over`, both upright, `arms behind back, (arm grab:1.4), (holding another's arm:1.3)`; negate `rope, bondage, all fours, lying` |
@@ -504,6 +504,45 @@ from her 1,582-image tag alone despite `visor` being **absent** from the
 vocabulary — but it is not strong enough to fix a colour the prompt never
 states. Her suit came out magenta instead of dark purple for exactly that
 reason. Above ~10k the tag holds the palette; below it, say the colour.
+
+**A character with no tag at all still works — if the archetype decomposes.**
+`alexstrasza`, `sylvanas_windrunner`, `yrel`, `draenei`, `warcraft`,
+`night elf`, `blood elf` are **every one absent** — the booru corpus these
+models trained on does not cover Warcraft. Alexstrasza still rendered
+convincingly from `dragon girl` (26,921), `(dragon horns:1.3)` (32,766),
+`dragon tail` (21,870), `crown` (56,908), `red hair` (424,264) and
+`bikini armor` (8,507). So an absent character tag is not the blocker; it is
+the same question one step further out — *is the archetype describable in thick
+tags?*
+
+**What actually fails is an archetype whose anatomy is untrained.** A draenei
+needs hooves and digitigrade legs: `hooves` is 2,330, `digitigrade` 1,625, and
+`animal legs`, `hoof` and `head tentacles` do not exist at all. No weighting
+rescues them — the render comes back with human legs and demon horns, reading as
+a blue demoness rather than a draenei. When the *defining anatomy* is missing
+from the vocabulary, say so before rendering and offer to cover the part that
+cannot be drawn (armoured thigh boots hide the leg question entirely) or to pick
+a different character. Contrast `dragon horns` (32,766), which exists and is
+exactly why Alexstrasza's horns sweep back correctly where the draenei's curled
+forward into `demon horns` (61,440).
+
+**An SD1.5 LoRA trigger word in an old prompt is a dead end, not a recipe.**
+A vault image whose prompt reads `WOWAlexstrasza` alongside
+`<lora:eyeLora_eyesV10:0.5>` looked like the character because a downloaded LoRA
+was doing the work. On XL that LoRA has the wrong text-encoder dimensions — it is
+parsed, matched against nothing and dropped — leaving the trigger word as
+meaningless literal text. Say this plainly when someone asks to reproduce an old
+set: the likeness came from a file, not from the prompt, and only an XL LoRA can
+bring it back.
+
+**Check the scratchpad prefix is free before queueing.** Every run writes
+`<prefix>-*.png`, and two characters sharing a two-letter prefix is not a
+cosmetic clash: colliding filenames overwrite the older set, and the survivors
+get counted and delivered as the newer character. Alexstrasza on `al-` collided
+with an earlier Alice run and nearly shipped her frames under the wrong name.
+`ls <scratchpad>/<prefix>-*.png` first; if anything answers, pick another prefix.
+When counting progress mid-run, count by prefix and confirm with `find -mmin`
+rather than trusting a bare `ls | wc -l`.
 
 **Watch the quote characters in a character tag.** `ninomae ina'nis` carries an
 apostrophe, and it is the same class of hazard as the parentheses in
