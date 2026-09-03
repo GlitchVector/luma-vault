@@ -257,6 +257,21 @@ function PromptText({ prompt, characters }: { prompt: string; characters: string
  * is the question being asked, and it cannot be missed by looking at the thing
  * you just clicked.
  */
+/**
+ * The slash commands the panel offers on a picture, in the order they are
+ * listed. All of `.claude/commands/` that takes an image — kept in step by
+ * hand, since the webview cannot read that directory.
+ */
+const CLAUDE_COMMANDS = [
+  'sdxl',
+  'checkpoint',
+  'swap',
+  'recreate',
+  'shot',
+  'shotall',
+  'photostory',
+] as const
+
 function CopyLabel({ value }: { value: string }) {
   const [copied, setCopied] = useState(false)
 
@@ -465,6 +480,25 @@ export function Lightbox({
    * grid on its old answer would show a picture the current filter excludes.
    */
   const [correcting, setCorrecting] = useState(false)
+
+  /**
+   * Which way "and move on" moves.
+   *
+   * A pass through a folder is normally forwards, so judging steps forwards —
+   * but a folder read newest-first is a pass *backwards* through time, and
+   * arriving at the far end and working back towards the present is the same
+   * one-handed rhythm in the other direction. Without this, that pass costs a
+   * second keypress per picture (rate, then two ArrowLefts to undo the step
+   * and take the next), which is exactly the friction the step exists to
+   * remove.
+   *
+   * Local to the open lightbox rather than remembered: it is a direction of
+   * travel through the pile in front of you, not a preference, and a forgotten
+   * one silently reverses every judgement key the next time the lightbox is
+   * opened. Forwards is the safe thing to come back to.
+   */
+  const [stepBack, setStepBack] = useState(false)
+  const stepDelta = stepBack ? -1 : 1
   const applyCorrection = useCallback(
     (rating: Exclude<Rating, 'unrated'> | null) => {
       if (!item) return
@@ -608,9 +642,9 @@ export function Lightbox({
         onToggleSelect(item.id)
       }
       if (alsoUpscale) onUpscale(item)
-      onStep(1)
+      onStep(stepDelta)
     },
-    [item, selected, onToggleSelect, onUpscale, onStep],
+    [item, selected, onToggleSelect, onUpscale, onStep, stepDelta],
   )
 
   /**
@@ -627,8 +661,8 @@ export function Lightbox({
     if (!item) return
     toast(`${selected ? 'Unpicked' : 'Picked'} ${item.name}`, selected ? 'muted' : 'picked')
     onToggleSelect(item.id)
-    onStep(1)
-  }, [item, selected, onToggleSelect, onStep])
+    onStep(stepDelta)
+  }, [item, selected, onToggleSelect, onStep, stepDelta])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1331,7 +1365,7 @@ export function Lightbox({
         <button
           type="button"
           onClick={() => judge(4, false)}
-          aria-label="Rate 4 stars and show the next"
+          aria-label={`Rate 4 stars and show the ${stepBack ? 'previous' : 'next'}`}
           className={cn(
             'fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom))] left-4 z-20 grid size-12 place-items-center rounded-full bg-white/10 text-2xl leading-none text-amber-200 backdrop-blur-sm active:bg-amber-400/40 md:hidden',
             // Fullscreen means fullscreen: nothing floats over the picture,
@@ -1368,9 +1402,9 @@ export function Lightbox({
           type="button"
           onClick={togglePick}
           aria-pressed={selected}
-          aria-label={
-            selected ? 'Unpick and show the next' : 'Pick for the selection and show the next'
-          }
+          aria-label={`${selected ? 'Unpick' : 'Pick for the selection'} and show the ${
+            stepBack ? 'previous' : 'next'
+          }`}
           className={cn(
             'fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom))] right-4 z-20 grid size-12 place-items-center rounded-full text-2xl leading-none backdrop-blur-sm md:hidden',
             // Lit while the row is picked — the header badge says it too,
@@ -1620,16 +1654,20 @@ export function Lightbox({
             </>
           ) : null}
 
-          {/* Both, because they take the same argument and do different things
-              with it: `/sdxl` migrates this block onto a newer checkpoint,
-              keeping the sampler, hires pass and ADetailer settings it already
-              carries; `/recreate` throws the block away and writes a fresh
-              prompt from the picture, keeping only the words. Which one is
-              wanted depends on whether the generation was good, and that is a
-              judgement made while looking at it — which is here. */}
+          {/* Every command that takes a picture, because which one is wanted
+              is a judgement made while looking at it — which is here — and
+              the filename is a counter and a seed nobody should retype. In
+              the order of how much of the picture each keeps: `/sdxl` and
+              `/checkpoint` move this block onto another model with its
+              settings intact; `/swap` keeps everything but who is in it;
+              `/recreate` throws the block away and writes a fresh prompt from
+              the picture; the last three keep the character and go *from*
+              this picture to more of them — other angles, every angle, a
+              whole shoot. */}
           <h3 className="mt-3 border-t border-white/5 pt-2 text-zinc-600">Claude Commands</h3>
-          <CopyLabel value={`/sdxl ${panelItem.name}`} />
-          <CopyLabel value={`/recreate ${panelItem.name}`} />
+          {CLAUDE_COMMANDS.map((command) => (
+            <CopyLabel key={command} value={`/${command} ${panelItem.name}`} />
+          ))}
         </aside>
       ) : null}
       </div>
@@ -1727,6 +1765,33 @@ export function Lightbox({
           <p className="text-[11px] text-zinc-500">Not classified yet.</p>
         )}
         </div>
+
+        {/* Which way rating and picking move on. Here rather than in the
+            header because the judgement keys are the footer's subject — the
+            verdict beside it is what they change — and because it has to be
+            visible while you are pressing them: the toggle silently reverses
+            a key you press dozens of times, so its state has to be readable
+            without stopping to look for it. Lit when reversed; the arrow is
+            the state, so it reads at a glance rather than by its label. */}
+        <button
+          type="button"
+          onClick={() => setStepBack((previous) => !previous)}
+          aria-pressed={stepBack}
+          aria-label="Move to the previous picture after rating or picking"
+          title={
+            stepBack
+              ? 'Rating or picking steps backwards. Click to step forwards again.'
+              : 'Rating or picking steps forwards. Click to step backwards instead.'
+          }
+          className={cn(
+            'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+            stepBack
+              ? 'bg-indigo-500/25 text-indigo-200 hover:bg-indigo-500/35'
+              : 'bg-white/10 text-zinc-400 hover:bg-white/20 hover:text-zinc-200',
+          )}
+        >
+          {stepBack ? '‹ back' : 'fwd ›'}
+        </button>
 
         {/* The source resolution, not what is on screen. Both the fitted
             view and a zoom are scalings of this, so it is the one number that

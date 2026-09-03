@@ -382,6 +382,7 @@ mod tests {
             folder_id: None,
             kind: None,
             rating: None,
+            set: None,
             sexy_only: false,
             search: String::new(),
             search_paths: false,

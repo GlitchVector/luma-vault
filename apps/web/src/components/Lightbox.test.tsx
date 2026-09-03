@@ -981,6 +981,16 @@ describe('the /sdxl hand-off', () => {
     expect(await screen.findByText('copied')).toBeTruthy()
   })
 
+  it('offers every command that takes a picture, each with this exact filename', () => {
+    // The list is the point: which command is wanted is decided while looking
+    // at the picture, so the panel has to offer the whole choice — not the two
+    // it started with — and each with the filename already typed.
+    renderLightbox({ seed: generated('00042-3746152819.png'), showGeneration: true })
+    for (const command of ['sdxl', 'checkpoint', 'swap', 'recreate', 'shot', 'shotall', 'photostory']) {
+      expect(screen.getByText(`/${command} 00042-3746152819.png`)).toBeTruthy()
+    }
+  })
+
   it('puts it on the clipboard when clicked, and says it did', async () => {
     const written: string[] = []
     Object.defineProperty(navigator, 'clipboard', {
@@ -1540,5 +1550,65 @@ describe('the touch judgement buttons', () => {
 
     const button = screen.getByRole('button', { name: 'Unpick and show the next' })
     expect(button.getAttribute('aria-pressed')).toBe('true')
+  })
+})
+
+describe('the direction the judgement keys move in', () => {
+  // Stepping is what makes rating a folder one keypress per picture. Reversing
+  // it is for a pass that runs the other way — a newest-first folder read from
+  // the far end back towards the present — and it has to reverse *every* key
+  // that steps, or the pass ends up mixing directions.
+  const press = (key: string) =>
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    })
+
+  const toggle = () => screen.getByRole('button', { name: /after rating or picking/ })
+
+  it('steps forwards until the footer toggle is on', () => {
+    const onStep = vi.fn()
+    renderLightbox({ seed: makeItem(1), onStep })
+
+    press('ArrowUp')
+    expect(onStep).toHaveBeenLastCalledWith(1)
+    expect(toggle().getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('sends both judgement keys backwards once it is on', () => {
+    const onStep = vi.fn()
+    renderLightbox({ seed: makeItem(1), onStep })
+
+    fireEvent.click(toggle())
+    expect(toggle().getAttribute('aria-pressed')).toBe('true')
+
+    press('ArrowUp')
+    expect(onStep).toHaveBeenLastCalledWith(-1)
+    press('ArrowDown')
+    expect(onStep).toHaveBeenLastCalledWith(-1)
+  })
+
+  it('leaves the plain stepping keys alone', () => {
+    // ArrowLeft and ArrowRight say which way to go themselves. Reversing them
+    // too would leave no way to move in the direction you did not choose.
+    const onStep = vi.fn()
+    renderLightbox({ seed: makeItem(1), onStep })
+
+    fireEvent.click(toggle())
+    press('ArrowRight')
+    expect(onStep).toHaveBeenLastCalledWith(1)
+    press('ArrowLeft')
+    expect(onStep).toHaveBeenLastCalledWith(-1)
+  })
+
+  it('turns back off, and the touch buttons say which way they now go', () => {
+    const onStep = vi.fn()
+    renderLightbox({ seed: makeItem(1), onStep })
+
+    fireEvent.click(toggle())
+    expect(screen.getByRole('button', { name: 'Rate 4 stars and show the previous' })).toBeTruthy()
+
+    fireEvent.click(toggle())
+    press('ArrowUp')
+    expect(onStep).toHaveBeenLastCalledWith(1)
   })
 })

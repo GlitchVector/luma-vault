@@ -140,7 +140,7 @@ but their top rung, **maximum**, is not a weight. It is this exact combo,
 pasted verbatim into the body slot:
 
 ```
-(wide hips:2), (thick thighs:2), (curvy:2), (narrow waist:2), (hyper hips:2), hip focus
+(wide hips:2), (thick thighs:2), (curvy:2), (narrow waist:2), hip focus
 ```
 
 The combo already argues the thighs at 2, so when maximum is picked, drop

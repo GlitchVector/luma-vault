@@ -125,6 +125,16 @@ export function App() {
   // The sidebar, on screens where it is a drawer rather than a column. Closed
   // by default: a phone opens onto the grid, which is the app.
   const [showLibrary, setShowLibrary] = useState(false)
+  /**
+   * Which of the sidebar's two lists is showing — who is in the library, or
+   * which sittings it holds.
+   *
+   * Not remembered, like the view toggles beside it and unlike the tile size:
+   * it answers a question you have right now — *which shoot was that* — and a
+   * session that opens on a set list you chose a week ago has to be understood
+   * before it can be used.
+   */
+  const [listing, setListing] = useState<'characters' | 'sets'>('characters')
   const [openId, setOpenId] = useState<number | null>(null)
 
   // The lightbox as a history entry, so the phone's back gesture closes it
@@ -838,6 +848,14 @@ export function App() {
       folders={folders}
       stats={library.stats}
       characters={library.characters}
+      sets={library.sets}
+      listing={listing}
+      onListing={setListing}
+      selectedSet={library.query.set}
+      onSet={(run) => {
+        setQuery({ set: run })
+        setShowLibrary(false)
+      }}
       // The name is a ready-made search term: detection found it verbatim
       // in the prompt, and search runs over prompts.
       onCharacter={(name) => {

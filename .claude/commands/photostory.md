@@ -44,22 +44,39 @@ matching.
 
 Then **always ask about the shape** — it is never assumed, even when the user
 typed a word like "thick" in the argument. One `AskUserQuestion` call, four
-single-select questions, each ladder carrying its boosted rungs so a single pick
-captures size *and* boost in one answer:
+single-select questions:
 
 | Question | Options (recommended first) |
 |---|---|
-| Breasts | `huge breasts` · `large breasts` · `gigantic breasts` · `(huge breasts:1.3)` |
-| Ass | `(huge ass:1.5)` · `big ass` · `huge ass` · `gigantic ass` |
-| Hips / thighs | `(wide hips:1.7), (thick thighs:1.6), curvy` · `wide hips, thick thighs` · `(wide hips:1.4), (thick thighs:1.4)` · maximum |
-| Narrow waist | `narrow waist` · `no narrow waist` |
+| Thickness | `<lora:thicc_slider_ixl_v12:1.0>` · `:0.6` lighter · `:1.2` heavier · `:1.5` maximum |
+| Breasts | `(huge breasts:1.3)` · `large breasts` · `(huge breasts:1.4)` · `huge breasts` |
+| Hips / thighs | `(wide hips:1.4), (thick thighs:1.5)` · `(wide hips:1.2)` · `(wide hips:1.6), (thick thighs:1.8)` · none, slider only |
+| Rear ass | `(huge ass:2)` · `(huge ass:1.7)` · `(huge ass:1.5)` |
 
-The recommended rung on each is the "thick" figure these runs settled on; the
-hips **maximum** answer is `/recreate`'s exact combo — `(wide hips:2), (thick
-thighs:2), (curvy:2), (narrow waist:2), (hyper hips:2)` — and when it is picked
-the narrow-waist question is moot (the combo already carries it). Anything typed
-under Other on any axis is passed through verbatim. The answers become the frozen
-`BODY_F` / `BODY_R` / `BODY_T` tags reused across every stage (§5).
+**The first question is the important one, and it is a LoRA, not a tag.** A tag
+names a *part* and only works when that part is in frame — which is why a
+tag-only body reads thick from behind and thin from the front, the failure this
+set spent an afternoon on. `thicc_slider_ixl_v12` is a weight-driven slider (no
+trigger word) that reshapes the *body*, so it holds at every camera angle and
+survives armour that would hide tag-driven mass. See §6's "The body is a LoRA".
+
+Three things the ladders above deliberately no longer offer:
+
+- **`gigantic ass` and `hyper hips` are not tags.** Neither exists in
+  `selected_tags.csv`, so both were doing nothing wherever they appeared —
+  including `/recreate`'s and `/sdxl`'s "maximum combo", now corrected.
+  `.claude/shot-tags.md` still *reads* `hyper hips` when detecting a rung from
+  an old block, which is right: old prompts contain it even though it is inert.
+- **No `narrow waist` question.** The slider already narrows the waist; the tag
+  on top pinches the torso to nothing. Leave it out unless the user asks.
+- **The ass tag is asked once, for the rear.** It is not a front-frame size
+  control — above roughly 1.4 it *overrides framing*, turning a `facing viewer`
+  frame rear-on. Front frames get it at 1.2–1.3 and let the slider carry the
+  shape; §5 freezes the two variants.
+
+Anything typed under Other on any axis is passed through verbatim. The answers
+become the frozen `BODY_F` / `BODY_R` / `BODY_T` tags reused across every stage
+(§5), plus the `SLIDER` / `SLIDER_ACT` pair.
 
 The **style** question is asked too, exactly as `/recreate` step 3 does. The
 **shot** question is not asked: this command decides framing per stage.
@@ -379,6 +396,44 @@ the head-over-an-edge geometry has only `upside-down` and `table` to stand on.
 Neither is broken enough to drop, but expect a lower keeper rate and do not read
 a bad frame there as a prompt error. Act 8 is the case that *was* bad enough.
 
+### The body is a LoRA, not a tag stack — measured across three more runs
+
+**A tag names a part; a LoRA reshapes a body.** That is the whole finding. A
+part tag only pays out when that part is in frame, so a tag-built figure reads
+thick from behind and thin from the front no matter how the weights are pushed —
+and the vocabulary runs out long before the shape arrives: **there is no hip tag
+above `wide hips` (32,326)**. `huge hips`, `thunder thighs`, `pear-shaped` and
+`hyper hips` are all absent. `(wide hips:2)` is the ceiling, and past about 1.8
+it stops reading as width and starts reading as a hard shelf at the pelvis.
+
+`thicc_slider_ixl_v12` (Civitai 217340) is the instrument instead. It is a
+**slider**: no trigger word, weight *is* the dial, and it keeps scaling where
+ordinary body LoRAs saturate — `bottomheavy_ixl_v02` collapses at 1.9 (character
+lost, render goes soft) and its real ceiling is ~1.3. Useful range: **1.0
+natural, 1.2 heavier, 1.5 hyper**; 2.5 overshoots and starts re-clothing the
+subject. It survives armour, which tag-driven mass does not — plate over the
+thighs hides exactly the mass a thigh tag puts there.
+
+**Run it at half weight in the act stage.** It is a blunt global transform, not
+an anatomy-aware one. On posed and standing frames it reshapes cleanly; in the
+act frames, where the pose already strains the anatomy, it deforms instead —
+that is where non-aesthetic shapes come from. Keep a `SLIDER` / `SLIDER_ACT`
+pair and switch on `ACTMODE`, exactly as the character LoRA already does.
+
+**Two tags that look right and are not.** `abs` (77,016) and `toned` (29,061)
+genuinely narrow the torso — a real lever, since the model reads hip width
+*relative* to the torso above it — but they also *harden* it, which is wrong for
+a soft figure. Negate them. And `skinny` narrows the whole body rather than just
+the torso, taking the thighs with it.
+
+**A negative cannot turn a body, only argue against one.** `looking at viewer`
+turns the *head*; a front frame stays rear-on until the positive asserts
+`(facing viewer:1.3), straight-on` **and** the negative carries
+`(from behind:1.5)` — weighted, because `from behind` is 194,007 images against
+`facing viewer`'s 46,277 and loses unweighted. Some characters never need this;
+one in cheeky shorts needed both halves on every front frame. Wire it into the
+frame helper rather than per frame.
+
 ### Five things measured on the first real run
 
 **Position names are the thin end of the vocabulary; their components are the
@@ -582,9 +637,20 @@ Always the queue, never tabs — the count is far past two:
 node --env-file-if-exists=.env --experimental-strip-types \
   scripts/open-in-forge.mjs --model <m> --style <s> \
   --queue --label "<stage>-<n>-<shot>" --render "<scratchpad>/<same>.png" \
+  --set "photostory/<character>/<stamp>" --shot-label "<stage> — <shot>" \
   --prompt "..." --negative "..." --adetailer-prompt "..."
 pnpm queue --drain
 ```
+
+**`--set` is what makes the shoot one thing.** A photostory is a progression,
+and a progression scattered through a day's output folder is a pile of
+unrelated renders again the moment the session closes — which is the problem
+this command exists to solve. `<stamp>` is `YYYYMMDDThhmm`, fixed **once** at
+the start and repeated verbatim on every queued job across every stage: a fresh
+stamp per stage would file each stage as a set of its own and lose the
+progression. The flag rides through the queue, so it survives the drain
+happening hours later. `--shot-label` says what the stage is, and is what lets
+the set be read in the order it was shot rather than by filename.
 
 Then `SendUserFile` per stage as each completes, captioned with the stage and
 the shot. Send **stage by stage rather than at the end** — the point of a

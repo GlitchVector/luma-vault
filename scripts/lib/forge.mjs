@@ -376,11 +376,20 @@ export function openWithBlock(block) {
  * `override_settings`, per request. That is also why this is safe to call while
  * a batch runs, where `selectCheckpoint` would refuse.
  *
- * @returns the scratch path, the seed, and the sentence to print about where
- *   the library's copy came from — which the caller cannot work out itself.
+ * `set` files the picture into a command run — see `sets.mjs`. Passing it is
+ * what makes forty-six separate invocations of this one `/shotall` rather than
+ * forty-six unrelated renders, and it is deliberately the *only* thing a caller
+ * has to do about sets: everything else about the run is discovered here.
+ *
+ * @returns the scratch path, the seed, the sentence to print about where the
+ *   library's copy came from — which the caller cannot work out itself — and
+ *   the manifest the picture was filed into, if any.
  */
-export async function renderWithBlock(block, destination) {
+export async function renderWithBlock(block, destination, set = null) {
   const { toApiPayload } = await import('../../packages/core/src/migrate.ts')
+  // Read before the request, so a set can tell this render's output from the
+  // frames a bracket already made with the same seed.
+  const since = Date.now()
   const answer = await forge('/sdapi/v1/txt2img', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -413,7 +422,17 @@ export async function renderWithBlock(block, destination) {
     // The info blob is a convenience, not the result. A build that changes its
     // shape must not cost us the picture we already have on disk.
   }
-  return { path: destination, seed, note }
+
+  // File it into its run, if this render belongs to one. After the picture is
+  // safely on disk and deliberately unable to fail the render: recording where
+  // a shot went is worth less than the shot.
+  let filed = null
+  if (set && seed !== undefined) {
+    const { recordMember } = await import('./sets.mjs')
+    filed = await recordMember(set, { seed, since, label: set.label, destination })
+  }
+
+  return { path: destination, seed, note, filed }
 }
 
 /**

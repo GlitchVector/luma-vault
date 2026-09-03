@@ -68,6 +68,18 @@ let queryHostDown: string | null = null
 let topCharactersState: Array<{ name: string; count: number }> = []
 /** Every query the leaderboard was asked with, so following can be asserted. */
 const topCharacterQueries: Array<Record<string, unknown>> = []
+/** The command runs the sidebar can offer. Empty unless a case sets it. */
+let librarySetsState: Array<{
+  run: string
+  command: string
+  character: string | null
+  title: string | null
+  createdAt: number
+  count: number
+  posterId: number | null
+}> = []
+/** Every query the set list was asked with. */
+const librarySetQueries: Array<Record<string, unknown>> = []
 /** Folders the app asked to exclude, and what the backend answered. */
 const excludeCalls: string[] = []
 /** When set, excluding rejects with this — a folder that will not take the marker. */
@@ -208,6 +220,10 @@ vi.mock('#/lib/native.ts', () => {
     topCharacterQueries.push({ ...query, askedLimit: limit })
     return Promise.resolve(topCharactersState)
   },
+  librarySets: (query: Record<string, unknown>, character: string | null, limit: number) => {
+    librarySetQueries.push({ ...query, askedCharacter: character, askedLimit: limit })
+    return Promise.resolve(librarySetsState)
+  },
   scanProgress: () =>
     Promise.resolve({ phase: 'idle', folderId: null, done: 0, total: 0, current: null, errors: [] }),
   environment: () =>
@@ -329,6 +345,8 @@ beforeEach(() => {
   globalThis.innerWidth = 1024
   topCharactersState = []
   topCharacterQueries.length = 0
+  librarySetsState = []
+  librarySetQueries.length = 0
   excludeCalls.length = 0
   excludeFailure = null
   queries.length = 0
@@ -2630,6 +2648,148 @@ describe('the leaderboard follows the filters', () => {
     // with the search stripped.
     expect(topCharacterQueries.length).toBeGreaterThan(0)
     for (const asked of topCharacterQueries) expect(asked.search).toBe('')
+  })
+})
+
+describe('browsing by set', () => {
+  const RUNS = [
+    {
+      run: 'shotall-aqua-20260903t1431',
+      command: 'shotall',
+      character: 'aqua (konosuba)',
+      title: 'Aqua — every angle',
+      createdAt: 1_772_547_060_000,
+      count: 46,
+      posterId: 1,
+    },
+    {
+      run: 'photostory-aqua-20260901t0900',
+      command: 'photostory',
+      character: 'aqua (konosuba)',
+      title: null,
+      createdAt: 1_772_355_600_000,
+      count: 62,
+      posterId: 2,
+    },
+    {
+      run: 'shotall-shion-20260902t1100',
+      command: 'shotall',
+      character: 'murasaki shion',
+      title: null,
+      createdAt: 1_772_449_200_000,
+      count: 17,
+      posterId: 3,
+    },
+  ]
+
+  const setsTab = () => screen.getByRole('button', { name: 'Sets' })
+
+  it('offers the switch only once a run exists', async () => {
+    // A library nobody has shot a set in shows exactly what it showed before.
+    // A tab that opens onto "no sets yet" reads as a broken feature.
+    topCharactersState = [{ name: 'aqua (konosuba)', count: 3 }]
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+
+    expect(screen.queryByRole('button', { name: 'Sets' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Characters' })).toBeTruthy()
+  })
+
+  it('lists the runs under the character each was of, newest first', async () => {
+    librarySetsState = RUNS
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    setsTab().click()
+
+    // Grouped by who, and both the groups and the runs inside them arrive in
+    // the order the backend sent — newest first.
+    const headings = (await screen.findAllByRole('heading', { level: 4 })).map(
+      (node) => node.textContent,
+    )
+    expect(headings).toEqual(['aqua (konosuba)', 'murasaki shion'])
+
+    // A run with no title falls back to the command that made it, and every
+    // row carries its count.
+    expect(screen.getByText('Aqua — every angle')).toBeTruthy()
+    expect(screen.getByText('46')).toBeTruthy()
+    expect(screen.getByText('photostory')).toBeTruthy()
+  })
+
+  it('a run that named no character still lists, under Other', async () => {
+    // Losing a set because the command could not say who was in it would be
+    // worse than an untidy heading.
+    librarySetsState = [
+      {
+        run: 'shotall-nobody-20260903t1431',
+        command: 'shotall',
+        character: null,
+        title: 'A run of nobody in particular',
+        createdAt: 1_772_547_060_000,
+        count: 4,
+        posterId: 1,
+      },
+    ]
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    setsTab().click()
+
+    expect(await screen.findByRole('heading', { level: 4, name: 'Other' })).toBeTruthy()
+  })
+
+  it('filters the grid to one run, and the same click again clears it', async () => {
+    librarySetsState = RUNS
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    setsTab().click()
+
+    const row = (await screen.findByText('Aqua — every angle')).closest('button')
+    row?.click()
+    await waitFor(() =>
+      expect((queries.at(-1) as { set?: string | null } | undefined)?.set).toBe(
+        'shotall-aqua-20260903t1431',
+      ),
+    )
+    expect(row?.getAttribute('aria-pressed')).toBe('true')
+
+    // The thing you want to un-press is the thing you pressed.
+    screen.getByText('Aqua — every angle').closest('button')?.click()
+    await waitFor(() =>
+      expect((queries.at(-1) as { set?: string | null } | undefined)?.set).toBeNull(),
+    )
+  })
+
+  it('never narrows the set list by the set that is open', async () => {
+    // The same lesson the leaderboard learned about the search term, one step
+    // on: a list narrowed by the run you just opened would collapse to it, and
+    // there would be no way back to the other four you shot that day.
+    librarySetsState = RUNS
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    setsTab().click()
+    ;(await screen.findByText('Aqua — every angle')).closest('button')?.click()
+
+    await waitFor(() =>
+      expect((queries.at(-1) as { set?: string | null } | undefined)?.set).toBe(
+        'shotall-aqua-20260903t1431',
+      ),
+    )
+    expect(librarySetQueries.length).toBeGreaterThan(0)
+    for (const asked of librarySetQueries) {
+      expect(asked.set).toBeNull()
+      expect(asked.search).toBe('')
+    }
+  })
+
+  it('follows the grid filters, so a set with nothing visible stops being offered', async () => {
+    librarySetsState = RUNS
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    librarySetQueries.length = 0
+
+    screen.getByRole('button', { name: 'Videos' }).click()
+    await waitFor(() =>
+      expect(librarySetQueries.some((query) => query.kind === 'video')).toBe(true),
+    )
   })
 })
 

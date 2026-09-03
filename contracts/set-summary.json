@@ -1,0 +1,20 @@
+[
+  {
+    "run": "shotall-alexstrasza-20260903T1431-7f3a",
+    "command": "shotall",
+    "character": "alexstrasza",
+    "title": "Alexstrasza — every angle",
+    "createdAt": 1772547060000,
+    "count": 46,
+    "posterId": 905
+  },
+  {
+    "run": "photostory-yanagi-20260902T2210-b1c9",
+    "command": "photostory",
+    "character": null,
+    "title": null,
+    "createdAt": 1772485800000,
+    "count": 62,
+    "posterId": null
+  }
+]

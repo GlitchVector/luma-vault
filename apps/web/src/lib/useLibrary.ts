@@ -1,5 +1,6 @@
 import type {
   CharacterCount,
+  SetSummary,
   Folder,
   LibraryStats,
   MediaItem,
@@ -39,6 +40,7 @@ export const DEFAULT_QUERY: MediaQuery = {
   search: '',
   searchPaths: false,
   tag: null,
+  set: null,
   minStars: null,
   maxStars: null,
   unstarred: false,
@@ -99,6 +101,7 @@ export function useLibrary() {
   const [environment, setEnvironment] = useState<native.Environment | null>(null)
   const [exclusions, setExclusions] = useState<string[]>([])
   const [characters, setCharacters] = useState<CharacterCount[]>([])
+  const [sets, setSets] = useState<SetSummary[]>([])
 
   const [query, setQueryState] = useState<MediaQuery>(DEFAULT_QUERY)
   const [items, setItems] = useState<MediaItem[]>([])
@@ -125,16 +128,18 @@ export function useLibrary() {
   const loaded = useRef(0)
 
   const refreshFolders = useCallback(async () => {
-    const [nextFolders, nextStats, nextExclusions, nextCharacters] = await Promise.all([
+    const [nextFolders, nextStats, nextExclusions, nextCharacters, nextSets] = await Promise.all([
       native.listFolders(),
       native.libraryStats(),
       native.listExclusions(),
       native.topCharacters({ ...queryRef.current, search: '' }, 30),
+      native.librarySets({ ...queryRef.current, search: '', set: null }, null, 100),
     ])
     setFolders(nextFolders)
     setStats(nextStats)
     setExclusions(nextExclusions)
     setCharacters(nextCharacters)
+    setSets(nextSets)
   }, [])
 
   const runQuery = useCallback(async (next: MediaQuery, append: boolean) => {
@@ -143,15 +148,22 @@ export function useLibrary() {
 
     try {
       queryRef.current = next
-      const [page, nextCharacters] = await Promise.all([
+      const [page, nextCharacters, nextSets] = await Promise.all([
         native.queryMedia(next),
         // The leaderboard follows the grid's filters — except the search term.
         // Clicking a character IS a search, so a leaderboard narrowed by it
         // would collapse to that one name and there would be no way to hop to
         // another character from the list that just navigated you here.
         native.topCharacters({ ...next, search: '' }, 30),
+        // And the sets follow it minus the *set*, for exactly the same reason
+        // one step further on: opening a set filters the grid to that run, and
+        // a list narrowed by it would collapse to the one run you are already
+        // looking at — leaving no way back to the others, and no way to see
+        // that the set you opened is one of five that day.
+        native.librarySets({ ...next, search: '', set: null }, null, 100),
       ])
       setCharacters(nextCharacters)
+      setSets(nextSets)
       if (ticket !== generation.current) return
       setFailure(null)
       setItems((previous) => {
@@ -415,6 +427,7 @@ export function useLibrary() {
     folders,
     exclusions,
     characters,
+    sets,
     stats,
     progress,
     environment,

@@ -6,6 +6,7 @@
   "search": "beach",
   "searchPaths": true,
   "tag": null,
+  "set": null,
   "hideTags": [
     "document"
   ],

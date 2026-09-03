@@ -340,6 +340,14 @@ pub struct MediaQuery {
     /// Show only rows carrying this structural tag. `None` means "no filter".
     #[serde(default)]
     pub tag: Option<String>,
+    /// Show only the pictures one command run made, by its run id.
+    ///
+    /// Exact, not a search: a run id is a key, and the whole point of picking a
+    /// set is seeing that set rather than everything resembling it. Its own
+    /// field rather than a `tag`, for the reason `media_characters` is its own
+    /// table — a run must never become hideable through `hide_tags`.
+    #[serde(default)]
+    pub set: Option<String>,
     /// Show only rows rated at least this many stars. `Some(1)` is therefore
     /// "anything I have rated at all".
     #[serde(default)]
@@ -432,6 +440,30 @@ pub struct TimelineBucket {
 pub struct CharacterCount {
     pub name: String,
     pub count: i64,
+}
+
+/// One run of a command — a `/shotall`, a `/photostory` — as the sidebar lists
+/// it.
+///
+/// Assembled from the manifest the run wrote beside its pictures (see
+/// [`crate::sets`]) plus a count of how many of them the grid can currently
+/// see. The count is the *visible* one, not the manifest's: a set whose files
+/// were deleted or filtered out should say so rather than promise pictures that
+/// are not there.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SetSummary {
+    pub run: String,
+    pub command: String,
+    /// `None` for a run that could not name one — grouped under "Other".
+    pub character: Option<String>,
+    pub title: Option<String>,
+    /// When the run started, unix ms.
+    pub created_at: i64,
+    pub count: i64,
+    /// The run's first picture, for the list's thumbnail. `None` while none of
+    /// its members are indexed yet — a manifest read before its pictures were.
+    pub poster_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

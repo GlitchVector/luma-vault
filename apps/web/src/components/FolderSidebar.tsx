@@ -4,6 +4,7 @@ import {
   type CharacterCount,
   type Folder,
   type LibraryStats,
+  type SetSummary,
 } from '@luma/core'
 import { Button, cn } from '@luma/ui'
 import { MAX_TILE_SIZE, MIN_TILE_SIZE } from './MediaTile.tsx'
@@ -15,6 +16,22 @@ interface FolderSidebarProps {
   characters: CharacterCount[]
   /** A name was clicked: filter the grid to it. */
   onCharacter: (name: string) => void
+  /**
+   * The command runs the grid can currently see, newest first.
+   *
+   * Fetched whether or not the sets list is showing, because the *switch* has
+   * to know whether there is anything behind it: a tab that opens onto "no sets
+   * yet" reads as broken, and one that is hidden until the first run appears
+   * explains itself.
+   */
+  sets: SetSummary[]
+  /** Which list the panel is showing. Characters is the default. */
+  listing: 'characters' | 'sets'
+  onListing: (listing: 'characters' | 'sets') => void
+  /** The run currently filtering the grid, if any. */
+  selectedSet: string | null
+  /** A set was clicked — or the same one again, which clears it. */
+  onSet: (run: string | null) => void
   /** Longest edge of a grid tile, in CSS pixels. */
   tileSize: number
   onTileSize: (size: number) => void
@@ -34,6 +51,11 @@ export function FolderSidebar({
   stats,
   characters,
   onCharacter,
+  sets,
+  listing,
+  onListing,
+  selectedSet,
+  onSet,
   tileSize,
   onTileSize,
   selectedFolderId,
@@ -130,37 +152,59 @@ export function FolderSidebar({
           kind of question they do — what is in here — and clicking through to
           the grid is the point: the name becomes the search term, which works
           because detection found it verbatim in the prompts search runs over. */}
-      {characters.length > 0 ? (
+      {characters.length > 0 || sets.length > 0 ? (
         // `min-h-0` + an inner scroll: the list takes whatever height sits
         // between the folders and the stats, so a tall window shows all
         // thirty and a short one shows what fits and scrolls for the rest —
         // CSS adapts, nothing measures.
         <div className="mt-auto flex min-h-0 shrink flex-col border-t border-white/5 pt-3">
-          <h3 className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-zinc-600">
-            Characters
-          </h3>
-          <ul className="flex min-h-0 flex-col overflow-y-auto">
-            {characters.map((entry, index) => (
-              <li key={entry.name}>
-                <button
-                  type="button"
-                  onClick={() => onCharacter(entry.name)}
-                  title={`Show only ${entry.name}`}
-                  className="flex w-full items-baseline gap-2 rounded px-1 py-0.5 text-left text-[11px] text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
-                >
-                  {/* The rank, fixed-width so the names align in a column —
-                      two digits is enough for a top 30. */}
-                  <span className="w-5 shrink-0 text-right tabular-nums text-zinc-600">
-                    {index + 1}.
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                  <span className="shrink-0 tabular-nums text-zinc-600">
-                    {entry.count.toLocaleString()}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          {/* Two answers to "what is in here": who, and which sitting. The
+              heading is the switch rather than a control beside it — there is
+              one decision, and a separate toggle would be a second place to
+              look for it. Sets only offers itself once a run exists, so a
+              library that has never been shot in shows exactly what it did
+              before. */}
+          <div className="mb-1 flex items-baseline gap-2 px-1">
+            <SidebarTab
+              label="Characters"
+              active={listing === 'characters'}
+              onClick={() => onListing('characters')}
+            />
+            {sets.length > 0 ? (
+              <SidebarTab
+                label="Sets"
+                active={listing === 'sets'}
+                onClick={() => onListing('sets')}
+              />
+            ) : null}
+          </div>
+
+          {listing === 'characters' ? (
+            <ul className="flex min-h-0 flex-col overflow-y-auto">
+              {characters.map((entry, index) => (
+                <li key={entry.name}>
+                  <button
+                    type="button"
+                    onClick={() => onCharacter(entry.name)}
+                    title={`Show only ${entry.name}`}
+                    className="flex w-full items-baseline gap-2 rounded px-1 py-0.5 text-left text-[11px] text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
+                  >
+                    {/* The rank, fixed-width so the names align in a column —
+                        two digits is enough for a top 30. */}
+                    <span className="w-5 shrink-0 text-right tabular-nums text-zinc-600">
+                      {index + 1}.
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                    <span className="shrink-0 tabular-nums text-zinc-600">
+                      {entry.count.toLocaleString()}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <SetList sets={sets} selected={selectedSet} onSet={onSet} />
+          )}
         </div>
       ) : null}
 
@@ -272,5 +316,112 @@ export function FolderSidebar({
         Import ratings…
       </button>
     </aside>
+  )
+}
+
+/**
+ * One of the two list headings, which double as the switch between them.
+ *
+ * Styled as a heading rather than as a button on purpose: this is a label that
+ * happens to be clickable, and a pair of real buttons up here would compete
+ * with the folder list for the eye. The inactive one stays legible — a switch
+ * whose other half is invisible is a switch nobody finds.
+ */
+function SidebarTab({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'text-[10px] font-medium uppercase tracking-wide transition-colors',
+        active ? 'text-zinc-300' : 'text-zinc-600 hover:text-zinc-400',
+      )}
+    >
+      {label}
+    </button>
+  )
+}
+
+/**
+ * The sets, grouped under the character each run was of.
+ *
+ * Grouped here rather than by the query, because the grouping is presentation:
+ * the backend answers "which runs can the grid see", and which heading a run
+ * sits under is a question about this list. Runs come back newest first, so
+ * both the groups and the runs inside them are in that order without sorting
+ * anything twice — the character you last shot is the one at the top, which is
+ * nearly always the one you are looking for.
+ *
+ * A run that could not name a character still lists, under "Other". Losing a
+ * set because the command did not know who was in it would be worse than an
+ * untidy heading.
+ */
+function SetList({
+  sets,
+  selected,
+  onSet,
+}: {
+  sets: SetSummary[]
+  selected: string | null
+  onSet: (run: string | null) => void
+}) {
+  const groups: Array<[string, SetSummary[]]> = []
+  for (const set of sets) {
+    const name = set.character ?? 'Other'
+    const group = groups.find(([existing]) => existing === name)
+    if (group) group[1].push(set)
+    else groups.push([name, [set]])
+  }
+
+  return (
+    <div className="flex min-h-0 flex-col overflow-y-auto">
+      {groups.map(([name, runs]) => (
+        <div key={name} className="mb-2">
+          <h4 className="px-1 py-0.5 text-[11px] font-medium text-zinc-500">{name}</h4>
+          <ul className="flex flex-col">
+            {runs.map((set) => (
+              <li key={set.run}>
+                <button
+                  type="button"
+                  // Clicking the open set closes it. The alternative is a
+                  // separate "show everything again" control, and the thing you
+                  // want to un-press is the thing you pressed.
+                  onClick={() => onSet(selected === set.run ? null : set.run)}
+                  aria-pressed={selected === set.run}
+                  title={`${set.command} · ${new Date(set.createdAt).toLocaleString()} · ${
+                    set.count
+                  } pictures`}
+                  className={cn(
+                    'flex w-full items-baseline gap-2 rounded px-1 py-0.5 pl-3 text-left text-[11px]',
+                    selected === set.run
+                      ? 'bg-indigo-500/20 text-indigo-200'
+                      : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200',
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {set.title ?? set.command}
+                    {/* The date is what tells two runs of the same command
+                        apart, and there will be two. */}
+                    <span className="ml-1 text-zinc-600">
+                      {new Date(set.createdAt).toLocaleDateString()}
+                    </span>
+                  </span>
+                  <span className="shrink-0 tabular-nums text-zinc-600">{set.count}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
   )
 }

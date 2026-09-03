@@ -76,6 +76,13 @@ fn character_count_matches_the_shared_fixture() {
 }
 
 #[test]
+fn set_summary_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::SetSummary>>(include_str!(
+        "../../../contracts/set-summary.json"
+    ));
+}
+
+#[test]
 fn timeline_matches_the_shared_fixture() {
     round_trip::<Vec<crate::types::TimelineBucket>>(include_str!(
         "../../../contracts/timeline.json"
