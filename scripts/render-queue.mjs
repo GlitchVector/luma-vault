@@ -133,12 +133,27 @@ let failed = 0
 // after each. Where the library's copy came from depends on whether Forge is
 // local, which the drain cannot work out for itself.
 let filedNote
+// Which runs this drain filed pictures into, and how many of each refused to
+// file. A photostory is sixty-odd jobs drained while nobody is watching, so
+// "the set is there" is not something to discover in the morning by looking for
+// it in the sidebar and not finding it.
+const filedByRun = new Map()
 
 for (const job of waiting) {
   const at = new Date().toLocaleTimeString()
   process.stdout.write(`[${at}] ${job.label} … `)
   try {
-    const { path, seed, note } = await renderWithBlock(job.block, job.destination)
+    const { path, seed, note, filed } = await renderWithBlock(
+      job.block,
+      job.destination,
+      job.set ?? null,
+    )
+    if (job.set?.run) {
+      const tally = filedByRun.get(job.set.run) ?? { filed: 0, missed: 0 }
+      if (filed) tally.filed++
+      else tally.missed++
+      filedByRun.set(job.set.run, tally)
+    }
     job.status = 'done'
     job.seed = seed
     job.renderedAt = new Date().toISOString()
@@ -174,5 +189,13 @@ for (const job of waiting) {
 console.log('')
 console.log(`${done} rendered, ${failed} failed.`)
 if (done > 0 && filedNote) console.log(filedNote)
+for (const [run, tally] of filedByRun) {
+  console.log(
+    tally.missed === 0
+      ? `filed ${tally.filed} into the set ${run}`
+      : `filed ${tally.filed} into the set ${run}; ${tally.missed} could not be filed ` +
+          '(the pictures rendered — only the set is short of them)',
+  )
+}
 if (failed > 0) console.log('Run `pnpm queue` to see why, then `pnpm queue --retry`.')
 if (!existsSync(queuePath())) console.log('(queue file vanished mid-run)')

@@ -26,6 +26,13 @@ nothing else:
   warm**. Scale is the reason this command was invoked, but announced rather
   than discovered — unannounced it reads as a hang twice over.
 
+- **The whole run is one set**, named for the command that made it:
+  `--set "shotall/<character>/<stamp>"`, with `<stamp>` fixed once at the start
+  and repeated on all ~46 calls, and `--shot-label` naming the rung. `/shot`'s
+  "only for three or more" caveat never applies here — this command is never
+  fewer. Say the set name in the closing report, so the sidebar entry can be
+  recognised as this run.
+
 Everything else is `/shot`'s, unchanged: the block read, the model default and
 positional override, the size ladders and detection, the reframe and
 per-frame filtering rules, the landscape ass close-up, sequential `--render`

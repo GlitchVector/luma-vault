@@ -446,6 +446,15 @@ export const mediaQuerySchema = z.object({
   searchPaths: z.boolean().default(false),
   /** Show only items carrying this structural tag. */
   tag: z.string().nullable().default(null),
+  /**
+   * Show only the pictures one command run made, by its run id.
+   *
+   * Exact rather than a search: a run id is a key, and picking a set means
+   * seeing that set — not everything whose name resembles it. Its own field
+   * rather than a structural tag, for the same reason characters have their own
+   * table: `hideTags` must never be able to hide a set.
+   */
+  set: z.string().nullable().default(null),
   /** Show only items rated at least this many stars. `1` means "rated at all". */
   minStars: z.number().nullable().default(null),
   /**
@@ -581,6 +590,38 @@ export const characterCountSchema = z.object({
   count: z.number(),
 })
 export type CharacterCount = z.infer<typeof characterCountSchema>
+
+/**
+ * One run of a command — a `/shotall`, a `/photostory` — as the sidebar lists
+ * it.
+ *
+ * Assembled from the manifest the run wrote beside its pictures, plus a count
+ * of how many of them the grid can currently see. That count is the *visible*
+ * one, not the manifest's: a set whose files were deleted or filtered out has
+ * to say so rather than promise pictures that are not there.
+ */
+export const setSummarySchema = z.object({
+  /** Unique, and the exact value `MediaQuery.set` takes to show this set. */
+  run: z.string(),
+  /** The command that made it — `shotall`, `photostory`. */
+  command: z.string(),
+  /** Null for a run that could not name one; those group under "Other". */
+  character: z.string().nullable().default(null),
+  title: z.string().nullable().default(null),
+  /** When the run started, unix ms. */
+  createdAt: z.number(),
+  count: z.number(),
+  /**
+   * The run's first picture, for the row's thumbnail.
+   *
+   * Null while none of its members are indexed yet — a manifest read between
+   * two renders names pictures the next scan will find. The row still lists,
+   * because a set that is being shot right now is exactly the one you want to
+   * see appear.
+   */
+  posterId: z.number().nullable().default(null),
+})
+export type SetSummary = z.infer<typeof setSummarySchema>
 
 export const mediaPageSchema = z.object({
   items: z.array(mediaItemSchema),

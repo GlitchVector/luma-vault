@@ -73,6 +73,10 @@ function parseArgs(argv) {
     // pick up later. Composes with --render, which then names where the picture
     // will eventually land rather than where it is being written now.
     else if (flag === '--queue') args.queue = true
+    // Which command run this render belongs to, so the vault can show the set
+    // again afterwards. `<command>/<character>/<stamp>`; see `lib/sets.mjs`.
+    else if (flag === '--set') args.set = argv[++at]
+    else if (flag === '--shot-label') args.shotLabel = argv[++at]
     else if (flag === '--label') args.label = argv[++at]
     else fail(`unknown argument: ${flag}`)
   }
@@ -80,6 +84,14 @@ function parseArgs(argv) {
 }
 
 const args = parseArgs(process.argv.slice(2))
+const { parseSet } = await import('./lib/sets.mjs')
+let set = null
+try {
+  set = parseSet(args.set)
+  if (set) set.label = args.shotLabel ?? null
+} catch (error) {
+  fail(error.message)
+}
 if (!args.prompt) {
   fail(
     'usage: pnpm open-in-forge --prompt "..." [--negative "..."] [--model substring] [--width N --height N]',
@@ -227,7 +239,7 @@ if (args.dryRun) {
 if (args.queue) {
   const { enqueue } = await import('./lib/queue.mjs')
   const label = args.label ?? (args.render ? basename(args.render, extname(args.render)) : 'job')
-  const job = enqueue({ label, block, destination: args.render })
+  const job = enqueue({ label, block, destination: args.render, set })
   console.log(`\nqueued  ${job.label}`)
   console.log(`        → ${job.destination}`)
   console.log('Render it with: pnpm queue --drain')
@@ -242,9 +254,10 @@ if (renderTo) {
   console.log(`
 rendering… (this is the model's own time, not a stagger)`)
   try {
-    const { path, seed, note } = await renderWithBlock(block, renderTo)
+    const { path, seed, note, filed } = await renderWithBlock(block, renderTo, set)
     console.log(`rendered  ${path}${seed === undefined ? '' : `  seed ${seed}`}`)
     console.log(note)
+    if (set) console.log(filed ? `filed into set ${set.run}` : `not filed into ${set.run} — the picture is there, the set is not`)
   } catch (error) {
     fail(`
 Forge refused the render: ${error.message}`, 'Nothing was opened and nothing was saved.')

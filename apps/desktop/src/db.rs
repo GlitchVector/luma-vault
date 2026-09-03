@@ -150,6 +150,44 @@ impl Db {
             );
             CREATE INDEX IF NOT EXISTS characters_by_name ON media_characters(name, media_id);
 
+            -- A run of one command — a /shotall of sixteen angles, a
+            -- /photostory's stages — recorded so the pictures it made can be
+            -- found together again afterwards.
+            --
+            -- Derived, like the characters above and unlike `deviantart_posts`:
+            -- every field here is read back from a `.luma-sets` manifest that
+            -- sits beside the pictures, so a rebuilt index re-derives the lot
+            -- and nothing is lost by throwing this away. That is the whole
+            -- reason the run writes a file rather than calling the app — the
+            -- GPU drains a queue at three in the morning, when there may be no
+            -- app running to call.
+            CREATE TABLE IF NOT EXISTS set_runs (
+                run        TEXT PRIMARY KEY,
+                command    TEXT NOT NULL,
+                character  TEXT,
+                title      TEXT,
+                created_at INTEGER NOT NULL,
+                -- Where the manifest was read from, so a second scan can tell a
+                -- run whose folder moved from a run that gained members.
+                folder     TEXT NOT NULL
+            );
+
+            -- Membership. Not a column on `media`, because a picture can belong
+            -- to two runs the moment one is re-driven over another's output,
+            -- and because a run's manifest may be read before the pictures it
+            -- names have been indexed — rows arrive in either order.
+            CREATE TABLE IF NOT EXISTS media_sets (
+                media_id INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+                run      TEXT    NOT NULL,
+                -- What the run called this picture: "from below", "stage 3 —
+                -- undressed". The manifest's own word for it, kept so a set can
+                -- be read in the order it was shot rather than by filename.
+                label    TEXT,
+                position INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (media_id, run)
+            );
+            CREATE INDEX IF NOT EXISTS sets_by_run ON media_sets(run, position);
+
             -- Every label the detector found, not merely the one that won.
             --
             -- `media.verdict_json` keeps a single `topLabel`, chosen by rating
@@ -1541,6 +1579,133 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Record a run and attach the pictures it named, from one manifest.
+    ///
+    /// Idempotent, and re-run on every scan. A manifest grows while its run
+    /// does — a `/photostory` appends a line per stage over half an hour — so
+    /// the same file is read many times, and a member whose picture is not
+    /// indexed *yet* has to be a no-op that a later scan completes rather than
+    /// an error. Returns how many of its members the index could actually find.
+    ///
+    /// Members are matched by path, which is the only thing a manifest and the
+    /// index share: the run never learns Forge's numbering, so it names files
+    /// relative to itself and [`crate::sets::read_manifest`] resolves them
+    /// against the folder they sit in.
+    pub fn record_set(
+        &self,
+        manifest: &crate::sets::SetManifest,
+        folder: &str,
+        members: &[(std::path::PathBuf, crate::sets::SetMember)],
+    ) -> Result<usize> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO set_runs (run, command, character, title, created_at, folder)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(run) DO UPDATE SET
+                command = excluded.command,
+                character = excluded.character,
+                title = excluded.title,
+                created_at = excluded.created_at,
+                folder = excluded.folder",
+            params![
+                manifest.run,
+                manifest.command,
+                manifest.character,
+                manifest.title,
+                manifest.created_at,
+                folder,
+            ],
+        )?;
+
+        let mut attached = 0_usize;
+        {
+            let mut find = tx.prepare("SELECT id FROM media WHERE path = ?1")?;
+            let mut insert = tx.prepare(
+                "INSERT INTO media_sets (media_id, run, label, position) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(media_id, run) DO UPDATE SET
+                    label = excluded.label,
+                    position = excluded.position",
+            )?;
+            for (position, (path, member)) in members.iter().enumerate() {
+                let Some(path) = path.to_str() else {
+                    // A path that cannot be UTF-8 was never indexed either, so
+                    // there is nothing for this member to attach to.
+                    continue;
+                };
+                let id: Option<i64> =
+                    find.query_row(params![path], |row| row.get(0)).optional()?;
+                if let Some(id) = id {
+                    insert.execute(params![id, manifest.run, member.label, position as i64])?;
+                    attached += 1;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(attached)
+    }
+
+    /// The runs whose pictures the current grid can see, newest first.
+    ///
+    /// Grid semantics, exactly as [`Self::top_characters`] has them: the list
+    /// describes what is on screen, so a run every one of whose pictures is
+    /// filtered out is not listed at all. That is also what keeps a deleted set
+    /// from lingering in the sidebar forever — the manifest outlives the files,
+    /// but the count does not.
+    ///
+    /// `character` narrows to one cast member, which is how the sidebar's
+    /// "sets per character" mode reads it. `None` lists every run.
+    pub fn sets(
+        &self,
+        query: &MediaQuery,
+        character: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<crate::types::SetSummary>> {
+        let conn = self.connection();
+        let (where_parts, binds) = Self::media_filter(query, true);
+        let mut sql = format!(
+            "SELECT r.run, r.command, r.character, r.title, r.created_at,
+                    COUNT(*) AS n,
+                    (SELECT s2.media_id FROM media_sets s2
+                       JOIN media m2 ON m2.id = s2.media_id
+                      WHERE s2.run = r.run
+                      ORDER BY s2.position ASC, s2.media_id ASC LIMIT 1) AS poster
+               FROM set_runs r
+               JOIN media_sets s ON s.run = r.run
+               JOIN media ON media.id = s.media_id
+              WHERE {}",
+            where_parts.join(" AND "),
+        );
+        let mut binds = binds;
+        if let Some(name) = character.filter(|name| !name.is_empty()) {
+            // The run's own claim, not the prompt detection: a set is of whoever
+            // the command said it was of, and a stage whose prompt happens not
+            // to name her is still part of that shoot.
+            sql.push_str(&format!(" AND r.character = ?{}", binds.len() + 1));
+            binds.push(Box::new(name.to_string()));
+        }
+        sql.push_str(&format!(
+            " GROUP BY r.run ORDER BY r.created_at DESC, r.run ASC LIMIT ?{}",
+            binds.len() + 1
+        ));
+
+        let mut refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+        refs.push(&limit);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(refs.as_slice(), |row| {
+            Ok(crate::types::SetSummary {
+                run: row.get(0)?,
+                command: row.get(1)?,
+                character: row.get(2)?,
+                title: row.get(3)?,
+                created_at: row.get(4)?,
+                count: row.get(5)?,
+                poster_id: row.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Attach an imported star rating to a row, if one was recorded for it.
     ///
     /// Never overwrites a rating already on the row: an import is a one-time
@@ -2429,6 +2594,13 @@ impl Db {
         if query.duplicates_only {
             where_parts.push("dupe_group IS NOT NULL".to_string());
         }
+        if let Some(run) = query.set.as_deref().filter(|run| !run.is_empty()) {
+            where_parts.push(format!(
+                "EXISTS (SELECT 1 FROM media_sets s WHERE s.media_id = media.id AND s.run = ?{})",
+                binds.len() + 1
+            ));
+            binds.push(Box::new(run.to_string()));
+        }
         if let Some(tag) = query.tag.as_deref().filter(|tag| !tag.is_empty()) {
             where_parts.push(format!(
                 "EXISTS (SELECT 1 FROM media_tags t WHERE t.media_id = media.id AND t.tag = ?{})",
@@ -3092,6 +3264,7 @@ mod tests {
             folder_id: None,
             kind: None,
             rating: None,
+            set: None,
             sexy_only: false,
             search: String::new(),
             search_paths: false,
@@ -5379,6 +5552,100 @@ mod tests {
         let ready = db.pending_classification(100).unwrap();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].thumb_path.as_deref(), Some("/thumbs/a.jpg"));
+    }
+
+    /// A run's manifest names files, and the index holds paths. These pin the
+    /// join between them, and the three states it has to survive: a member the
+    /// index has, a member it does not have *yet*, and the same manifest read
+    /// twice.
+    #[test]
+    fn a_manifest_attaches_the_pictures_the_index_already_holds() {
+        let (db, _) = seeded();
+
+        let manifest = crate::sets::SetManifest {
+            run: "shotall-aqua-20260903T1431-7f3a".to_string(),
+            command: "shotall".to_string(),
+            character: Some("aqua (konosuba)".to_string()),
+            title: Some("Aqua — every angle".to_string()),
+            created_at: 1_772_547_060_000,
+            members: Vec::new(),
+        };
+        let member = |file: &str, label: &str| {
+            (
+                std::path::PathBuf::from(file),
+                crate::sets::SetMember {
+                    file: file.to_string(),
+                    label: Some(label.to_string()),
+                },
+            )
+        };
+        // The third names a picture no scan has reached — a manifest appended to
+        // between two renders, which is the normal state of a run in progress.
+        let members = [
+            member("/media/a.jpg", "from below"),
+            member("/media/b.mp4", "from behind"),
+            member("/media/not-indexed-yet.png", "cowboy shot"),
+        ];
+
+        let attached = db.record_set(&manifest, "/media", &members).expect("record");
+        assert_eq!(attached, 2, "only the members the index holds can attach");
+
+        let mut query = query();
+        query.set = Some(manifest.run.clone());
+        let page = db.query_media(&query).expect("query");
+        assert_eq!(page.total, 2);
+
+        // Re-read on the next scan: the same file, now with its third picture
+        // indexed. Attaching again must not duplicate the first two.
+        db.insert_media_batch(
+            db.add_folder("/media2", 1).expect("folder"),
+            &[file("/media/not-indexed-yet.png", MediaKind::Image, 50)],
+            1,
+        )
+        .expect("insert");
+        let attached = db.record_set(&manifest, "/media", &members).expect("re-record");
+        assert_eq!(attached, 3);
+        let page = db.query_media(&query).expect("query");
+        assert_eq!(page.total, 3, "a second read of the same manifest adds, never doubles");
+    }
+
+    #[test]
+    fn a_set_is_listed_only_while_the_grid_can_see_its_pictures() {
+        let (db, _) = seeded();
+        let manifest = crate::sets::SetManifest {
+            run: "photostory-aqua-20260902T2210-b1c9".to_string(),
+            command: "photostory".to_string(),
+            character: Some("aqua (konosuba)".to_string()),
+            title: None,
+            created_at: 1_772_485_800_000,
+            members: Vec::new(),
+        };
+        let members = [(
+            std::path::PathBuf::from("/media/a.jpg"),
+            crate::sets::SetMember { file: "a.jpg".to_string(), label: None },
+        )];
+        db.record_set(&manifest, "/media", &members).expect("record");
+
+        let listed = db.sets(&query(), None, 50).expect("sets");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].count, 1);
+        assert_eq!(listed[0].character.as_deref(), Some("aqua (konosuba)"));
+        assert_eq!(listed[0].command, "photostory");
+
+        // Narrowing to a character it is not of drops it, which is what the
+        // sidebar's per-character mode asks for.
+        assert!(db.sets(&query(), Some("moona hoshinova"), 50).expect("sets").is_empty());
+        assert_eq!(db.sets(&query(), Some("aqua (konosuba)"), 50).expect("sets").len(), 1);
+
+        // The grid's own filters apply too: a set none of whose pictures pass
+        // them is not a set you can open, so it is not listed. The manifest
+        // outlives the files; the entry in the sidebar must not.
+        let mut hidden = query();
+        hidden.kind = Some(MediaKind::Video);
+        assert!(
+            db.sets(&hidden, None, 50).expect("sets").is_empty(),
+            "a set with nothing visible in it is not listed"
+        );
     }
 
     #[test]

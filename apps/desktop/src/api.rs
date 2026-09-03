@@ -20,8 +20,8 @@ use crate::db::{self, Db};
 use crate::types::{
     CharacterCount, DeviantArtAccount, DeviantArtDraft, DeviantArtGallery, DeviantArtSummary,
     Folder, LibraryStats,
-    MediaFrame, MediaItem, MediaPage, MediaQuery, Rating, ScanProgress, SourceOrigin,
-    TimelineBucket,
+    MediaFrame, MediaItem, MediaPage, MediaQuery, Rating, ScanProgress, SetSummary,
+    SourceOrigin, TimelineBucket,
 };
 use crate::{
     imports, pipeline, protocol, scan, thumbs, throttle, types, upscaler, video, AppState,
@@ -164,6 +164,24 @@ pub fn top_characters(
     state
         .db
         .top_characters(&query, limit.clamp(1, 50))
+        .map_err(stringify)
+}
+
+/// The command runs whose pictures the current grid can see, newest first.
+///
+/// `character` is the sidebar's "sets per character" mode asking for one
+/// person's shoots; `None` is every run. Both read the run's own claim about
+/// who it is of rather than the per-picture prompt detection — a stage whose
+/// prompt happens not to name her is still part of that shoot.
+pub fn library_sets(
+    state: &AppState,
+    query: MediaQuery,
+    character: Option<String>,
+    limit: i64,
+) -> Result<Vec<SetSummary>, String> {
+    state
+        .db
+        .sets(&query, character.as_deref(), limit.clamp(1, 200))
         .map_err(stringify)
 }
 
@@ -1069,6 +1087,12 @@ pub async fn dispatch(
         "query_media" => ok(query_media(state, arg(args, "query")?)?),
         "media_timeline" => ok(media_timeline(state, arg(args, "query")?)?),
         "top_characters" => ok(top_characters(state, arg(args, "query")?, arg(args, "limit")?)?),
+        "library_sets" => ok(library_sets(
+            state,
+            arg(args, "query")?,
+            arg(args, "character")?,
+            arg(args, "limit")?,
+        )?),
         "extras_original" => ok(extras_original(state, arg(args, "id")?)?),
         "source_origin" => ok(source_origin(state, arg(args, "id")?)?),
         "recent_media" => ok(recent_media(state, arg(args, "limit")?)?),

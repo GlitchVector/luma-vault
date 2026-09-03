@@ -81,12 +81,18 @@ export function writeJobs(jobs) {
   writeFileSync(queuePath(), jobs.map((job) => JSON.stringify(job)).join('\n') + '\n')
 }
 
-export function enqueue({ label, block, destination }) {
+export function enqueue({ label, block, destination, set = null }) {
   const job = {
     id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     label,
     block,
     destination: destination ?? join(outputDir(), `${label}.png`),
+    // Which command run this job belongs to, carried through the queue so a set
+    // survives being drained hours later. Stored resolved rather than as the
+    // `--set` string it came from, for the same reason the block is: replaying
+    // a job must not re-derive anything, or a drain can drift from what was
+    // queued.
+    set,
     status: 'pending',
     queuedAt: new Date().toISOString(),
   }

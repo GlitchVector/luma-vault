@@ -186,6 +186,26 @@ Write into the session scratchpad, not a watched folder — Forge saves its own
 copy into its outputs with its own numbering, and that is what puts each picture
 in the library.
 
+**A multi-shot run is a set. Say so, on every call.**
+
+```bash
+--set "shot/<character>/<stamp>" --shot-label "<the rung>"
+```
+
+`<stamp>` is `YYYYMMDDThhmm`, worked out **once** at the start of the run and
+repeated verbatim on every call — it is what makes two runs of the same
+character on the same day two sets rather than one, so a fresh stamp per call
+would file each picture into a set of its own. `<character>` is the danbooru
+name; if the shot has no nameable character, drop `--set` entirely rather than
+inventing one.
+
+The vault reads these back and lists the run under "Sets" in the sidebar, so a
+pass through sixteen angles can be found again as one sitting. It files by
+looking in Forge's output folder for the seed it just rendered — nothing is
+copied, moved or renamed, and a shot that cannot be filed still says where the
+picture is. Only for runs of three or more: a set of one is noise in that list,
+so the tab branch above passes no `--set`.
+
 **Show each one as it lands**, with `SendUserFile`, captioned with the shot it
 was prompted for. The shot name is the one thing a picture cannot tell you
 itself, and a render arriving three minutes later unlabelled is a puzzle.

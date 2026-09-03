@@ -582,9 +582,20 @@ Always the queue, never tabs — the count is far past two:
 node --env-file-if-exists=.env --experimental-strip-types \
   scripts/open-in-forge.mjs --model <m> --style <s> \
   --queue --label "<stage>-<n>-<shot>" --render "<scratchpad>/<same>.png" \
+  --set "photostory/<character>/<stamp>" --shot-label "<stage> — <shot>" \
   --prompt "..." --negative "..." --adetailer-prompt "..."
 pnpm queue --drain
 ```
+
+**`--set` is what makes the shoot one thing.** A photostory is a progression,
+and a progression scattered through a day's output folder is a pile of
+unrelated renders again the moment the session closes — which is the problem
+this command exists to solve. `<stamp>` is `YYYYMMDDThhmm`, fixed **once** at
+the start and repeated verbatim on every queued job across every stage: a fresh
+stamp per stage would file each stage as a set of its own and lose the
+progression. The flag rides through the queue, so it survives the drain
+happening hours later. `--shot-label` says what the stage is, and is what lets
+the set be read in the order it was shot rather than by filename.
 
 Then `SendUserFile` per stage as each completes, captioned with the stage and
 the shot. Send **stage by stage rather than at the end** — the point of a

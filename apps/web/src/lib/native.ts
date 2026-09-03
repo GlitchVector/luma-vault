@@ -38,8 +38,10 @@ import {
   deviantArtSummarySchema,
   timelineBucketSchema,
   characterCountSchema,
+  setSummarySchema,
   sourceOriginSchema,
   type CharacterCount,
+  type SetSummary,
   type TimelineBucket,
   type DeviantArtAccount,
   type DeviantArtDraft,
@@ -474,6 +476,26 @@ export async function topCharacters(query: MediaQuery, limit = 10): Promise<Char
   // Outgoing parse fills defaults, the same lesson the timeline taught.
   return z.array(characterCountSchema).parse(
     await invoke('top_characters', { query: mediaQuerySchema.parse(query), limit }),
+  )
+}
+
+/**
+ * The command runs — `/shotall`s, `/photostory`s — whose pictures the current
+ * grid can see, newest first.
+ *
+ * `character` narrows to one person's shoots, which is the sidebar's "sets per
+ * character" mode; omitting it lists every run. The count is what is *visible*,
+ * so a set whose files are gone stops being offered rather than opening empty.
+ */
+export async function librarySets(
+  query: MediaQuery,
+  character: string | null = null,
+  limit = 100,
+): Promise<SetSummary[]> {
+  if (!(await hasBackend())) return []
+  // Outgoing parse fills defaults, the same lesson the timeline taught.
+  return z.array(setSummarySchema).parse(
+    await invoke('library_sets', { query: mediaQuerySchema.parse(query), character, limit }),
   )
 }
 

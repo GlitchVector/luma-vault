@@ -246,6 +246,18 @@ if (cfg !== undefined && !Number.isFinite(cfg)) fail(`--cfg takes a number (got 
 // is read as the image name.
 const queueIt = switchFlag('--queue')
 const queueLabel = flag('--label')
+// Which command run this render belongs to, so the vault can show the set
+// again afterwards. `<command>/<character>/<stamp>`; see `lib/sets.mjs`.
+const setSpec = flag('--set')
+const setLabel = flag('--shot-label')
+const { parseSet } = await import('./lib/sets.mjs')
+let set = null
+try {
+  set = parseSet(setSpec)
+  if (set) set.label = setLabel ?? null
+} catch (error) {
+  fail(error.message)
+}
 
 // Every flag has now been spliced out, so anything left that looks like one is
 // a flag this script does not have. Worth failing over rather than ignoring:
@@ -387,7 +399,7 @@ if (dryRun) {
 if (queueIt) {
   const { enqueue } = await import('./lib/queue.mjs')
   const label = queueLabel ?? (renderTo ? basename(renderTo, extname(renderTo)) : imageName)
-  const job = enqueue({ label, block: migrated, destination: renderTo })
+  const job = enqueue({ label, block: migrated, destination: renderTo, set })
   console.log(`\nqueued  ${job.label}`)
   console.log(`        → ${job.destination}`)
   console.log('Render it with: pnpm queue --drain')
@@ -401,9 +413,10 @@ if (renderTo) {
   console.log(`
 rendering… (this is the model's own time, not a stagger)`)
   try {
-    const { path, seed, note } = await renderWithBlock(migrated, renderTo)
+    const { path, seed, note, filed } = await renderWithBlock(migrated, renderTo, set)
     console.log(`rendered  ${path}${seed === undefined ? '' : `  seed ${seed}`}`)
     console.log(note)
+    if (set) console.log(filed ? `filed into set ${set.run}` : `not filed into ${set.run} — the picture is there, the set is not`)
   } catch (error) {
     fail(`
 Forge refused the render: ${error.message}`, 'Nothing was opened and nothing was saved.')

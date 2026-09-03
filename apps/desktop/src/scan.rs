@@ -296,6 +296,13 @@ pub struct Walk {
     /// and re-walking a 200,000-file share to find a handful of files nobody
     /// asked about would cost more than the ratings are worth.
     pub rating_databases: Vec<PathBuf>,
+    /// Set manifests found along the way — `<folder>/.luma-sets/<run>.json`,
+    /// written by a command run so the pictures it made can be found together
+    /// afterwards. Collected during the walk for the same reason the rating
+    /// databases are: they live inside the tree being scanned, and a second
+    /// search of a 200,000-file share to find a handful of them would cost more
+    /// than they are worth.
+    pub set_manifests: Vec<PathBuf>,
     pub errors: Vec<String>,
 }
 
@@ -310,6 +317,7 @@ where
 {
     let mut files = Vec::new();
     let mut rating_databases = Vec::new();
+    let mut set_manifests = Vec::new();
     let mut errors = Vec::new();
 
     let walker = WalkDir::new(root)
@@ -356,6 +364,11 @@ where
             continue;
         }
 
+        if crate::sets::is_manifest(entry.path()) {
+            set_manifests.push(entry.path().to_path_buf());
+            continue;
+        }
+
         let Some(kind) = kind_of(entry.path()) else {
             continue;
         };
@@ -399,6 +412,7 @@ where
     Walk {
         files,
         rating_databases,
+        set_manifests,
         errors,
     }
 }
@@ -413,6 +427,36 @@ mod tests {
         assert_eq!(kind_of(Path::new("/a/b.MkV")), Some(MediaKind::Video));
         assert_eq!(kind_of(Path::new("/a/b.txt")), None);
         assert_eq!(kind_of(Path::new("/a/README")), None);
+    }
+
+    /// The walk has to descend into `.luma-sets` and come back with what is in
+    /// it. Everything else about a set is well covered, and all of it is
+    /// useless if the manifest is never found: the folder is a dot-directory in
+    /// a walk that skips dot-*files*, and `.luma` proper is on the ignore list
+    /// one character away.
+    #[test]
+    fn a_walk_finds_the_set_manifests_beside_the_pictures() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let day = dir.path().join("2026-09-03");
+        std::fs::create_dir_all(day.join(crate::sets::MANIFEST_DIR)).expect("create");
+        std::fs::write(day.join("00905-4090734728.png"), b"not really a png").expect("write");
+        std::fs::write(
+            day.join(crate::sets::MANIFEST_DIR).join("shotall-aqua-20260903t1431.json"),
+            b"{}",
+        )
+        .expect("write");
+        // A dot-file really is skipped, so the rule the manifest relies on is
+        // the folder's name and not an accident of the file's.
+        std::fs::write(day.join(".hidden.png"), b"x").expect("write");
+
+        let walk = walk_folder(dir.path(), |_, _| {});
+        assert_eq!(walk.set_manifests.len(), 1, "the manifest must survive the walk");
+        assert!(walk.set_manifests[0].ends_with("shotall-aqua-20260903t1431.json"));
+        // And the manifest is not itself indexed as media, nor is the picture
+        // lost to the folder beside it.
+        let indexed: Vec<_> =
+            walk.files.iter().filter_map(|file| file.path.split(std::path::is_separator).next_back()).collect();
+        assert_eq!(indexed, vec!["00905-4090734728.png"]);
     }
 
     #[test]

@@ -31,6 +31,7 @@ mod rating;
 mod remote;
 mod sampling;
 mod scan;
+mod sets;
 mod throttle;
 mod thumbs;
 mod types;
@@ -57,8 +58,8 @@ use crate::remote::RemoteState;
 use crate::types::{
     CharacterCount, DeviantArtAccount, DeviantArtDraft, DeviantArtGallery, DeviantArtSummary,
     Folder, LibraryStats,
-    MediaFrame, MediaItem, MediaPage, MediaQuery, RemoteStatus, ScanProgress, ShareStatus,
-    SourceOrigin, TimelineBucket,
+    MediaFrame, MediaItem, MediaPage, MediaQuery, RemoteStatus, ScanProgress, SetSummary,
+    ShareStatus, SourceOrigin, TimelineBucket,
 };
 use crate::watcher::FolderWatcher;
 
@@ -160,6 +161,16 @@ async fn top_characters(
     limit: i64,
 ) -> Result<Vec<CharacterCount>, String> {
     api::top_characters(&state, query, limit)
+}
+
+#[tauri::command(async)]
+async fn library_sets(
+    state: State<'_, AppState>,
+    query: MediaQuery,
+    character: Option<String>,
+    limit: i64,
+) -> Result<Vec<SetSummary>, String> {
+    api::library_sets(&state, query, character, limit)
 }
 
 #[tauri::command(async)]
@@ -799,6 +810,7 @@ pub fn run() {
             query_media,
             media_timeline,
             top_characters,
+            library_sets,
             extras_original,
             source_origin,
             recent_media,

@@ -508,6 +508,7 @@ fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &
     let scan::Walk {
         files,
         rating_databases,
+        set_manifests,
         mut errors,
     } = scan::walk_folder(root, |count, current| {
         pipeline.publish(
@@ -577,6 +578,26 @@ fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &
         let staged = imports::import_discovered(&pipeline.db, &rating_databases, now);
         if staged > 0 {
             let _ = pipeline.db.apply_all_imported_stars();
+        }
+    }
+
+    // And so do sets. Read after the rows are inserted, because a manifest can
+    // only attach pictures the index already holds — and re-read on every scan
+    // rather than once, because a run appends to its manifest as it goes and
+    // the walk that found the file may have run between two of its renders.
+    // Applying the same manifest twice is a no-op, so the retry costs nothing.
+    for manifest in &set_manifests {
+        match crate::sets::read_manifest(manifest) {
+            Ok((set, members)) => {
+                let folder = manifest.parent().and_then(std::path::Path::parent);
+                let folder = folder.map(|f| f.display().to_string()).unwrap_or_default();
+                if let Err(error) = pipeline.db.record_set(&set, &folder, &members) {
+                    errors.push(format!("{}: {error:#}", manifest.display()));
+                }
+            }
+            // A manifest that cannot be read is one set nobody can browse, not a
+            // failed scan: the pictures themselves indexed fine.
+            Err(reason) => errors.push(format!("{}: {reason}", manifest.display())),
         }
     }
 
