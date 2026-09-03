@@ -548,7 +548,57 @@ fn last_address(state: &AppState) -> Option<String> {
 /// copy costs a couple of megabytes. build.rs creates the directory when it is
 /// missing (a fresh clone, CI) so the crate still compiles; the server then
 /// answers with a build-it-first notice instead of a page.
+///
+/// What actually reaches a browser goes through [`serve_asset`], which in a dev
+/// build reads the directory rather than this snapshot of it.
 static WEB_DIST: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
+
+/// One file of the SPA, for the share server to hand a browser.
+///
+/// A shipped bundle has only the embed — there is no dist directory beside an
+/// installed binary — so release reads [`WEB_DIST`] and nothing else.
+///
+/// A dev build has both, and prefers the copy on disk. `include_dir!` snapshots
+/// the bundle at *compile* time, and nothing makes cargo run when it changes:
+/// `tauri dev` watches Rust sources, and the CLI has no setting that would add
+/// `../web/dist` to that list. So a rebuilt frontend stayed invisible to the
+/// browser client until something unrelated happened to touch a `.rs` file —
+/// with the desktop window beside it, served by Vite, showing the change the
+/// whole time. Two clients silently disagreeing about what the app is, with no
+/// error anywhere, is worth a `read` per LAN request in dev.
+///
+/// Falls back to the embed rather than 404ing: the two are the same directory,
+/// and a read that fails for any other reason should not make a dev build serve
+/// less than a release one would.
+#[cfg(debug_assertions)]
+fn serve_asset(name: &str) -> Option<Vec<u8>> {
+    // A lookup key became a filesystem path, so the traversal safety the embed
+    // had for free has to be spelled out. `serve_asset` in remote.rs rejects
+    // `..` before this is ever called; this is the second lock on the same door,
+    // because that check lives on the far side of a public field and the cost of
+    // it moving is reading arbitrary files off the host over the LAN.
+    let unsafe_segment = |segment: &str| {
+        segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || segment.contains('\\')
+            || segment.contains(':')
+    };
+    if name.split('/').any(unsafe_segment) {
+        return None;
+    }
+    let dist = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/dist");
+    std::fs::read(dist.join(name)).ok().or_else(|| embedded_asset(name))
+}
+
+#[cfg(not(debug_assertions))]
+fn serve_asset(name: &str) -> Option<Vec<u8>> {
+    embedded_asset(name)
+}
+
+fn embedded_asset(name: &str) -> Option<Vec<u8>> {
+    WEB_DIST.get_file(name).map(|file| file.contents().to_vec())
+}
 
 /// What this machine answers with while it is sharing.
 ///
@@ -561,7 +611,7 @@ fn shared_library(app: &tauri::AppHandle, state: &AppState, passphrase: String) 
 
     remote::Shared {
         roots: Arc::clone(&state.roots),
-        assets: Arc::new(|name| WEB_DIST.get_file(name).map(|file| file.contents().to_vec())),
+        assets: Arc::new(serve_asset),
         rpc: Arc::new(move |name, args| {
             let handle = dispatch_handle.clone();
             tauri::async_runtime::block_on(async move {
@@ -800,7 +850,44 @@ pub fn run() {
 
 #[cfg(test)]
 mod web_dist_tests {
-    use super::WEB_DIST;
+    use super::{serve_asset, WEB_DIST};
+
+    /// The dev build's disk read turned a lookup key into a path. These are the
+    /// shapes that would let a LAN request name a file outside the bundle —
+    /// `serve_asset` in remote.rs rejects the first one before this is reached,
+    /// and the rest are what a Windows path can smuggle past a `..` check.
+    #[test]
+    fn a_lookup_key_cannot_climb_out_of_the_bundle() {
+        for name in [
+            "../../../Cargo.toml",
+            "..\\..\\Cargo.toml",
+            "assets/../../build.rs",
+            "C:/Windows/win.ini",
+            "/etc/passwd",
+            "assets//../../build.rs",
+        ] {
+            assert!(serve_asset(name).is_none(), "must not resolve: {name}");
+        }
+    }
+
+    /// The whole point of the disk read: what the share server hands out has to
+    /// come from the directory as it is now, not from the copy that happened to
+    /// exist when cargo last ran. Skipped when the app has not been built,
+    /// which is CI — there is no bundle on disk there to differ from.
+    #[test]
+    #[cfg(debug_assertions)]
+    fn a_dev_build_serves_the_bundle_on_disk() {
+        let dist = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/dist");
+        if !dist.join("index.html").is_file() {
+            return;
+        }
+        let on_disk = std::fs::read(dist.join("index.html")).expect("can read the built shell");
+        assert_eq!(
+            serve_asset("index.html").as_deref(),
+            Some(on_disk.as_slice()),
+            "a dev build must serve the shell that is on disk now"
+        );
+    }
 
     /// Meaningful only when the web app has been built — CI compiles against
     /// the empty directory build.rs created, and skips. Locally this pins the

@@ -916,8 +916,9 @@ fn serve_asset(shared: &Shared, route: &str) -> (FileReply, &'static str) {
 fn unbuilt_notice() -> FileReply {
     FileReply::failure(
         503,
-        "the web app is not built into this host — run `pnpm --filter @luma/web build` \
-         there and restart it",
+        "the web app is not built on this host — run `pnpm --filter @luma/web build` there \
+         (a dev build then serves it on the next reload; a release build has to be \
+         recompiled to embed it)",
     )
 }
 
