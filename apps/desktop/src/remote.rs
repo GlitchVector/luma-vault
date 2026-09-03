@@ -47,6 +47,11 @@
 //!   connected to. A library cannot be published to the internet by typing an
 //!   address into a box.
 //!
+//! - The machine itself is exempt ([`Shared::trust_loopback`]): a request from
+//!   loopback comes from a program on this computer, which already has the app,
+//!   the files and the index. Asking it for the passphrase guarded nothing and
+//!   only kept a local browser out.
+//!
 //! Given the passphrase, a session can do everything a person sitting at the
 //! machine can, deletions included. That is the point of it and also the whole
 //! risk: the passphrase is the only thing between the LAN and the library.
@@ -160,6 +165,16 @@ pub fn is_lan(ip: IpAddr) -> bool {
                 || (segments[0] & 0xfe00) == 0xfc00
                 || (segments[0] & 0xffc0) == 0xfe80
         }
+    }
+}
+
+/// This machine talking to itself — the peer [`Shared::trust_loopback`] waves
+/// through. The dual-stack form (`::ffff:127.0.0.1`) counts too, for the same
+/// reason [`is_lan`] unwraps it: it is what the listener actually reports.
+pub fn is_loopback(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback(),
+        IpAddr::V6(v6) => v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback()),
     }
 }
 
@@ -526,6 +541,16 @@ pub struct Shared {
     pub passphrase: String,
     /// The built SPA, for a browser with no desktop app — a phone.
     pub assets: AssetLookup,
+    /// Let the machine this runs on in without the passphrase.
+    ///
+    /// A request from loopback can only come from a program on this computer —
+    /// and anything on this computer already has the desktop app, the files and
+    /// the index in front of it. The passphrase protects nothing against that
+    /// caller; it only stands between a local browser and the library, which is
+    /// the one place it was a wall with nothing behind it. Everything reaching
+    /// the machine over the network still logs in. Off in the tests, whose
+    /// requests all come from loopback and exist to prove the gate holds.
+    pub trust_loopback: bool,
 }
 
 /// What the workers actually hold: the configuration plus the one secret that
@@ -799,7 +824,8 @@ fn answer(live: &Live, mut request: tiny_http::Request) {
         .find(|header| header.field.equiv(PASSPHRASE_HEADER))
         .map(|header| header.value.as_str().to_string())
         .unwrap_or_default();
-    let authorized = same_passphrase(&offered, &shared.passphrase)
+    let authorized = (shared.trust_loopback && peer.is_some_and(is_loopback))
+        || same_passphrase(&offered, &shared.passphrase)
         || cookie_token(&request).is_some_and(|token| same_passphrase(&token, &live.token));
     if !authorized {
         respond(request, FileReply::failure(401, "wrong passphrase"), CACHE_NONE);
@@ -1183,6 +1209,12 @@ mod tests {
     }
 
     fn shared_library_on(port: u16, passphrase: &str) -> Fixture {
+        // Every request a test makes comes from loopback, so the gate can only
+        // be proved to hold with the local bypass off. One test turns it on.
+        shared_library_with(port, passphrase, false)
+    }
+
+    fn shared_library_with(port: u16, passphrase: &str, trust_loopback: bool) -> Fixture {
         let dir = tempfile::tempdir().expect("tempdir");
         let watched = dir.path().join("watched");
         std::fs::create_dir_all(&watched).unwrap();
@@ -1222,6 +1254,7 @@ mod tests {
                     "assets/index-CAxT2q.js" => Some(b"js bytes".to_vec()),
                     _ => None,
                 }),
+                trust_loopback,
             })
             .expect("start");
         let port = sharing.bound_port();
@@ -1306,6 +1339,40 @@ mod tests {
         let (status, body) = request(fixture.port, "POST", RPC_ROUTE, "open sesame", Some(fine));
         assert_eq!(status, 200, "the server is still serving");
         assert!(body.contains("\"ran\":\"query_media\""), "got: {body}");
+
+        fixture.sharing.stop();
+    }
+
+    /// The machine itself needs no passphrase — but only when asked to trust it,
+    /// and only for the API's own gate. What the passphrase would have unlocked
+    /// is exactly what a caller on this machine already has.
+    #[test]
+    fn a_trusted_loopback_caller_needs_no_passphrase() {
+        let fixture = shared_library_with(0, "open sesame", true);
+
+        // No passphrase header, no cookie: in, because the peer is this machine.
+        let (status, body) = request(fixture.port, "GET", HELLO_ROUTE, "", None);
+        assert_eq!(status, 200, "got: {body}");
+        assert!(body.contains("TESTBOX"), "the greeting is the real one: {body}");
+        let (status, body) =
+            request(fixture.port, "POST", RPC_ROUTE, "", Some(r#"{"name":"query_media","args":{}}"#));
+        assert_eq!(status, 200, "got: {body}");
+        assert!(body.contains("\"ran\":\"query_media\""), "got: {body}");
+
+        // A wrong passphrase from the machine is still let in: the trust is in
+        // where the request came from, not in what it happened to carry.
+        let (status, _) = request(fixture.port, "GET", HELLO_ROUTE, "guess", None);
+        assert_eq!(status, 200);
+
+        // The allowlist is untouched — trusting the caller does not widen what
+        // the server will hand anyone.
+        let outside = fixture.watched.parent().unwrap().join("secret.txt");
+        let route = format!(
+            "{FILE_ROUTE}?path={}",
+            utf8_percent_encode(&outside.to_string_lossy(), NON_ALPHANUMERIC)
+        );
+        let (status, _) = request(fixture.port, "GET", &route, "", None);
+        assert_eq!(status, 403, "a trusted caller is still bound by the allowlist");
 
         fixture.sharing.stop();
     }

@@ -623,6 +623,9 @@ fn shared_library(app: &tauri::AppHandle, state: &AppState, passphrase: String) 
     remote::Shared {
         roots: Arc::clone(&state.roots),
         assets: Arc::new(serve_asset),
+        // See the field: a caller on this machine already has everything the
+        // passphrase guards, and asking it anyway only kept a local browser out.
+        trust_loopback: true,
         rpc: Arc::new(move |name, args| {
             let handle = dispatch_handle.clone();
             tauri::async_runtime::block_on(async move {
