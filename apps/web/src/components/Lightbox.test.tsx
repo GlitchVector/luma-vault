@@ -981,6 +981,16 @@ describe('the /sdxl hand-off', () => {
     expect(await screen.findByText('copied')).toBeTruthy()
   })
 
+  it('offers every command that takes a picture, each with this exact filename', () => {
+    // The list is the point: which command is wanted is decided while looking
+    // at the picture, so the panel has to offer the whole choice — not the two
+    // it started with — and each with the filename already typed.
+    renderLightbox({ seed: generated('00042-3746152819.png'), showGeneration: true })
+    for (const command of ['sdxl', 'checkpoint', 'swap', 'recreate', 'shot', 'shotall', 'photostory']) {
+      expect(screen.getByText(`/${command} 00042-3746152819.png`)).toBeTruthy()
+    }
+  })
+
   it('puts it on the clipboard when clicked, and says it did', async () => {
     const written: string[] = []
     Object.defineProperty(navigator, 'clipboard', {

@@ -257,6 +257,21 @@ function PromptText({ prompt, characters }: { prompt: string; characters: string
  * is the question being asked, and it cannot be missed by looking at the thing
  * you just clicked.
  */
+/**
+ * The slash commands the panel offers on a picture, in the order they are
+ * listed. All of `.claude/commands/` that takes an image — kept in step by
+ * hand, since the webview cannot read that directory.
+ */
+const CLAUDE_COMMANDS = [
+  'sdxl',
+  'checkpoint',
+  'swap',
+  'recreate',
+  'shot',
+  'shotall',
+  'photostory',
+] as const
+
 function CopyLabel({ value }: { value: string }) {
   const [copied, setCopied] = useState(false)
 
@@ -1639,16 +1654,20 @@ export function Lightbox({
             </>
           ) : null}
 
-          {/* Both, because they take the same argument and do different things
-              with it: `/sdxl` migrates this block onto a newer checkpoint,
-              keeping the sampler, hires pass and ADetailer settings it already
-              carries; `/recreate` throws the block away and writes a fresh
-              prompt from the picture, keeping only the words. Which one is
-              wanted depends on whether the generation was good, and that is a
-              judgement made while looking at it — which is here. */}
+          {/* Every command that takes a picture, because which one is wanted
+              is a judgement made while looking at it — which is here — and
+              the filename is a counter and a seed nobody should retype. In
+              the order of how much of the picture each keeps: `/sdxl` and
+              `/checkpoint` move this block onto another model with its
+              settings intact; `/swap` keeps everything but who is in it;
+              `/recreate` throws the block away and writes a fresh prompt from
+              the picture; the last three keep the character and go *from*
+              this picture to more of them — other angles, every angle, a
+              whole shoot. */}
           <h3 className="mt-3 border-t border-white/5 pt-2 text-zinc-600">Claude Commands</h3>
-          <CopyLabel value={`/sdxl ${panelItem.name}`} />
-          <CopyLabel value={`/recreate ${panelItem.name}`} />
+          {CLAUDE_COMMANDS.map((command) => (
+            <CopyLabel key={command} value={`/${command} ${panelItem.name}`} />
+          ))}
         </aside>
       ) : null}
       </div>
