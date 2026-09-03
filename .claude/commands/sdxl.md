@@ -134,7 +134,7 @@ that axis — pass nothing for it. Hips **maximum** is not a weight but this exa
 combo:
 
 ```
-(wide hips:2), (thick thighs:2), (curvy:2), (narrow waist:2), (hyper hips:2), hip focus
+(wide hips:2), (thick thighs:2), (curvy:2), (narrow waist:2), hip focus
 ```
 
 When maximum is picked, drop whatever the thighs question answered — the
