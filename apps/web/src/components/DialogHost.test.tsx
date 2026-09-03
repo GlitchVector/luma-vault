@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { askConfirm, resetDialogs, showMessage } from '#/lib/dialogs.ts'
 import { DialogHost } from './DialogHost.tsx'
@@ -120,5 +120,102 @@ describe('DialogHost', () => {
     expect(screen.getByText('Scan finished.')).toBeTruthy()
     screen.getByRole('button', { name: 'OK' }).click()
     await second
+  })
+
+  /**
+   * How iOS Safari delivers a tap: pointer events at touch time, then — after
+   * the toolbar has toggled and the viewport has resized — mousedown, mouseup
+   * and click, dispatched to whatever is under the *original* point. For a
+   * dialog that moved with the viewport that was the backdrop, and the old
+   * backdrop `onMouseDown` read the tap that meant "yes" as a click-away. Only
+   * on an iPhone: an iPad's toolbar is at the top and does not move.
+   */
+  describe('a phone tap that Safari finishes late', () => {
+    // jsdom has no PointerEvent, so one is shaped by hand with the two fields
+    // the dialog reads: which pointer, and what kind.
+    const fireTouch = (target: Element, type: 'pointerdown' | 'pointerup' | 'pointercancel') => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'pointerId', { value: 1 })
+      Object.defineProperty(event, 'pointerType', { value: 'touch' })
+      fireEvent(target, event)
+    }
+    it('answers on the finger lifting, even when the mouse events then hit the backdrop', async () => {
+      render(<DialogHost />)
+      const asked = askConfirm('Delete holiday.jpg?', { confirmLabel: 'Delete' })
+      await settle()
+
+      const confirm = screen.getByRole('button', { name: 'Delete' })
+      const backdrop = screen.getByRole('alertdialog').parentElement!
+      fireTouch(confirm, 'pointerdown')
+      fireTouch(confirm, 'pointerup')
+      // The viewport shifted; Safari's late compatibility events land beside
+      // the box that moved.
+      fireEvent.mouseDown(backdrop)
+      fireEvent.mouseUp(backdrop)
+      fireEvent.click(backdrop)
+
+      expect(await asked).toBe(true)
+    })
+
+    it('answers a tap exactly once, though the tap arrives as pointerup and click both', async () => {
+      const onAnswer = vi.fn()
+      render(<DialogHost />)
+      void askConfirm('Delete holiday.jpg?', { confirmLabel: 'Delete' }).then(onAnswer)
+      await settle()
+
+      const confirm = screen.getByRole('button', { name: 'Delete' })
+      fireTouch(confirm, 'pointerdown')
+      fireTouch(confirm, 'pointerup')
+      fireEvent.click(confirm)
+      await settle()
+
+      expect(onAnswer).toHaveBeenCalledTimes(1)
+      expect(onAnswer).toHaveBeenCalledWith(true)
+    })
+
+    it('still cancels on a tap that lands and lifts on the backdrop', async () => {
+      render(<DialogHost />)
+      const asked = askConfirm('Delete holiday.jpg?', { confirmLabel: 'Delete' })
+      await settle()
+
+      const backdrop = screen.getByRole('alertdialog').parentElement!
+      fireTouch(backdrop, 'pointerdown')
+      fireTouch(backdrop, 'pointerup')
+
+      expect(await asked).toBe(false)
+    })
+
+    it('ignores a press that starts on the panel and is dragged out to the backdrop', async () => {
+      render(<DialogHost />)
+      const asked = askConfirm('Delete holiday.jpg?', { confirmLabel: 'Delete' })
+      await settle()
+
+      const backdrop = screen.getByRole('alertdialog').parentElement!
+      fireTouch(screen.getByText('Delete holiday.jpg?'), 'pointerdown')
+      fireTouch(backdrop, 'pointerup')
+      fireEvent.click(backdrop)
+      await settle()
+
+      // Neither answered nor gone: the question is still on screen.
+      expect(screen.getByRole('alertdialog')).toBeTruthy()
+      screen.getByRole('button', { name: 'Cancel' }).click()
+      expect(await asked).toBe(false)
+    })
+
+    it('ignores a bare click on the backdrop that no pointer put there', async () => {
+      // Exactly the stray event the phone sends. On its own it must do nothing.
+      render(<DialogHost />)
+      const asked = askConfirm('Delete holiday.jpg?', { confirmLabel: 'Delete' })
+      await settle()
+
+      const backdrop = screen.getByRole('alertdialog').parentElement!
+      fireEvent.mouseDown(backdrop)
+      fireEvent.click(backdrop)
+      await settle()
+
+      expect(screen.getByRole('alertdialog')).toBeTruthy()
+      screen.getByRole('button', { name: 'Delete' }).click()
+      expect(await asked).toBe(true)
+    })
   })
 })

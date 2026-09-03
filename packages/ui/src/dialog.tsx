@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Button } from './button.tsx'
 import { cn } from './cn.ts'
 
@@ -60,13 +60,52 @@ export function Dialog({
   onCancel,
 }: DialogProps) {
   const panel = useRef<HTMLDivElement>(null)
+  /** The pointer that went down on the backdrop, so only its own lift can cancel. */
+  const pressedBackdrop = useRef<number | null>(null)
   const [value, setValue] = useState(edit?.value ?? '')
   // Read through a ref by the key handler, which is registered once: Enter has
   // to send what is in the field now, not what was there on the render that
   // installed the listener.
   const latest = useRef(value)
   latest.current = value
-  const confirmEdited = useCallback(() => onConfirm(latest.current), [onConfirm])
+  /**
+   * Answered once, whichever event gets there first.
+   *
+   * A touch answers on `pointerup` (below) and the browser then still delivers
+   * the compatibility `click` it synthesises for the same tap. Usually this
+   * component is already gone by then; when it is not, the second arrival must
+   * not answer a second question.
+   */
+  const answered = useRef(false)
+  const settle = useCallback((answer: () => void) => {
+    if (answered.current) return
+    answered.current = true
+    answer()
+  }, [])
+  const confirmEdited = useCallback(() => settle(() => onConfirm(latest.current)), [onConfirm, settle])
+  const cancel = useCallback(() => settle(onCancel), [onCancel, settle])
+
+  /**
+   * A touch is answered when the finger lifts, not when the click arrives.
+   *
+   * On an iPhone the tap that opens or answers this dialog also toggles
+   * Safari's bottom toolbar, which resizes the viewport — and Safari
+   * dispatches its synthesised mousedown/mouseup/click *after* that, to
+   * whatever is under the original point. For a dialog centred in the
+   * viewport that was no longer the button but the backdrop beside it, so the
+   * tap that meant "yes" was read as a click-away and cancelled: the question
+   * closed and nothing happened, on that one device. Pointer events fire at
+   * touch time, before the shift, and a touch pointer is implicitly captured
+   * by the element it landed on — so `pointerup` is the one event that
+   * reliably says which button the finger was on. A mouse keeps `click`, and
+   * so does the keyboard.
+   */
+  const tap = (answer: () => void) => ({
+    onClick: answer,
+    onPointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.pointerType === 'touch' && !event.currentTarget.disabled) answer()
+    },
+  })
 
   useEffect(() => {
     // Capture phase, and every key is swallowed. Whatever is behind a modal is
@@ -78,7 +117,7 @@ export function Dialog({
       event.stopPropagation()
       if (event.key === 'Escape') {
         event.preventDefault()
-        onCancel()
+        cancel()
         return
       }
       if (event.key === 'Enter') {
@@ -113,7 +152,7 @@ export function Dialog({
 
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [onCancel, confirmEdited, confirmKeys])
+  }, [cancel, confirmEdited, confirmKeys])
 
   useEffect(() => {
     // Restored on close so dismissing a dialog does not dump focus on <body>
@@ -124,23 +163,45 @@ export function Dialog({
       // The caret goes to the end rather than selecting the whole value. What
       // is in the field is a starting point to trim, not a placeholder to type
       // over, and select-all makes the first keystroke destroy it.
-      field.focus()
+      field.focus({ preventScroll: true })
       field.setSelectionRange(field.value.length, field.value.length)
     } else {
       const buttons = panel.current?.querySelectorAll('button')
       // The last button is the confirm, so Enter and the initial focus agree.
-      buttons?.[buttons.length - 1]?.focus()
+      // `preventScroll`: on a phone the page behind the lightbox scrolls, and
+      // a focus that scrolls it is what starts the toolbar dance described at
+      // `tap` — the dialog is `fixed`, so there is nothing to scroll to anyway.
+      buttons?.[buttons.length - 1]?.focus({ preventScroll: true })
     }
     return () => previous?.focus?.()
   }, [])
 
   return (
     <div
-      className="fixed inset-0 z-[100] grid place-items-center bg-black/70 p-6 backdrop-blur-sm"
+      className={cn(
+        'fixed inset-0 z-[100] grid justify-items-center bg-black/70 backdrop-blur-sm',
+        // Anchored to the top on a phone, centred on anything wider. The
+        // phone's viewport height changes under a tap (see `tap`), and a box
+        // centred in it moves every time; one hung from the top edge does not,
+        // so the button that was under the finger is still under the finger.
+        'items-start px-6 pb-6 pt-16 md:items-center md:py-6',
+      )}
       // Clicking away is a cancel, which is the safe answer for both a
-      // destructive question and a notice.
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onCancel()
+      // destructive question and a notice. Decided from the pointer's own
+      // down *and* up, both on the backdrop itself — never from mouse events,
+      // which on a phone are synthesised late and can land here for a tap
+      // that began on a button (see `tap`), and never for a drag that started
+      // on the panel and wandered out.
+      onPointerDown={(event) => {
+        pressedBackdrop.current = event.target === event.currentTarget ? event.pointerId : null
+      }}
+      onPointerUp={(event) => {
+        const pressed = pressedBackdrop.current
+        pressedBackdrop.current = null
+        if (pressed === event.pointerId && event.target === event.currentTarget) cancel()
+      }}
+      onPointerCancel={() => {
+        pressedBackdrop.current = null
       }}
     >
       <div
@@ -213,7 +274,7 @@ export function Dialog({
 
         <div className="flex justify-end gap-2">
           {cancelLabel ? (
-            <Button size="sm" onClick={onCancel}>
+            <Button size="sm" {...tap(cancel)}>
               {cancelLabel}
             </Button>
           ) : null}
@@ -224,7 +285,7 @@ export function Dialog({
             // that is certainly wrong, and everything else is the backend's to
             // judge — it holds the allowlist this dialog cannot see.
             disabled={edit ? value.trim().length === 0 : false}
-            onClick={() => onConfirm(value)}
+            {...tap(confirmEdited)}
           >
             {confirmLabel}
           </Button>
