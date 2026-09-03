@@ -53,6 +53,7 @@ function parseArgs(argv) {
     if (flag === '--dry-run') args.dryRun = true
     else if (flag === '--prompt') args.prompt = unescape(argv[++at])
     else if (flag === '--negative') args.negative = unescape(argv[++at])
+    else if (flag === '--no-adetailer') args.noAdetailer = true
     else if (flag === '--adetailer-prompt') args.adPrompt = unescape(argv[++at])
     else if (flag === '--adetailer-negative') args.adNegative = unescape(argv[++at])
     else if (flag === '--model') args.model = argv[++at]
@@ -161,10 +162,14 @@ const settings = [
   'Hires upscale: 1.5',
   'Hires steps: 30',
   'Hires upscaler: 4xUltrasharp_4xUltrasharpV10',
-  'ADetailer model: face_yolov8s.pt',
-  args.adPrompt ? `ADetailer prompt: ${quote(args.adPrompt)}` : null,
-  `ADetailer negative prompt: ${quote(args.adNegative ?? args.negative ?? 'worst quality, low quality, lowres')}`,
-  'ADetailer denoising strength: 0.4',
+  // --no-adetailer omits the whole block, which is how the prefill extension
+  // knows to leave the toggle off. The pass repaints EVERY face it detects with
+  // the same prompt, so on a two-person frame where the man's head is in shot it
+  // paints her identity onto him. Cheaper to skip the pass than to fight it.
+  args.noAdetailer ? null : 'ADetailer model: face_yolov8s.pt',
+  args.noAdetailer || !args.adPrompt ? null : `ADetailer prompt: ${quote(args.adPrompt)}`,
+  args.noAdetailer ? null : `ADetailer negative prompt: ${quote(args.adNegative ?? args.negative ?? 'worst quality, low quality, lowres')}`,
+  args.noAdetailer ? null : 'ADetailer denoising strength: 0.4',
 ].filter(Boolean).join(', ')
 
 // The family's activation token, at the end where its card puts it — the

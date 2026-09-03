@@ -354,8 +354,8 @@ three. Do not halve them back without being asked.
 | 2 | He grips her bare breasts | 6 | portrait | `(close-up:1.6), (breast focus:1.6)`, `grabbing another's breast, groping, nipples` |
 | 3 | Missionary, legs held | 8 + 4 + 4 + 6 | portrait, then landscape | exposed → entering → `(deep penetration:1.3)` → `:1.5` + `testicles` (8 portrait across the ladder); 4 landscape repeats of the deep pair; 4 landscape `anal`; then **6 landscape with her legs wrapped around him** — `(leg lock:1.4), hug` (`legs around waist` is not a tag; `leg lock` is 3,432 and needs both the weight and the prop) |
 | 4a | Doggystyle | 6 + 10 + 6 + 4 | landscape | 6 vaginal, some with `arms behind back, (arm grab:1.4)`; then **10 anal** — plain, arm-pulled, and `(deep penetration:2), testicles` frames at the vocabulary's ceiling for depth; then **6 restrained** — `choker, collar, (chain:1.2), (chain leash:1.4), leash, (holding leash:1.3), (leash pull:1.3)` (mostly vaginal, some anal): a chained collar he holds and pulls her by. **Use a collar, not a bit gag**, and do **not** stack `head back` + `looking up` — that pair renders a head twisted past 90°. `bit gag` (2,810), `harness`, `pony play`, `head harness`, `bridle` and `reins` are all dead or near-dead; `choker` (320,504) and `collar` (157,883) hold reliably. Negate `bit gag, gag, harness` so the earlier gear does not creep in; then **4 to close the act — she grabs her own glutes and spreads herself open**: `ass grab, (grabbing own ass:1.5), (spread ass:1.4), (spread anus:1.3), anus, ass focus, own hands together` (2 vaginal, 2 anal). The specific names are thin — `grabbing own ass` 5,574, `spread ass` 4,863 — so assemble from the thick ones (`ass grab` 25,306, `anus` 98,073, `ass focus` 21,648) and weight the specific ones as hints. **Negate `grabbing another's ass`** or the hands become his: that is the exact tag acts 6 and 7 use for him, and without the negation the beat inverts silently |
-| 4b | Presenting, gaped | 3 | portrait | **not doubled** — the one act that read fine at three. **after** the doggystyle, not before. 2 solo standing `bent over, presenting, (gaping:1.4)`; 1 solo `all fours, top-down bottom-up` with the ass **one rung up** |
-| 5 | Spooning / side fuck | 4 | landscape | `on side, sex from behind, leg lift`; negate `missionary`. Weakest act in the set — see below |
+| 4b | Presenting, gaped | 3 | portrait | **not doubled** — the one act that read fine at three. **after** the doggystyle, not before. 2 solo standing `bent over, presenting, (gaping:1.4)`; 1 solo `all fours, top-down bottom-up` with the ass **one rung up**. The **last two of the three** add her own hands: `ass grab, (grabbing own ass:1.5), (spread ass:1.4), (spread anus:1.4), own hands together` — she is alone here, so nothing to negate, but the first frame stays clean so the beat still escalates |
+| 5 | Spooning / side fuck | 8 | landscape | `on side, sex from behind, leg lift`; negate `missionary`. **Doubled to 8** — it is the weakest act in the set (see below), so it needs the extra volume to yield a usable spread, not less |
 | 5b | Standing, taken from behind | 6 | portrait | `standing, standing sex, sex from behind, bent over`, both upright, `arms behind back, (arm grab:1.4), (holding another's arm:1.3)`; negate `rope, bondage, all fours, lying` |
 | 6 | Suspended congress | 4 + 4 | portrait | forward-facing; `straddling, carrying, standing sex`; then 4 with both glutes gripped — `ass grab, (grabbing another's ass:1.3)` |
 | 6b | Reverse suspended congress | 6 | portrait | **camera in front, she faces viewer**; 2 vaginal, 4 anal, two of them with `(ahegao:1.5)` |
@@ -424,6 +424,15 @@ imply a pull, let the leash tag do it; do not also command the neck.
 repaints the head crop from its own prompt, so `tears`, `ahegao` or anything
 else stated only in the main prompt is painted over by a calm face. This is
 invisible at first glance and is the usual reason an expression "did not work".
+
+**Every two-person frame turns ADetailer OFF — pass `--no-adetailer`.** The pass
+repaints *every* face it detects with the same prompt, so on any frame where the
+man's head is in shot it paints her identity onto him: her hair, her eyes, and —
+with a character LoRA loaded — her skin and horns too. `faceless male` suppresses
+his face only when it holds, and it does not always hold. So skip the pass
+entirely whenever a second figure is in frame; her face then comes from the base
+render plus the hires pass, which is good enough at this canvas. Solo frames
+(stages 1–3, and act 4b) keep the pass and its identity prompt.
 
 **Every two-person frame needs `faceless male, solo focus`.** ADetailer runs on
 *every* face it detects and applies the same prompt to each — so an expression
