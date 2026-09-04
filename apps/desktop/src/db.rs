@@ -1581,7 +1581,9 @@ impl Db {
 
     /// Record a run and attach the pictures it named, from one manifest.
     ///
-    /// Idempotent, and re-run on every scan. A manifest grows while its run
+    /// Idempotent, and re-run on every scan; also the one place a set *shrinks*,
+    /// since the manifest is the record and a picture it stops naming leaves
+    /// the set. A manifest grows while its run
     /// does — a `/photostory` appends a line per stage over half an hour — so
     /// the same file is read many times, and a member whose picture is not
     /// indexed *yet* has to be a no-op that a later scan completes rather than
@@ -1619,6 +1621,7 @@ impl Db {
         )?;
 
         let mut attached = 0_usize;
+        let mut kept: Vec<i64> = Vec::new();
         {
             let mut find = tx.prepare("SELECT id FROM media WHERE path = ?1")?;
             let mut insert = tx.prepare(
@@ -1638,8 +1641,31 @@ impl Db {
                 if let Some(id) = id {
                     insert.execute(params![id, manifest.run, member.label, position as i64])?;
                     attached += 1;
+                    kept.push(id);
                 }
             }
+        }
+
+        // The manifest is the record, so a picture it no longer names leaves the
+        // set — a run that re-shot a stage unfiles the first attempt by dropping
+        // it from the file, and the index has to follow or the set keeps both.
+        // Scoped to this manifest's own folder: a run that crossed midnight has
+        // a manifest per day folder under one run id, and each may only speak
+        // for the pictures beside it. Prefix-matched with `substr`, not LIKE —
+        // a folder path is full of `_`.
+        {
+            let placeholders = kept.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "DELETE FROM media_sets WHERE run = ? AND media_id IN (
+                    SELECT id FROM media WHERE substr(path, 1, length(?)) = ?
+                 ) AND media_id NOT IN ({})",
+                if placeholders.is_empty() { "-1".to_string() } else { placeholders }
+            );
+            let mut binds: Vec<&dyn rusqlite::ToSql> = vec![&manifest.run, &folder, &folder];
+            for id in &kept {
+                binds.push(id);
+            }
+            tx.execute(&sql, binds.as_slice())?;
         }
         tx.commit()?;
         Ok(attached)
@@ -5607,6 +5633,16 @@ mod tests {
         assert_eq!(attached, 3);
         let page = db.query_media(&query).expect("query");
         assert_eq!(page.total, 3, "a second read of the same manifest adds, never doubles");
+
+        // A run re-shot a stage and dropped the first attempt from its manifest.
+        // The index follows the file: the picture leaves the set, and nothing
+        // else in it moves.
+        let trimmed = [members[0].clone(), members[2].clone()];
+        let attached = db.record_set(&manifest, "/media", &trimmed).expect("re-record trimmed");
+        assert_eq!(attached, 2);
+        let page = db.query_media(&query).expect("query");
+        assert_eq!(page.total, 2, "a member the manifest stopped naming leaves the set");
+        assert!(page.items.iter().all(|item| item.path != "/media/b.mp4"));
     }
 
     #[test]
