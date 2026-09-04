@@ -137,6 +137,13 @@ fn handle_changes(
     let frame_root = pipeline.frame_root();
     let mut marked = scan::MarkerCache::default();
     let mut touched = false;
+    // Applied after every file in the batch, not in place. A run appends to its
+    // manifest right after Forge saves the picture, so the two events usually
+    // land in one debounced batch — and the batch is a set, with no order. A
+    // manifest read before its newest picture's row exists would miss that
+    // member, and for the run's *last* frame no later rewrite would ever come
+    // back for it.
+    let mut manifests: Vec<PathBuf> = Vec::new();
 
     for path in paths {
         // Ignore anything outside a watched folder, and anything we generated
@@ -169,6 +176,15 @@ fn handle_changes(
         }
 
         if path.is_file() {
+            // A set manifest is not media, but it is the one non-media file the
+            // index reads. The walk collects these; a run writing one while the
+            // app is open — which is when runs happen — reaches the index only
+            // through here, and without this the set appeared on the next full
+            // rescan and not before.
+            if crate::sets::is_manifest(&path) {
+                manifests.push(path);
+                continue;
+            }
             let Some(kind) = scan::kind_of(&path) else {
                 continue;
             };
@@ -229,6 +245,18 @@ fn handle_changes(
             db.delete_media_by_path(path_str).ok();
             forget_if_unreferenced(db, &thumb_root, &frame_root, key.as_deref());
             touched = true;
+        }
+    }
+
+    for manifest in manifests {
+        // Same handling as the scan's: an unreadable manifest is one set nobody
+        // can browse, and the pictures beside it are indexed regardless.
+        if let Ok((set, members)) = crate::sets::read_manifest(&manifest) {
+            let folder = manifest.parent().and_then(Path::parent);
+            let folder = folder.map(|f| f.display().to_string()).unwrap_or_default();
+            if db.record_set(&set, &folder, &members).is_ok() {
+                touched = true;
+            }
         }
     }
 
