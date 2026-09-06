@@ -425,10 +425,13 @@ Neither is the creator — Civitai moved the model behind a host that cannot be
 read — so the commands send 5, which is inside both. Try `--cfg 7` for the
 other reading.
 
-**Shortcut: `illu`.** The model argument is a substring match, so `illu` — typed
-under call 1's Other, or straight into the command — finds every Illustrious
-checkpoint installed and takes the newest by file date. Name one specifically —
-`hassaku`, `deliberate`, `wai` — when you want that one rather than the latest.
+**How the model argument resolves.** Substring match against the installed
+checkpoints — but a match at the **start of a word** wins over one buried inside
+another word, and only then is the newest by file date taken. So `noob` finds
+`noobaiXL…` rather than `delnoob`, and `illu` finds `Illustrious-XL` rather than
+`hassakuXLIllustrious`. `deliberate` still reaches `perfectdeliberate` (no word
+starts with it, so nothing is narrowed) and a merge typed in full still finds
+itself. `--dry-run` prints the `Model:` it chose; read it before a sweep.
 
 **Switching between them needs no new command.** Because every Illustrious
 checkpoint gets the same quality tags, negative, sampler, CFG and steps, a
