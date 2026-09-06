@@ -54,8 +54,18 @@ function parseArgs(argv) {
     else if (flag === '--prompt') args.prompt = unescape(argv[++at])
     else if (flag === '--negative') args.negative = unescape(argv[++at])
     else if (flag === '--no-adetailer') args.noAdetailer = true
+    else if (flag === '--no-hires') args.noHires = true
     else if (flag === '--adetailer-prompt') args.adPrompt = unescape(argv[++at])
     else if (flag === '--adetailer-negative') args.adNegative = unescape(argv[++at])
+    // Run the face pass on a different checkpoint than the base render — a
+    // substring, resolved like --model. The extension's per-unit override.
+    else if (flag === '--adetailer-checkpoint') args.adCheckpoint = argv[++at]
+    // Hand the last part of the sampling to another checkpoint. The base model
+    // decides the composition in the early steps (which garment, where its seams
+    // fall), the refiner paints the finish — the split that lets a model that
+    // draws a garment right lend it to a model that renders skin better.
+    else if (flag === '--refiner') args.refiner = argv[++at]
+    else if (flag === '--refiner-switch') args.refinerSwitch = Number(argv[++at])
     else if (flag === '--model') args.model = argv[++at]
     else if (flag === '--width') args.width = Number(argv[++at])
     else if (flag === '--height') args.height = Number(argv[++at])
@@ -99,6 +109,8 @@ if (!args.prompt) {
     '  --model defaults to ' + DEFAULT_MODEL + `; the canvas is ${PORTRAIT} unless overridden,`,
     '  whatever shape the source image was — it is not read off the attachment.',
     '  --dry-run prints the parameter block without touching Forge.',
+    '  --refiner <substring> [--refiner-switch 0.5] hands the sampling to a second checkpoint',
+    '  part-way: the base model composes, the refiner paints the finish.',
   )
 }
 if (!Number.isFinite(args.width) || !Number.isFinite(args.height)) {
@@ -121,6 +133,10 @@ const dressed = enforceUndress(args.prompt)
 args.prompt = dressed.text
 
 const target = await resolveModel(args.model)
+// The face pass's own checkpoint, when asked for. Resolved the same way, so a
+// typo fails here with the installed list rather than as a silent no-op in Forge.
+const adTarget = args.adCheckpoint && !args.noAdetailer ? await resolveModel(args.adCheckpoint) : null
+const refinerTarget = args.refiner ? await resolveModel(args.refiner) : null
 const { architecture, vPred } = describeCheckpoint(target)
 if (architecture !== 'xl') {
   // Not fatal — the block still opens — but the canvas and tuning here are
@@ -170,10 +186,13 @@ const settings = [
   `Size: ${args.width}x${args.height}`,
   `Model: ${target.name}`,
   'Clip skip: 2',
-  'Denoising strength: 0.4',
-  'Hires upscale: 1.5',
-  'Hires steps: 30',
-  'Hires upscaler: 4xUltrasharp_4xUltrasharpV10',
+  // --no-hires omits the whole pass, the same way --no-adetailer does. The
+  // upscaler invents ring-shaped specular highlights on large, smooth,
+  // low-detail areas - it has nothing to sharpen there, so it hallucinates.
+  args.noHires ? null : 'Denoising strength: 0.4',
+  args.noHires ? null : 'Hires upscale: 1.5',
+  args.noHires ? null : 'Hires steps: 30',
+  args.noHires ? null : 'Hires upscaler: 4xUltrasharp_4xUltrasharpV10',
   // --no-adetailer omits the whole block, which is how the prefill extension
   // knows to leave the toggle off. The pass repaints EVERY face it detects with
   // the same prompt, so on a two-person frame where the man's head is in shot it
@@ -182,16 +201,29 @@ const settings = [
   args.noAdetailer || !args.adPrompt ? null : `ADetailer prompt: ${quote(args.adPrompt)}`,
   args.noAdetailer ? null : `ADetailer negative prompt: ${quote(args.adNegative ?? args.negative ?? 'worst quality, low quality, lowres')}`,
   args.noAdetailer ? null : 'ADetailer denoising strength: 0.4',
+  args.noAdetailer || !adTarget ? null : `ADetailer checkpoint: ${adTarget.name}`,
+  // A1111's own infotext keys, so a pasted block round-trips through the UI too.
+  refinerTarget ? `Refiner: ${refinerTarget.name}` : null,
+  refinerTarget ? `Refiner switch at: ${args.refinerSwitch ?? 0.6}` : null,
 ].filter(Boolean).join(', ')
 
 // The family's activation token, at the end where its card puts it — the
 // trained style is simply not engaged without it.
+// `shiny skin` used to sit in the 2.5d and 3d positives, and it is what draws
+// the ring-shaped specular blobs on large smooth skin — six or more per frame on
+// a body-tuned render. It also silently defeats negating it: with the tag in the
+// positive, adding it to the negative just makes the prompt argue with itself.
+// So the gloss family moves to the negative for every style, and the soft-light
+// terms come with it. `realistic` alone still separates 2.5d from flat 2d.
+const GLOSS =
+  'shiny skin, oiled body, wet, sweat, glossy, specular highlights, reflection, ' +
+  'light particles, sparkle, bloom, lens flare, sunbeam'
 const STYLES = {
-  '2d': { positive: 'anime coloring, flat color', negative: 'realistic, photorealistic, shiny skin' },
-  '2.5d': { positive: 'realistic, shiny skin', negative: 'flat color, anime coloring, photorealistic' },
+  '2d': { positive: 'anime coloring, flat color', negative: `realistic, photorealistic, ${GLOSS}` },
+  '2.5d': { positive: 'realistic', negative: `flat color, anime coloring, photorealistic, ${GLOSS}` },
   '3d': {
-    positive: 'photorealistic, realistic, shiny skin',
-    negative: 'anime coloring, flat color, lineart, sketch',
+    positive: 'photorealistic, realistic',
+    negative: `anime coloring, flat color, lineart, sketch, ${GLOSS}`,
   },
 }
 if (args.style && !STYLES[args.style]) {

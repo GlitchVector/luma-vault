@@ -964,6 +964,10 @@ export function toApiPayload(block: string): Record<string, unknown> {
   set('cfg_scale', num('CFG scale'))
   set('seed', num('Seed'))
   set('denoising_strength', num('Denoising strength'))
+  // The refiner is two fields and both are needed: a checkpoint with no switch
+  // point never engages, a switch point with no checkpoint is a no-op.
+  set('refiner_checkpoint', get('Refiner'))
+  set('refiner_switch_at', num('Refiner switch at'))
 
   const size = (get('Size') ?? '').match(/(\d+)x(\d+)/)
   if (size) {
@@ -1029,6 +1033,15 @@ function adetailerUnit(
   if (negative) unit['ad_negative_prompt'] = negative
   const denoise = Number(get('ADetailer denoising strength'))
   if (Number.isFinite(denoise)) unit['ad_denoising_strength'] = denoise
+  // The face pass can run on a different checkpoint than the base render — the
+  // extension's per-unit override, which works even across architectures. The
+  // block names the checkpoint the way Forge lists it; the `ad_use_*` flag has
+  // to accompany the value or the extension ignores it.
+  const checkpoint = unquote(get('ADetailer checkpoint'))
+  if (checkpoint) {
+    unit['ad_use_checkpoint'] = true
+    unit['ad_checkpoint'] = checkpoint
+  }
   return unit
 }
 

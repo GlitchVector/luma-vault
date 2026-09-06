@@ -47,18 +47,30 @@ Optional, and no answer is a normal answer.
 
 | Question | Options |
 |---|---|
-| Model | `deliberate` (Recommended) · `wai` · `aniverse` · `noob` |
+| Model | `noob → delburry75` (Recommended) · `delburry75` · `wai` · `delnoob` |
 
-All four are substrings, matched against the checkpoints actually installed,
-newest first — so is anything typed under Other, which is how you reach a
-checkpoint not on this list. `deliberate` is the script's own default and stays
-the recommendation; `wai` (waiNSFWIllustrious) has by far the best record on
-this vault's own 4+ ratings, so it is worth offering rather than burying.
+**The first option is two checkpoints, not one.** `noob → delburry75` means
+`--model vpred --refiner delburry75 --refiner-switch 0.5`: NoobAI-XL composes the
+first half of the steps and decides what is in the frame, delburry75 paints the
+second half. The user picked it over every single checkpoint on 2026-09-06
+("pretty nice approach, keep that as selection for all commands") after four
+Oracle sets side by side — it is the only build that hangs a loose garment
+without inventing a belt and still has delburry's finish. The other three are
+plain substrings matched against the checkpoints actually installed, newest
+first — so is anything typed under Other, which is how you reach `deliberate`,
+`hassaku`, NoobAI alone (`vpred`) or a checkpoint not on this list. `delnoob` is
+the 50:50 merge of delburry75 and NoobAI epsilon, belting about half the time. `wai` (waiNSFWIllustrious)
+has by far the best record on this vault's own 4+ ratings and stays offered.
+**Write the composing model as `vpred`, not `noob`.** Substrings resolve newest
+file first, and since the `delnoob` merge (2026-09-06) `noob` finds *that*; `vpred`
+is the only substring that still lands on `noobaiXLNAIXL_vPred10Version`, the build
+every measurement above was made on. Four options is the tool's cap, which is why `deliberate` and `hassaku` moved
+to Other.
 
-`deliberate`, `wai` and `hassaku` are all Illustrious and take identical
-settings; `aniverse` and `noob` each need their own tuning, which the script
+`deliberate` and `wai` are both Illustrious and take identical
+settings; `hassaku` and `noob` each need their own tuning, which the script
 applies from the checkpoint rather than from what was typed. Pass the answer
-through as `--model <answer>`.
+through as `--model <answer>` — or, for the first option, as the three flags above.
 
 ## 2. Read the image into danbooru tags
 
@@ -196,24 +208,33 @@ effect on the result and the least obvious controls:
 Pass the answer as `--style 2d`, `--style 2.5d` or `--style 3d`; "as seen"
 passes nothing.
 
-- **2D** — flat anime. `anime coloring, flat color`, arguing against
-  `realistic, photorealistic, shiny skin`.
-- **2.5D** — soft semi-real anime, the glossy look. `realistic, shiny skin`,
-  arguing against `flat color, anime coloring, photorealistic`.
-- **3D** — rendered. `photorealistic, realistic, shiny skin`, arguing against
-  `anime coloring, flat color, lineart, sketch`.
+- **2D** — flat anime. `anime coloring, flat color`.
+- **2.5D** — soft semi-real anime. `realistic`, arguing against `flat color,
+  anime coloring, photorealistic`.
+- **3D** — rendered. `photorealistic, realistic`, arguing against `anime
+  coloring, flat color, lineart, sketch`.
 
 2.5D and 3D both assert `realistic`; the only difference between them is
 whether `photorealistic` is asked for or argued against. That single tag is
 what separates a soft anime-shaded figure from a rendered one.
 
+**No style asserts `shiny skin` any more, and every style negates it** along
+with `oiled body, wet, sweat, glossy, specular highlights, reflection, light
+particles, sparkle, bloom, lens flare, sunbeam`. That tag is what draws
+ring-shaped specular blobs across large smooth skin — half a dozen per frame on
+a body-tuned render — and having it in the positive *silently defeats negating
+it*, so a prompt that lists it in both places argues with itself and the blobs
+stay. Removing it costs nothing: the skin still reads soft and lit, and it now
+holds its own gradients instead of being covered by a plastic highlight layer.
+Ask for light in the **setting** instead — `(overcast:1.3), cloudy, soft
+lighting, diffused lighting` — which is what produced the best-lit set so far.
+
 **Do not hand-write these tags.** The obvious words for this axis are mostly
 not danbooru tags at all — `3d`, `cel shading`, `soft shading`, `glossy skin`
 and `detailed skin` are all absent from the 10,861 names in
 `models/anime-tagger/selected_tags.csv`, so a prompt asking for them is asking
-in a language the model never learned. `shiny skin` is the one that carries the
-gloss. The flag applies the checked set and clears whatever competing rendering
-tag the prompt already had.
+in a language the model never learned. The flag applies the checked set and
+clears whatever competing rendering tag the prompt already had.
 
 ## 4. Compose
 
@@ -266,6 +287,14 @@ Add `close-up, cropped, portrait, upper body` to it only when the
 composition — after the shot answer — is `full body` or wider; they are the
 backstop against the model drifting tight. If results still crop at the
 thighs, add `cowboy shot` too.
+
+**And when she is dressed over the hips and any ass or hip tag is above `1`**,
+add `impossible clothes, impossible dress, wedgie, taut clothes, taut dress,
+skin tight, tight clothes, cameltoe`. Otherwise a rear or low frame comes back
+with the skirt shrink-wrapped into the crease — the `impossible clothes` effect,
+which is a real tag and therefore a real negative. The rule and its counts live
+in `.claude/shot-tags.md` ("A dressed rear shot moulds the fabric…"); skip it
+when the hips are bare or the outfit is a skin-tight one-piece by design.
 
 **When a name was given, the original's negative is not pasted through.** Start
 from the baseline above and carry over only terms that state something it does
@@ -434,7 +463,7 @@ block written for one is already correct for all of them: change Forge's
 Checkpoint dropdown and generate again. Nothing else in the tab has to move.
 
 That does *not* hold across families. `noob` wants different quality tags,
-`aniverse` needs its trigger and a different sampler and CFG — so switching to
+`hassaku` needs its trigger and a different sampler and CFG — so switching to
 either means re-running the command rather than swapping the dropdown. And the
 checkpoint is global in Forge, so the dropdown moves it for every tab, not just
 the one in front of you.
@@ -444,7 +473,7 @@ the one in front of you.
 
 ## AniVerse
 
-Pass `aniverse` and both commands switch to **AniVerse XL's own recommended
+Pass `hassaku` and both commands switch to **AniVerse XL's own recommended
 settings**, from its model card:
 
 | | AniVerse XL v4.0 | the booru-XL default |

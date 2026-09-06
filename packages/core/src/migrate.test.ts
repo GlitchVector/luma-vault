@@ -722,6 +722,18 @@ describe('toApiPayload', () => {
     })
   })
 
+  it('carries the refiner pair through as its two payload fields', () => {
+    // A1111's own infotext keys. Both are needed — a checkpoint with no switch
+    // point never engages, a switch point with no checkpoint is a no-op.
+    const refined = toApiPayload(
+      '1girl\nNegative prompt: worst quality\n' +
+        'Steps: 28, Size: 832x1216, Model: noobai, Refiner: delburry75, Refiner switch at: 0.5',
+    )
+    expect(refined['refiner_checkpoint']).toBe('delburry75')
+    expect(refined['refiner_switch_at']).toBe(0.5)
+    expect((refined['override_settings'] as Record<string, unknown>)['sd_model_checkpoint']).toBe('noobai')
+  })
+
   it('omits what the block never said instead of inventing a default', () => {
     // A block with no hires pass and no face pass must not acquire either —
     // Forge's own settings decide, exactly as they would for a pasted block.

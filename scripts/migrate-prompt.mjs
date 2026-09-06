@@ -249,6 +249,12 @@ const queueLabel = flag('--label')
 // Which command run this render belongs to, so the vault can show the set
 // again afterwards. `<command>/<character>/<stamp>`; see `lib/sets.mjs`.
 const setSpec = flag('--set')
+// Hand the second part of the sampling to another checkpoint — the same pair
+// open-in-forge takes. The target composes, the refiner paints the finish.
+const refinerName = flag('--refiner')
+const refinerSwitchGiven = flag('--refiner-switch')
+const refinerSwitch = refinerSwitchGiven === undefined ? 0.5 : Number(refinerSwitchGiven)
+if (!Number.isFinite(refinerSwitch) || refinerSwitch <= 0 || refinerSwitch >= 1) fail(`--refiner-switch takes a fraction between 0 and 1 (got "${refinerSwitchGiven}")`)
 const setLabel = flag('--shot-label')
 const { parseSet } = await import('./lib/sets.mjs')
 let set = null
@@ -277,7 +283,7 @@ if (!/^\d+\s*x\s*\d+$/.test(size)) fail(`--size takes WxH, e.g. --size ${PORTRAI
 const [imageName, targetName = DEFAULT_MODEL] = argv
 if (!imageName) {
   fail(
-    'usage: pnpm migrate-prompt <image-name> [target-model] [--shot "full body"]',
+    'usage: pnpm migrate-prompt <image-name> [target-model] [--shot "full body"] [--refiner <model> [--refiner-switch 0.5]]',
     '       [--body "(gigantic ass:2)"] [--add "black dress, demon horns"] [--size WxH]',
     '       [--cfg 7] [--style 2d|2.5d|3d] [--dry-run] [--prompt "<the edited prompt>"]',
     '       [--render <path>] [--queue [--label <name>]]',
@@ -358,7 +364,8 @@ if (vPred) warnAboutVPrediction(target.name)
 // paste fills in the default and adds an override that reverts whatever the
 // person actually chose — an override they never asked for and did not add.
 const options = await forge('/sdapi/v1/options')
-const { block: migrated, notes } = migrateGeneration(block, {
+const refiner = refinerName ? await resolveModel(refinerName) : null
+const { block: migrated0, notes } = migrateGeneration(block, {
   architecture,
   // Both read from the checkpoint rather than asked for: the mode from the
   // file's own header, the vocabulary from its name.
@@ -375,6 +382,13 @@ const { block: migrated, notes } = migrateGeneration(block, {
   prompt: editedPrompt,
   negative: editedNegative,
 })
+// A1111's own infotext keys, appended to the settings line (always the last
+// line of a block), so the pair round-trips through the UI, the queue and
+// `toApiPayload` alike.
+const migrated = refiner
+  ? migrated0.replace(/\n([^\n]*)$/, (_, last) => `\n${last}, Refiner: ${refiner.name}, Refiner switch at: ${refinerSwitch}`)
+  : migrated0
+if (refiner) notes.push(`refiner: ${refiner.name} takes over at ${refinerSwitch} of the steps`)
 
 console.log(`from  ${row.name}`)
 console.log(`to    ${target.name}  (${architecture})`)

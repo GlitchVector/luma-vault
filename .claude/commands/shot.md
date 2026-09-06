@@ -52,6 +52,14 @@ and the user did not ask for that.
 
 A model named positionally — `/shot 00205 aniverse` — overrides both.
 
+**The user's standing pick is the refiner pair, not a single checkpoint (2026-09-06).**
+`pnpm migrate-prompt <image> vpred --refiner delburry75 --refiner-switch 0.5`: NoobAI-XL
+composes the first half of the steps, delburry75 paints the rest. It is what
+they chose after four sets side by side ("keep that as selection for all
+commands"), so when the original's own checkpoint is not a reason to stay,
+offer the pair first. `migrate-prompt` appends `Refiner:` / `Refiner switch at:`
+to the settings line; the queue and the API payload carry them through.
+
 ## 2. Ask the two extra shots, then where the camera goes
 
 Two `AskUserQuestion` calls, because the shot table needs all four question
@@ -134,6 +142,15 @@ Drop the **weight** on the ass for anything front-facing — it is not in frame 
 but keep the weights on hips and thighs. Removing all three was tried and the
 figure came back slim, which is a different picture rather than a different
 angle. Full detail in `.claude/shot-tags.md`.
+
+**Colour every garment before the first shot goes out.** A set is only a set
+if the stockings are the same colour in all of it. Where the source block
+names a garment without its colour, or names a colour weakly next to a
+weighted one, add the colour-fused tag (`black thighhighs`), weight it if a
+stronger neighbour colour sits beside it, and negate the neighbour colours on
+that garment — once, in the wardrobe every shot then carries. The measured
+case and the counts are in `.claude/shot-tags.md` ("Every garment carries its
+own colour…").
 
 **Strip the old facing tags out of the rest.** The second rule, and the one
 people reach for first because turning a picture around is the commonest ask.

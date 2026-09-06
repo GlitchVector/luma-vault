@@ -39,7 +39,7 @@ acts that were not asked for.
 
 The same first call as `/recreate` — character and model, one
 `AskUserQuestion`, both single-select. Read `.claude/character-tags.md` for the
-character half; the model half is the same four options and the same substring
+character half; the model half is the same four options (the recommended one is the `noob → delburry75` refiner pair, three flags) and the same substring
 matching.
 
 Then **always ask about the shape** — it is never assumed, even when the user
@@ -48,12 +48,30 @@ single-select questions:
 
 | Question | Options (recommended first) |
 |---|---|
-| Thickness | `<lora:thicc_slider_ixl_v12:1.0>` · `:0.6` lighter · `:1.2` heavier · `:1.5` maximum |
-| Breasts | `(huge breasts:1.3)` · `large breasts` · `(huge breasts:1.4)` · `huge breasts` |
-| Hips / thighs | `(wide hips:1.4), (thick thighs:1.5)` · `(wide hips:1.2)` · `(wide hips:1.6), (thick thighs:1.8)` · none, slider only |
-| Rear ass | `(huge ass:2)` · `(huge ass:1.7)` · `(huge ass:1.5)` |
+| Thickness | **none** · `curvy, (wide hips:1.2), (thick thighs:1.2)` · `(curvy:1.3), (wide hips:1.6), (thick thighs:1.6)` · **maximum:** `(wide hips:1.8), (thick thighs:1.8)` + `<lora:thicc_slider_ixl_v12:1.0>` |
+| Breasts | `large breasts` · `(large breasts:1.5)` · `(huge breasts:1.3)` · `(huge breasts:1.4)` |
+| Hips / thighs | `wide hips` · `(wide hips:1.2)` · `(wide hips:1.4), (thick thighs:1.5)` · none, slider only |
+| Rear ass | `(huge ass:1.4)` · `(huge ass:1.6)` · `(huge ass:2)` |
 
-**The first question is the important one, and it is a LoRA, not a tag.** A tag
+**The recommended rung is the character's own build.** Three sets in a row came
+out thick by default — the slider at 0.7 under `(huge breasts:1.3), (wide
+hips:1.4), (thick thighs:1.5), (huge ass:2)` — because the heavy option led
+every ladder and the slider was assumed. That is the wrong default: a
+photostory is *of a character*, and the game's Eve or Lara is athletic, not
+heavy. So the first option on every axis is now the one closest to the
+character as drawn, the slider is off unless asked for, and the heavy rungs
+are still one answer away for anyone who wants them. Front frames get the ass
+tag at `1.2` regardless (§5), and the act stage halves whatever slider was
+chosen, as before.
+
+**The slider is reserved for the top rung only.** Thickness climbs by *tags*
+first — `curvy`, then the weighted hips and thighs — and
+`thicc_slider_ixl_v12` enters only at the maximum, once
+the tags are already at 1.8 and have nothing left to give. Below that rung it
+is never loaded: it is a blunt global reshape, and on the three sets that
+carried it at 0.7 under the standard tags the figure read heavy at every angle
+whether the frame asked for it or not. Above 1.8, though, it is the only
+instrument that still moves anything — a LoRA, not a tag.** A tag
 names a *part* and only works when that part is in frame — which is why a
 tag-only body reads thick from behind and thin from the front, the failure this
 set spent an afternoon on. `thicc_slider_ixl_v12` is a weight-driven slider (no
@@ -67,19 +85,107 @@ Three things the ladders above deliberately no longer offer:
   including `/recreate`'s and `/sdxl`'s "maximum combo", now corrected.
   `.claude/shot-tags.md` still *reads* `hyper hips` when detecting a rung from
   an old block, which is right: old prompts contain it even though it is inert.
-- **No `narrow waist` question.** The slider already narrows the waist; the tag
-  on top pinches the torso to nothing. Leave it out unless the user asks.
+- **The waist is asked in the style call, not here.** `narrow waist` is on
+  every frame regardless (the belly rule below); the *weight* is the question,
+  and it lives in call 3 because this call is full. Under the slider the tag is
+  redundant, so the maximum thickness rung keeps it unweighted whatever was
+  answered.
 - **The ass tag is asked once, for the rear.** It is not a front-frame size
   control — above roughly 1.4 it *overrides framing*, turning a `facing viewer`
   frame rear-on. Front frames get it at 1.2–1.3 and let the slider carry the
   shape; §5 freezes the two variants.
 
+### The belly stays slim, whatever the rung
+
+Thickness lives in the hips, thighs, breasts and rear — **never in the
+stomach.** So every frame, on every rung, carries `narrow waist` in the
+positive (at the weight the style call chose, `1` by default) and `plump, fat,
+belly, big belly` in the negative. The negative half is a standing rule, not a
+question; only the waist's weight is asked.
+
+Two measured facts behind it. **`chubby` is not a tag** — it is absent from
+`selected_tags.csv`, so putting it in the negative (the habit that led here)
+was doing nothing on any run. And **`plump` (25,460) is the body-fat tag**:
+until the Aerith set it sat in the *positive* of the second and third thickness
+rungs, which is exactly where the soft, rounded stomach on those frames came
+from. Thickness now climbs on `curvy` and the weighted hips/thighs alone, and
+`plump` moves to the negative alongside the real fat tags — `fat` 9,309,
+`belly` 12,513, `big belly` 3,709 — so the model is told which mass to remove
+without touching the mass that was asked for.
+
+What *not* to reach for: `abs` and `toned` flatten the stomach but harden the
+whole torso (already negated for that reason), `skinny` thins the thighs with
+it, and `flat stomach`, `slim`, `slim waist` and `toned stomach` are all absent.
+`navel` (974k) and `midriff` (259k) draw a defined stomach well, but `midriff`
+also *exposes* it — fine from stage 2 on, wrong on a dressed frame — so they
+are not part of the standing rule.
+
 Anything typed under Other on any axis is passed through verbatim. The answers
 become the frozen `BODY_F` / `BODY_R` / `BODY_T` tags reused across every stage
-(§5), plus the `SLIDER` / `SLIDER_ACT` pair.
+(§5), plus the `SLIDER` / `SLIDER_ACT` pair — and the belly rule rides along in
+every one of them.
 
 The **style** question is asked too, exactly as `/recreate` step 3 does. The
 **shot** question is not asked: this command decides framing per stage.
+
+### And ask about the waist — in the same call as the style
+
+| Question | Options (recommended first) |
+|---|---|
+| Waist | `narrow waist` · `(narrow waist:1.5)` · `(narrow waist:2)` |
+
+The unweighted tag is the belly rule's default and keeps the character's own
+proportions. `(narrow waist:2)` is the **classic exaggerated build** — the one
+the vault's older Aerith renders carry, paired with `(large breasts:1.5)`,
+`(wide hips:2)` and `(thick thighs:2)` — and the two questions together are
+how that look is asked for again: `(large breasts:1.5)` on the breasts ladder,
+`(narrow waist:2)` here, and the heavy tag rung for thickness. It is a pinch,
+deliberately: at `2` the waist goes to almost nothing between the ribs and the
+hips, which is the point of that build and wrong for a character drawn
+athletic. It is never combined with the slider — under the maximum thickness
+rung the answer is ignored and the tag stays at `1`.
+
+### And ask who *he* is — in the same call as the style
+
+Every act frame carries a second person, and left undescribed he is re-rolled
+every frame: white in one, purple and horned in the next when the character runs
+a race LoRA. One question, single-select, folded into the style call:
+
+| Question | Options |
+|---|---|
+| The partner | `muscular male` · `muscular male, dark-skinned male` · `mature male, muscular male` · `bara, muscular male` |
+
+The answer joins the frozen `ID2` alongside `1girl, 1boy, hetero, solo focus,
+faceless male`, and never changes for the rest of the set.
+
+**And he is well endowed, on every act frame — moderately.** `large penis,
+erection` joins `ID2` alongside the build: one size step above the model's
+default, unweighted. The first version of this rule was `(large penis:1.3),
+(huge penis:1.2), veiny penis, erection` and it was too much — `huge penis`
+with the weighted `large` on top of it overshoots, and `veiny penis` adds a
+girth that reads as grotesque at this size. Those stay available as an
+explicit request, not as the default. The vocabulary has no `thick penis`,
+`long penis` or `big penis` (all absent); `large penis` is 20,320 and
+`erection` 78,218. These are act-frame tags only; the solo stages never carry
+them.
+
+**Only gender-suffixed tags bind an attribute to him.** This is the whole trick,
+and getting it wrong inverts the scene. A plain adjective attaches to whoever
+the model prefers — on the draenei run, `(human male:1.3), (tan skin:1.2)`
+**swapped the two**: she came out human and tanned, he came out the draenei. The
+tags that bind are the ones naming the gender inside the tag: `muscular male`
+(75,109), `mature male` (29,491), `dark-skinned male` (70,557), `toned male`
+(10,278), `bara` (57,756), `old man` (8,150). Use those and nothing else for him.
+
+**There is no `pale-skinned male`.** `dark-skinned male` and `dark-skinned
+female` are the *only* skin tags in the vocabulary that name a gender, so a pale
+partner cannot be asked for — he is what you get by saying nothing about skin.
+That is why the default option states build alone.
+
+**Keeping her race off him is a LoRA weight, not a tag.** A negative is global
+and cannot say "not on him". The fix is the one §7 already applies: run the
+character LoRA weaker on two-person frames (0.65–0.7). Describing him harder
+makes it worse, per the inversion above.
 
 ## 2. Extract once, reuse everywhere
 
@@ -96,6 +202,17 @@ shoot. Write them down as:
 
 Three depths, not one list. A `close-up` that names boots comes back a cowboy
 shot, because the model zooms out to draw what it was told to include.
+
+**When lingerie is worn under the outfit, the dressed frames name what shows
+through.** A set whose stage 2 reveals stockings and a garter belt has her
+wearing them in stage 1 as well, and a long dress with a slit shows a leg — so
+that leg must already carry the stockings and straps, or stage 1 and stage 2
+are two different women. Put the legwear and the straps into `WF` with their
+colours, plus the opening that exposes them: `(side slit:1.3)` (34,242;
+`front slit` is 755 and useless), `(black thighhighs:1.3), garter straps,
+lace-trimmed legwear`. Measured on the Aerith set 2 (2026-09-05): the first
+stage 1 rendered bare legs through the slit while stage 2 wore black
+stockings, and the user asked for the layer to be visible from the start.
 
 ### With a picture — vault name or attached
 
@@ -141,18 +258,57 @@ Four, and the third is where most sets end.
 
 | Stage | Wardrobe | Shots |
 |---|---|---|
-| 1 — dressed | full | 10 |
+| 1 — dressed | full | 10, **then the four low-angle frames** |
 | 1→2 — taking the top off | mid-undress, top only | 2 |
 | 2 — topless | `WT` minus the top | 6 |
 | 2→3 — taking the bottom off | mid-undress, bottom only | 2 |
 | 3 — bottomless | nothing below the waist either | 6 |
 | 4 — acts | user-supplied, see step 6 | 2 per act |
 
+### Stage 1 closes on four low-angle frames
+
+Stage 1 ends on four **bent-over, shot-from-below** frames, fully dressed — after
+the close-up and the portrait, not before them. It is the strongest composition
+in the whole sequence, and it belongs where a climax goes: at the end of the
+dressed stage, once the set has shown who she is. Opening on them was tried and
+read backwards — a progression that starts on her rear before her face is not a
+progression.
+
+Four things stacked make it, and dropping any one of them loses it:
+
+```
+camera   (from behind:1.3), (from below:1.2), (ass focus:1.4), cowboy shot
+scale    (foreshortening:1.3)
+pose     standing, (bent over:1.4), leaning forward, arched back
+look     looking back
+```
+
+**`foreshortening` (44,673) is the one that does the work** — it is what
+balloons the near mass while keeping her head small at the top of the frame.
+Without it the low angle just produces a normal bent-over shot. **`from below`
+is the other half**: it is what puts the camera under her rather than level.
+
+The four vary by what the head does, not by the body: looking back; head down,
+away from the viewer; a smiling one (swap `expressionless` → `smile` in *both*
+`ID` and `--adetailer-prompt`); and a wider one at `(full body:1.2)`.
+
+**She braces on whatever the setting already contains** — a ruined wall, a rock,
+a railing, a tree. **Never introduce a table** unless the set is genuinely
+indoors: the prop has to belong to the background the other 143 frames share, or
+the opener reads as a different shoot. Negate the props you did not choose —
+`table, desk, indoors` for an exterior set — along with `top-down bottom-up,
+lying, all fours, kneeling`, which are where the model drifts when asked to bend
+someone over.
+
+Body tags are the **rear** set (`BODY_R`), and per §1 the thickness slider comes
+**off** here: these are ass-focused frames, where the ass tag already carries the
+shape and the slider only smooths the glutes.
+
 Stage 1's ten, with the pose each one carries:
 
 ```
-1  close-up, face focus          looking at viewer
-2  portrait, face focus          looking at viewer
+1  close-up, eye contact         looking at viewer
+2  portrait, eye contact         looking at viewer
 3  upper body (front)            arms behind back
 4  upper body (from behind)      looking back
 5  cowboy shot (front)           contrapposto
@@ -161,11 +317,58 @@ Stage 1's ten, with the pose each one carries:
 8  full body (from behind)       leaning forward
 9  side profile                  contrapposto
 10 from below                    hands up
+11 three-quarter view          contrapposto, hand in own hair
 ```
+
+**Frame 11 is the three-quarter view, on every set (user, 2026-09-05).** The
+pose from the second figure of a character sheet: weight on one leg, turned a
+little off the camera, one hand up in her hair, looking at the viewer —
+`(full body:1.3), standing, contrapposto, (from side:0.3), looking at viewer,
+hand up, hand in own hair, hair over shoulder`, front body tags, dressed. Keep
+`from side` weak: at 0.5 NoobAI turned her fully sideways and lost the front of
+the garment. `hand in own hair` 27,986 · `hand up` 265,393 · `hair over
+shoulder` 42,714; there is no `three-quarter view` tag.
 
 Stage 2 keeps 3, 5, 6, 7 and adds a breast close-up and a `clothes lift` frame.
 Stage 3 keeps 5, 6, 7, 8, adds an ass close-up (**landscape, `--width 1216
 --height 832`**) and a hip focus.
+
+### The dress stays a surface — on every dressed frame
+
+A rear frame that carries a heavy ass tag under a long dress comes back with
+the fabric moulded into the crease, as if painted on. That is not a random
+failure: with `(huge ass:1.4)` and `(ass focus:1.4)` in the prompt, the
+cheapest way for the model to show the shape *through* a dress is to wrap the
+cloth around it. Danbooru has a name for exactly this — **`impossible
+clothes`** (24,167), with `impossible dress` (2,417) as the garment-specific
+form — and because it is a tag, it is a usable negative.
+
+So every frame where the character is still dressed (stage 1 and the bridge
+that pulls the dress down) adds to its negative:
+
+```
+impossible clothes, impossible dress, wedgie, taut clothes, taut dress,
+skin tight, tight clothes, cameltoe
+```
+
+`wedgie` (5,226) is the crease itself, `taut clothes` (15,251) / `taut dress`
+(2,105) / `skin tight` (36,226) / `tight clothes` (12,700) are the stretched
+fabric, and `cameltoe` (86,493) is the same thing seen from the front. From
+stage 2 on there is no fabric over the hips, so the list is dropped — on a
+bodysuit character it would fight the wardrobe, and on a topless one it does
+nothing. Do **not** reach for `loose clothes` (2,337) or `baggy clothes`
+(1,287) as positives: they are thin and change the *cut* of the dress rather
+than how it sits.
+
+**Measured on the Aerith re-render (8 frames, 2026-09-05): the crease is gone
+in all eight.** The standing rear frames come back with the dress as a plain
+surface. On the four bent-over low-angle frames the model resolves the same
+tension the other way — it lets the hem ride up and shows skin instead of
+wrapping the cloth — which reads fine for a low-angle beat but is a change of
+register. If a set wants the dress to stay *down* on those frames too, add
+`skirt lift, clothes lift, dress lift` to that frame's negative as well; the
+undressing bridges use those tags positively, so never put them in a
+set-wide negative.
 
 ### The undressing bridges — a striptease between the stages
 
@@ -191,11 +394,21 @@ The action tags are all well trained — `clothes lift` 180,831, `shirt lift`
 **absent** — do not reach for them. "And so on" scales to a many-garment outfit:
 a bridge for each layer that comes off, two frames apiece, always mid-action.
 
-### Some frames smile — she is not expressionless the whole way
+### Most frames smile — she is not expressionless the whole way
 
-The frozen `ID` carries `expressionless`, which keeps the identity steady, but a
-whole set of blank faces reads cold. So **let a handful of frames smile** — a few
-of the dressed poses, the undressing bridges especially, the presenting beats.
+The frozen `ID` used to carry `expressionless` on every frame, with a handful
+of smiles swapped in by hand. That read cold, and the user asked for more
+smiling on 2026-09-05 — and then, shown a `light smile` frame, answered "you
+call this smiling?". So the default smile is a **real** one. The solo stages
+**deal the expression from a four-step cycle — `smile, open mouth, teeth` ·
+`:d, happy, smile` · `grin` · `smile, open mouth, teeth, happy`** — indexed by
+frame order, so every default frame smiles visibly and a re-run deals the same
+faces. `light smile` and `expressionless` are out of the cycle: at this
+checkpoint family `light smile` reads as no expression at all. Frames that name
+their own expression keep it; the bridges take `seductive smile, open mouth,
+teeth`. In the act stage the smile share is `smile, open mouth, teeth, happy,
+blush`, for the same reason. All thick tags: `open mouth` 1,950,469 · `teeth`
+370,407 · `:d` 464,842 · `grin` 184,832.
 Swap the expression in **both** places or it does not take: `expressionless` →
 `smile` (or `seductive smile`, `grin`, `light smile`) in the `ID` chunk **and**
 in `--adetailer-prompt`, because the face pass repaints the head from its own
@@ -313,6 +526,18 @@ every act inherits it. Decided in step 2, never asked about again.
 Only the wardrobe, the pose and the framing move. If anything else drifts, the
 set stops being a shoot.
 
+**And within the wardrobe, every garment's colour is frozen too.** Write each
+garment as its colour-fused tag (`black thighhighs`, not `thighhighs` with a
+colour word somewhere near it), weight the colour that sits next to a stronger
+neighbour, and negate the neighbour colours on that garment (`purple
+thighhighs, white thighhighs` when the stockings are black beside a lavender
+belt). The Aerith set 2 lost this on its stockings — dark in most frames,
+lavender in some — because `black thighhighs` stood unweighted next to
+`(light purple garter belt:1.3)` and a thin `lace-trimmed thighhighs` (936)
+that only supplied the word "lace" for the belt's colour to fill. The rule and
+its counts live in `.claude/shot-tags.md` ("Every garment carries its own
+colour…").
+
 **Keep the character tag in the crop shots.** The hip focus and the ass close-up
 use the positive crop recipe — `(hip focus:1.6), (lower body:1.5), (head out of
 frame:1.4), cropped torso` — and the character tag stays. Dropping it costs the
@@ -355,9 +580,24 @@ uniform "N frames per act" throws that away.
 
 Tags in brackets are the resolutions already checked against
 `selected_tags.csv`; counts are in the findings below. Every frame carries
-`1girl, 1boy, hetero, solo focus, faceless male`, drops `solo`, and inherits the
-act-stage wardrobe (§4 — bare body, accessories only), identity, setting, body
-rungs and checkpoint.
+`1girl, 1boy, hetero, solo focus, faceless male` **plus §1's partner answer**,
+drops `solo`, and inherits the act-stage wardrobe (§4 — bare body, accessories
+only), identity, setting, body rungs and checkpoint. The partner tags are frozen
+exactly like hers: he is described once, in gender-suffixed tags only, and never
+re-rolled per frame.
+
+**Every frame says `uncensored`, and the negative names the censoring.** Measured
+on the Oracle set (2026-09-05): the moment a penis is in frame the model reaches
+for what its training data did to one — an orange dot over a nipple, a blue
+badge with garbled text, glowing rectangles beside the breasts on a dressed
+full-body frame. Nothing in the prompt asked for them and nothing forbade them.
+So `uncensored` (110,091) goes into the identity line of *every* frame, solo and
+act alike, and the baseline negative carries `(censored:1.3), mosaic censoring,
+bar censor, heart censor, sticker, emoji, glowing, speech bubble` — `censored`
+388,593 · `mosaic censoring` 168,821 · `bar censor` 120,647 · `heart censor`
+15,789 · `glowing` 86,347; `sticker` (2,928) and `emoji` (2,305) are thin but
+name the exact artefact. `pasties` belongs in the same list on a topless stage
+— the star pasties one early Oracle test drew were the same reflex.
 
 | # | Act | Frames | Canvas | Shape |
 |---|---|---|---|---|
@@ -366,7 +606,7 @@ except 4b renders twice what it first did — a single position needs the volume
 to give a usable spread, and 4b (presenting) is the one beat that read fine at
 three. Do not halve them back without being asked.
 
-| 1a | Irrumatio over a table | 2 beats ×4 seeds = 8 | landscape | opens the story's act stage. positioned → `(irrumatio:1.4)` + `(tears:1.4)`. **No cum here** — the finish belongs to act 7 |
+| 1a | Irrumatio over the table's edge | 2 beats ×4 seeds = 8 | landscape | opens the story's act stage. She lies on her back on the table, head hanging over the edge, he stands at her head — **and the geometry is kept, not swapped for a kneeling one** (the user rejected that as "a cheap way out"). **Rebuilt 2026-09-05** because the old block broke anatomy in most frames: the culprit was bare `upside-down` (22,255), which flips the whole figure. The recipe that works, `IRR` = `lying, on back, on table, table, (head back:1.3), (upside-down:0.8), arched back, breasts apart, (hand on another's head:1.2), penis, testicles`; positioned → `IRR, open mouth, tongue out, (imminent fellatio:1.2)`; deep → `IRR, fellatio, (irrumatio:1.4), (deepthroat:1.3)`; both with `(tears:1.4)`, side geometry. Measured on 12 frames: without `upside-down` 8/8 coherent but only ~5 hit the head-over-the-edge pose (the rest drift to sitting at the table); at `0.8` all coherent and 3 of 4 hit it. Below `1.0` the tag says "head hangs back", at `1.0` it says "invert her". **No cum here** — the finish belongs to act 7 |
 | 1b | Fellatio, kneeling | 8 | portrait | 4 base; 4 adding `(deepthroat:1.3), (tears:1.4)` |
 | 2 | He grips her bare breasts | 6 | portrait | `(close-up:1.6), (breast focus:1.6)`, `grabbing another's breast, groping, nipples` |
 | 3 | Missionary, legs held | 8 + 4 + 4 + 6 | portrait, then landscape | exposed → entering → `(deep penetration:1.3)` → `:1.5` + `testicles` (8 portrait across the ladder); 4 landscape repeats of the deep pair; 4 landscape `anal`; then **6 landscape with her legs wrapped around him** — `(leg lock:1.4), hug` (`legs around waist` is not a tag; `leg lock` is 3,432 and needs both the weight and the prop) |
@@ -377,24 +617,77 @@ three. Do not halve them back without being asked.
 | 6 | Suspended congress | 4 + 4 | portrait | forward-facing; `straddling, carrying, standing sex`; then 4 with both glutes gripped — `ass grab, (grabbing another's ass:1.3)` |
 | 6b | Reverse suspended congress | 6 | portrait | **camera in front, she faces viewer**; 2 vaginal, 4 anal, two of them with `(ahegao:1.5)` |
 | 7 | Reverse cowgirl | 6 + 4 + 4 | portrait | `leaning forward, bent over`, camera behind; negate `cowgirl position`. 6 plain, then 4 with the glute grip as in act 6, then **the last four carry the finish** — `cum, cum in mouth, (cum overflow:1.4), ejaculation` |
-| 8 | Piledriver | — | — | **dropped — not renderable, see below** |
+| 8 | Spitroast | 4 + 4 | landscape | **added 2026-09-05 in the piledriver's slot.** She is on all fours between two men, one from behind, one in her mouth: `(spitroast:1.3), all fours, sex from behind, fellatio, (deepthroat:1.2), (hand on another's head:1.2), penis, testicles` + `vaginal` ×4, then `anal` ×4, every other frame with `(tears:1.4)`. The cast line changes for this act only — `2boys, multiple boys, hetero, solo focus, faceless male, <partner>, large penis, erection, (mmf threesome:1.2), group sex, threesome` replaces the `1boy` line — and `2boys, multiple boys` come **out** of its negative (they are in every other act's) while `3boys, 4boys, 1boy` go in. Thick carriers: `multiple boys` 367,969 · `2boys` 232,894 · `group sex` 49,139 · `threesome` 25,283 · `mmf threesome` 11,460; `spitroast` (3,736) is the hint. Side geometry, so the line-up reads |
+| — | Piledriver | — | — | **dropped — not renderable, see below** |
 
 Two rules visible in that table and worth stating plainly: **a beat that has a
 before and an after gets both frames** (act 3's exposed-then-entering, act 1a's
 positioned-then-penetrated), and **an escalation is a separate frame rather
 than a heavier tag** — the deepthroat pair, the anal frames, the ahegao frame.
 
+### The camera rotates within an act
+
+An act with eight frames must not be eight copies of one composition. Every act
+belongs to one of three camera *geometries*, and its frames cycle through a
+four-step rotation for that geometry — frame `n` takes step `((n-1) mod 4)+1`:
+
+| geometry | acts | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|---|
+| **front** | 1b, 2, 3, 6, 6b | `cowboy shot, looking at viewer, facing viewer` | + `(from above:1.2), looking up` | + `(from below:1.2), (foreshortening:1.2), looking down` | `(pov:1.2), close-up, eye contact, (blurry foreground:1.1), depth of field` |
+| **side** | 1a, 5 | `cowboy shot, from side, looking at viewer` | + `(from above:1.2)` | `close-up, from side, (blurry foreground:1.2), depth of field` | `wide shot, full body, from side, dutch angle` |
+| **rear** | 4a, 4b, 5b, 7 | `cowboy shot, from behind, looking back` | + `(from below:1.2), ass focus, (foreshortening:1.2)` | + `(from above:1.2)` | `close-up, from behind, dutch angle, ass focus, looking back` |
+
+Every word in it is checked: `from side` 170,900 · `dutch angle` 104,788 ·
+`pov` 98,619 · `depth of field` 91,237 · `from above` 81,395 · `from below`
+68,637 · `foreshortening` 44,673 · `close-up` 36,871 · `eye contact` 35,104 ·
+`blurry foreground` 24,511. The obvious words are **not** tags: `high angle`,
+`low angle`, `three-quarter view`, `side view`, `male pov` and **`face focus`**
+are all absent — the last of those has been sitting inert in the stage-1
+close-up and portrait, so those now carry `eye contact` instead.
+
+**Every act carries one or two frames from his eyes (user, 2026-09-05).** The
+2nd and the 7th frame of each act, counted across the act, replace their
+rotation step with a POV framing for the act's geometry:
+
+| geometry | POV framing |
+|---|---|
+| front | `(pov:1.3), (from above:1.2), looking at viewer, eye contact, pov hands` |
+| side | `(pov:1.3), (from above:1.2), looking at viewer, pov hands` |
+| rear | `(pov:1.3), from behind, (from above:1.2), ass focus, pov hands` |
+
+`male pov` is not a tag; `pov` (98,619) with `from above` and `pov hands`
+(17,344) is what puts the camera in his head, and `faceless male` is what makes
+it coherent. Acts shorter than seven frames get one POV frame.
+
+Three constraints the rotation respects, and any edit to it must keep:
+
+- **Rear steps all contain `from behind` or `ass focus`**, and front steps
+  contain neither — that is what the slider rule (§6, "matched on the camera")
+  keys on, so the rotation and the slider stay in agreement per frame.
+- **Front steps carry `facing viewer`** so the front-framing assertion is
+  already present and the helper does not need to inject it.
+- **The rotation never changes the act's geometry.** `pov` on a front act puts
+  the camera at the partner's eyes, which `faceless male` makes coherent; `pov`
+  on a rear act would put it *behind* her back, which is a different picture.
+  Geometry is decided by the act table, the rotation only moves within it.
+
+Implement it as one `cam <geometry> <n>` function in the story file and call it
+as the framing argument — `go "4-5-spoon-0$i" "$(cam side $i)" …` — rather than
+writing the four strings into every loop.
+
 **The finish lands once, at the end.** `cum, cum in mouth, (cum overflow:1.4),
 ejaculation` appears only in the last two frames of act 7 and nowhere else. It
 used to sit in the irrumatio act as well; having it twice made the sequence read
 as two stories rather than one, so the oral act now stops before it.
 
-**Two acts are known-weak and kept anyway.** Act 5 (spooning) and act 1a
-(irrumatio) both render inconsistently — the first because `spooning` is 1,424
-images and the pose has to be assembled entirely from parts, the second because
-the head-over-an-edge geometry has only `upside-down` and `table` to stand on.
-Neither is broken enough to drop, but expect a lower keeper rate and do not read
-a bad frame there as a prompt error. Act 8 is the case that *was* bad enough.
+**One act is known-weak and kept anyway.** Act 5 (spooning) renders
+inconsistently because `spooning` is 1,424 images and the pose has to be
+assembled entirely from parts. It is not broken enough to drop, but expect a
+lower keeper rate and do not read a bad frame there as a prompt error. Act 1a
+used to be the other weak one — the head-over-an-edge geometry had only
+`upside-down` and `table` to stand on and twisted bodies in most frames — until
+it was rebuilt as a kneeling irrumatio on 2026-09-05 (see the table). Act 8 is
+the case that *was* bad enough to drop.
 
 ### The body is a LoRA, not a tag stack — measured across three more runs
 
@@ -419,6 +712,29 @@ an anatomy-aware one. On posed and standing frames it reshapes cleanly; in the
 act frames, where the pose already strains the anatomy, it deforms instead —
 that is where non-aesthetic shapes come from. Keep a `SLIDER` / `SLIDER_ACT`
 pair and switch on `ACTMODE`, exactly as the character LoRA already does.
+
+**And take it off on rear-camera frames only — matched on the camera, never the
+pose.** Where the ass tag at 2 already carries the shape, the slider only
+smooths the glutes into a shinier, less natural mass. But "rear" must be decided
+from the *framing* chunk and the frame name, because the pose chunk is full of
+words that look like camera instructions and are not: `on back` and `head back`
+(she is lying face-up), `spread legs`, and `sex from behind` — a position that
+is routinely shot from the front. Matching those turned the slider off across
+almost the whole act stage, and the acts that suffered were exactly the ones
+facing the camera, where the ass tag contributes nothing. Nor is `rev-` a
+filename marker: act 6b is shot from the **front**, and act 7 is already caught
+by its own `from behind` framing. What works:
+
+```sh
+case "$l1" in *"from behind"*|*"ass focus"*|*"looking back"*) slide="" ;; esac
+case "$f"  in *doggy*|*present*|*allfours*|*bend*|*-spread-*) slide="" ;; esac
+```
+
+**Canvas changes apparent thickness as much as any tag.** Act 1a renders
+landscape on a reclining body shot from the side — the same body tags fill far
+more of the frame and read heavier, while act 5's landscape `on side` profile
+compresses the body and reads lighter. When a set looks inconsistent act to act,
+check the canvas and the pose before touching the body rungs.
 
 **Two tags that look right and are not.** `abs` (77,016) and `toned` (29,061)
 genuinely narrow the torso — a real lever, since the model reads hip width
@@ -489,6 +805,57 @@ entirely whenever a second figure is in frame; her face then comes from the base
 render plus the hires pass, which is good enough at this canvas. Solo frames
 (stages 1–3, and act 4b) keep the pass and its identity prompt.
 
+**The face pass runs on its own checkpoint (user, 2026-09-05).** After a short
+spell with the pass off entirely, the user brought it back — on **Mango Pie**
+rather than the base render's checkpoint. `open-in-forge` takes
+`--adetailer-checkpoint <substring>` (resolved like `--model`), writes
+`ADetailer checkpoint: <name>` into the block, and `@luma/core`'s
+`adetailerUnit` turns that into `ad_use_checkpoint` + `ad_checkpoint`. Two rules
+ride along:
+
+- **A LoRA face keeps its LoRA in the face prompt.** With the pass on a
+  different checkpoint the repaint has no other way to know who she is:
+  `--adetailer-prompt "<lora:eve_stellarblade_ixl_v10:0.8>, sbevealt, …"`. The
+  softening this used to cause is what the checkpoint swap is for.
+- **Two-person frames still run without the pass.** It repaints every face it
+  detects with her prompt, and `faceless male` does not always hold.
+
+**When the base checkpoint cannot draw the garment, let another one compose it
+— `--refiner`.** Measured on the Celestial Oracle (2026-09-05): delburry75 and
+wai put a gold belt under the bust of a long panel over bare hips on nearly
+every full-body front, and no negative removed it — eight rounds, `(belt:2)`,
+the gem removed, the garment word swapped four times. NoobAI-XL never drew it,
+but the user prefers delburry's finish. The split is Forge's refiner:
+`--model vpred --refiner delburry75 --refiner-switch 0.5` writes `Refiner:` /
+`Refiner switch at:` into the block and `@luma/core` turns them into
+`refiner_checkpoint` / `refiner_switch_at`. The base model runs the first half
+of the steps and decides *what* is in the frame — garment, seams, silhouette —
+and the refiner runs the second half and decides *how it is painted*. Belt-free
+in every frame from the first try; 0.35 and 0.6 both worked too, so the switch
+point is not delicate. Two things ride along: NoobAI reads body weights about a
+rung harder (hips 1.7 there is the round silhouette the user wanted), and it
+hazes a `depth of field` setting into fog — take that tag out. **Do not merge
+the two checkpoints instead**: the installed NoobAI is v-prediction and
+delburry is epsilon, and averaging weights that predict different things gives
+a model that is wrong at every step.
+
+Check the PNG for `ADetailer use separate checkpoint: True` after the first
+render — Forge silently drops a unit it cannot parse.
+
+**A face that comes from a LoRA needs the face pass off — on solo frames too.**
+ADetailer repaints the head crop at 0.4 denoise from *its own* prompt, and that
+prompt carries the trigger word but not the `<lora:…>` tag, so the repaint runs
+without the character LoRA and paints the checkpoint's default face over
+whatever the LoRA drew. Measured on Lara: three different Lara LoRAs, five
+portraits, one identical doll — and the same LoRA with `--no-adetailer` was
+unmistakably her. Putting the LoRA tag inside `--adetailer-prompt` applies it
+but still softens the likeness; off is cleanly better. This is invisible on a
+character whose identity is *tags* (Evie's hair and heterochromia went into the
+face-pass prompt and survived), which is why it went unnoticed for nine runs.
+So: identity from tags → face pass on, with those tags in its prompt; identity
+from a LoRA → `--no-adetailer` on every frame, and let the base render plus the
+hires pass carry the face.
+
 **Every two-person frame needs `faceless male, solo focus`.** ADetailer runs on
 *every* face it detects and applies the same prompt to each — so an expression
 in the face pass lands on him too. `faceless male` (26,473) and `solo focus`
@@ -514,6 +881,33 @@ moaning, open mouth, blush, (heavy breathing:1.2), half-closed eyes, nose blush
 name. `clenched teeth` (52,665), `trembling` (64,935), `saliva` (99,380) and
 `torogao` (7,723, thin like `moaning`) are the variations worth rotating so a
 hundred act frames do not wear one face.
+
+**Act frames deal five faces — 45% moan, 15% smile, 15% flirty, 15% submissive,
+10% surprised.** A hundred moaning faces read as one face, and a set of them
+reads as endured rather than enjoyed; but the 20/55/25 smile-heavy mix that
+replaced it on 2026-09-05 got "she seems to laugh now all the time — more
+variation please, bring back moaning, maybe also flirty, submissive" the same
+night. So the moaning default above is the plurality again, and three other
+faces break it up:
+
+- **smile** — `smile, open mouth, teeth, happy, blush` (a real smile; `light
+  smile` reads as nothing).
+- **flirty** — `seductive smile, half-closed eyes, naughty face, licking lips,
+  looking at viewer, blush` (`naughty face` 25,981 · `licking lips` 18,442 ·
+  `seductive smile` 8,836).
+- **submissive** — `embarrassed, (wavy mouth:1.1), averting eyes, blush,
+  trembling, nose blush, tearing up` (`embarrassed` 81,248 · `wavy mouth` 68,694
+  · `trembling` 64,935 · `tearing up` 34,501; `submissive` itself is not a tag).
+- **surprised** — `surprised, :o, open mouth, wide-eyed, blush, happy, :d`.
+
+(History: 70/15/15 → 30/40/30 → 20/55/25 → this, all on user request; the lesson
+is that any one face above about half the frames reads as a mask.) Deal them
+deterministically rather than at random — a 20-frame cycle of 9 moaning,
+3 smiling, 3 flirty, 3 submissive, 2 surprised, indexed by the frame's position
+across the whole act stage, not per act — so a re-run reproduces the same faces
+and no single act ends up one-note. The frames that
+carry a *stronger* expression already (`tears` in 1a/1b, `ahegao` in 6b) are
+outside this mix, as above: they keep theirs and are not counted.
 
 Two rules it inherits rather than restates: it goes in **`--adetailer-prompt` as
 well as the main prompt** (or the face pass paints a calm face over it), and it
@@ -621,6 +1015,19 @@ render landscape, `--width 1216 --height 832`, for the same reason the ass
 close-up does in `/shotall`: a portrait canvas spends most of its height on
 empty space above and below her. Lifted and kneeling positions stay portrait.
 
+**But no act is locked to one canvas (user, 2026-09-05: "we need more
+variation").** The table's orientation is the act's *default*; **every third
+frame of an act takes the other one**, counted across the whole act rather
+than per beat, so a two-frame beat still contributes to the rotation. A
+landscape act (irrumatio, the missionary landscape ladder, doggystyle,
+spooning) gets portrait frames that stack the bodies vertically; a portrait
+act (fellatio, suspended congress, reverse cowgirl) gets landscape frames that
+open the scene out. Implemented as a per-act counter in the story file's
+`act()` helper — `k % 3 === 0 → flip` — and the presenting beat sends its
+all-fours frame landscape. Measured split on a 145-frame set: doggystyle 18
+landscape / 8 portrait, reverse cowgirl 10 portrait / 4 landscape, missionary
+11 / 11.
+
 Nothing else about the block changes. The identity, wardrobe remnants, setting,
 body tags and checkpoint carry through from stage 3 untouched.
 
@@ -635,7 +1042,7 @@ Always the queue, never tabs — the count is far past two:
 
 ```bash
 node --env-file-if-exists=.env --experimental-strip-types \
-  scripts/open-in-forge.mjs --model <m> --style <s> \
+  scripts/open-in-forge.mjs --model <m> [--refiner delburry75 --refiner-switch 0.5] --style <s> \
   --queue --label "<stage>-<n>-<shot>" --render "<scratchpad>/<same>.png" \
   --set "photostory/<character>/<stamp>" --shot-label "<stage> — <shot>" \
   --prompt "..." --negative "..." --adetailer-prompt "..."

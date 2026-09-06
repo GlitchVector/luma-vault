@@ -44,6 +44,8 @@ is in it.
 The same table `/sdxl` uses, and the same rule: skip this half when a model was
 given positionally. Read step 1 of `.claude/commands/sdxl.md` for the options
 and the family tuning, which are not restated here.
+The first option there is the `noob → delburry75` refiner pair; on this command it is
+`pnpm migrate-prompt <image> vpred --refiner delburry75 --refiner-switch 0.5`.
 
 ## 2. Read the original, and split it in two
 

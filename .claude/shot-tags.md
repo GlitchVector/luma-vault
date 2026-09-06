@@ -212,6 +212,40 @@ Here every garment in frame is still named — only the ones that cannot be seen
 are dropped, and the same three lists are reused across the whole set so nothing
 drifts between shots.
 
+**Every garment carries its own colour, and the neighbours' colours go in the
+negative.** Measured on the Aerith set 2 (145 frames, 2026-09-05): the
+wardrobe said `black thighhighs` next to `(light purple garter belt:1.3)` and
+`lace trim`, and in a minority of frames the stockings came back lavender — the
+belt's colour climbed onto the lace tops and from there took the whole
+stocking. Colour bleeds between adjacent garments whenever one garment's colour
+is stated and weighted and another's is stated weakly or through a thin tag:
+`lace-trimmed thighhighs` is 936 images, so it contributed nothing but the word
+"lace", which the weighted lavender belt then coloured. The rule for any command
+that renders a set (`/photostory`, `/shotall`, a `/shot` batch):
+
+- **One colour tag per garment, on every garment, in every frame.** `black
+  thighhighs` (266,928), `white thighhighs` (177,995), `purple thighhighs`
+  (12,947) — the colour-fused form, not `thighhighs` plus a colour word
+  floating nearby. A garment with no colour stated inherits whichever colour is
+  weighted hardest in the prompt.
+- **Weight the colour that must hold against a neighbour.** `(black
+  thighhighs:1.2)` beside `(light purple garter belt:1.3)`; the weaker
+  statement loses.
+- **Negate the neighbour colours on that garment.** `purple thighhighs, white
+  thighhighs` in the negative when the stockings are black — the negative can
+  say "not that colour on this garment" only through the fused tag, which is
+  why the fused forms matter.
+- **Replace thin property tags with the thick generic plus the colour on the
+  garment.** `lace-trimmed legwear` (11,095) over `lace-trimmed thighhighs`
+  (936); `lace trim` (41,758) is fine as a property but colours nothing, so the
+  garment it decorates needs its own colour beside it.
+- **Freeze the coloured list once and reuse it verbatim across the set.** A
+  wardrobe rewritten per frame drifts; the same string cannot.
+
+`/photostory` §2 builds its three wardrobe depths under this rule; `/shotall`
+carries the block's wardrobe through every angle and should add the colours and
+the negatives when the source block lacks them.
+
 **Name a garment's property, not a second garment.** A white dress laced up the
 back was prompted with `backless dress` *and* `corset`, and came back as a black
 waist-cincher worn over a separate bra and skirt — three garments where the
@@ -222,15 +256,79 @@ fastened, and the dress came back whole. The same applies to `halterneck`,
 if the detail is a property of a garment, there is usually a tag that says so,
 and reaching for a noun instead adds clothing nobody asked for.
 
+**A dressed rear shot moulds the fabric into the crease — negate `impossible
+clothes`.** Measured on an Aerith set (2026-09-05): every from-behind frame of
+a long dress under `(huge ass:1.4)` and `(ass focus:1.4)` came back with the
+cloth wrapped into her crack as if painted on. It is not noise — with a heavy
+ass tag the model's cheapest way to show the shape *through* a dress is to
+shrink-wrap it. Danbooru names the effect **`impossible clothes`** (24,167;
+`impossible dress` 2,417), so it is a usable negative. On every frame where the
+subject is still dressed over the hips, add to the negative:
+
+```
+impossible clothes, impossible dress, wedgie, taut clothes, taut dress,
+skin tight, tight clothes, cameltoe
+```
+
+`wedgie` (5,226) is the crease itself, `taut clothes` (15,251) / `taut dress`
+(2,105) / `skin tight` (36,226) / `tight clothes` (12,700) the stretched
+fabric, `cameltoe` (86,493) the same thing from the front. Drop the list the
+moment the hips are bare or the wardrobe *is* skin-tight by design (a bodysuit
+character): there it fights the outfit instead of protecting it. Do not reach
+for `loose clothes` (2,337) or `baggy clothes` (1,287) as positives — thin, and
+they change the cut of the garment rather than how it sits. `/photostory`
+applies this automatically on its dressed stage; `/shot`, `/shotall`,
+`/recreate` and `/sdxl` apply it whenever the block they are working from has
+a skirt or dress over the hips and any ass or hip tag above `1`.
+
+**A panel that just hangs from the collar is `naked tabard`, not `pelvic
+curtain`.** Measured on the Celestial Oracle set (2026-09-05), nine test rounds.
+`pelvic curtain` (40,852) is a loincloth that hangs *from a belt*, so every
+front frame carrying it came back with a gold belt or seam under the bust and a
+bib above it — and negating `belt` at 1.5 did not remove what the positive tag
+was asking for. `breast curtain` (2,378) is too thin to override it. What did
+it was **`(naked tabard:1.3), tabard`** with `pelvic curtain` dropped to 0.8:
+`tabard` (21,054) is a front-and-back panel with open sides, and `naked
+tabard` (913, thin but sitting on top of the strong parent) says nothing is
+under it. Keep `halterneck`, `(sideboob:1.3)`, `(bare hips:1.3)`,
+`sleeveless` and `bare arms` beside it, and negate `(underboob:1.4), (crop
+top:1.4), midriff, cleavage, cleavage cutout, bustier, sash, obi, waist cape`.
+
+**A sun on the forehead draws a halo behind the head.** Same set: `sun symbol`
+(2,752) at any weight from 0.8 up put a gold sun-ray halo behind her in most
+frames, and `(halo:1.7), sunburst` in the negative did not stop it — the two
+concepts share the same training pictures. At `(sun symbol:0.6)` with
+`(halo:1.8), sunburst, light rays` negated the halo went away and the emblem
+survived in about a third of the frames, usually on the chest rather than the
+veil. There is no `sun print`; `emblem` (17,215) draws nothing visible.
+
+**A penis in frame summons censor stickers — say `uncensored`, negate the
+censoring.** Measured on the Oracle act frames (2026-09-05): coloured dots over
+nipples, a badge with garbled text, glowing rectangles — the model reproducing
+the mosaic and bar censors of its training data. `uncensored` (110,091) in the
+positive and `(censored:1.3), mosaic censoring, bar censor, heart censor,
+sticker, emoji, glowing, speech bubble` in the negative stop it. Applies to any
+frame with `penis`, `pussy` or `nipples` in it — which is every act and every
+topless stage.
+
 **`--style 2.5d` delivers 3D, and the preset table is why.** Measured across a
 session of renders that all came back looking like plastic. The three presets in
 `STYLES` (`packages/core/src/migrate.ts`) are:
 
 | | positive | negative |
 |---|---|---|
-| `2d` | `anime coloring, flat color` | `realistic, photorealistic, shiny skin` |
-| `2.5d` | `realistic, shiny skin` | `flat color, anime coloring, photorealistic` |
-| `3d` | `photorealistic, realistic, shiny skin` | `anime coloring, flat color, lineart, sketch` |
+| `2d` | `anime coloring, flat color` | `realistic, photorealistic, ` + GLOSS |
+| `2.5d` | `realistic` | `flat color, anime coloring, photorealistic, ` + GLOSS |
+| `3d` | `photorealistic, realistic` | `anime coloring, flat color, lineart, sketch, ` + GLOSS |
+
+…where GLOSS is `shiny skin, oiled body, wet, sweat, glossy, specular
+highlights, reflection, light particles, sparkle, bloom, lens flare, sunbeam`.
+
+**The second problem below is now fixed in the script** — `shiny skin` was
+removed from every positive and the whole gloss family moved to every negative,
+because on large smooth skin it draws ring-shaped specular blobs, and keeping it
+in the positive silently defeats any attempt to negate it. The first problem
+stands. The analysis is kept because it is what led to the change:
 
 Two problems, both from the counts:
 
