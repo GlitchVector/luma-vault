@@ -238,15 +238,25 @@ export function warnAboutVPrediction(name) {
 /** The newest installed checkpoint whose name contains `wanted`. */
 export async function resolveModel(wanted) {
   const installed = await forge('/luma/v1/checkpoints')
-  const matches = installed.filter((entry) =>
-    entry.name.toLowerCase().includes(wanted.toLowerCase()),
-  )
+  const needle = wanted.toLowerCase()
+  let matches = installed.filter((entry) => entry.name.toLowerCase().includes(needle))
   if (matches.length === 0) {
     fail(
       `No installed checkpoint matches "${wanted}". Installed:`,
       ...installed.map((entry) => '  ' + entry.name),
     )
   }
+  // A bare substring is ambiguous in exactly the way that bites: `noob` is
+  // inside `delnoob` as well as `noobaiXL…`, `illu` inside `hassakuXLIllustrious`
+  // as well as `Illustrious-XL`, and newest-by-date then picks the merge over
+  // the model the word names. So when any match has the word at the START of a
+  // token — the beginning of the name, or right after a non-alphanumeric — keep
+  // only those before choosing by date. `deliberate` still finds
+  // `perfectdeliberate` (no boundary match exists, so nothing is narrowed), and
+  // `delnoob` typed in full still finds itself.
+  const atBoundary = new RegExp(`(^|[^a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
+  const anchored = matches.filter((entry) => atBoundary.test(entry.name.toLowerCase()))
+  if (anchored.length > 0) matches = anchored
   // Newest by file date — "the latest one I have" is a question about the
   // filesystem, not about version numbers in names, which are not comparable
   // across authors.

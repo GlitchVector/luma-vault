@@ -192,6 +192,18 @@ gigantic hips is to fill the frame with them. Four moves, all of them:
   instruction, and it drags the crop back to the hips — it is for as-is and
   tight shots only.
 
+**And when the ass is weighted above ~1.4 and the picture faces the camera, say
+so on both sides of the prompt.** A heavy ass tag *overrides framing* — the
+model turns her three-quarter or rear-on to show what it was told to enlarge,
+and `looking at viewer` does not stop it, because that tag turns the *head* and
+leaves the body where it is. Two moves, and it takes both: `(facing viewer:1.3),
+straight-on` in the framing chunk, and `(from behind:1.5), (ass focus:1.4),
+(facing away:1.4), looking back` in the negative. The negative is weighted
+because `from behind` (194,007 images) outvotes `facing viewer` (46,277) when
+both are bare. A negative alone cannot turn a body, only argue against one; the
+positive alone loses the vote. Measured on the Gerudo sheet: `(huge ass:1.5)`
+with `looking at viewer` came back three-quarter from behind on the first try.
+
 "As seen" means: tag what the image shows, at whatever rung it actually shows
 it, unweighted.
 
@@ -452,10 +464,17 @@ Neither is the creator — Civitai moved the model behind a host that cannot be
 read — so the commands send 5, which is inside both. Try `--cfg 7` for the
 other reading.
 
-**Shortcut: `illu`.** `--model` is a substring match, so `illu` finds every
-Illustrious checkpoint installed and takes the newest by file date. Name one
-specifically — `hassaku`, `deliberate`, `wai` — when you want that one rather
-than the latest.
+**How `--model` resolves a name.** Substring match against the installed
+checkpoints — but a match at the **start of a word** wins over one buried inside
+another word, and only then is the newest by file date taken. That ordering is
+what makes the short names land on the model the word means: `noob` finds
+`noobaiXL…`, not `delnoob`; `illu` finds `Illustrious-XL`, not
+`hassakuXLIllustrious`. Before it, newest-by-date alone picked the merge over
+the base every time both were installed, and the recommended option was
+silently running a different checkpoint. `deliberate` still reaches
+`perfectdeliberate` — no word starts with it, so nothing is narrowed — and a
+merge typed in full (`delnoob`) still finds itself. `--dry-run` prints the
+`Model:` it chose; read it before a sweep.
 
 **Switching between them needs no new command.** Because every Illustrious
 checkpoint gets the same quality tags, negative, sampler, CFG and steps, a
