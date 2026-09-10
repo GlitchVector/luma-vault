@@ -1,0 +1,22 @@
+{
+  "//": "Which recorded call is which endpoint. The human half of the codegen boundary — a generator that guessed would produce something that looks right and fails silently. Signatures come from `pnpm patreon calls <har>`.",
+
+  "//POST_CREATE": "There is no create call. The draft is minted by navigating to the editor: GET /posts/new answers 302 to /<page>/posts/{id}/edit, and that redirect is the first place the new post id exists.",
+  "POST_CREATE": "GET www.patreon.com/posts/new",
+
+  "POST_UPDATE": "PATCH www.patreon.com/api/posts/{id}",
+
+  "//POST_DELETE": "Delete goes through the bulk endpoint even for one post, and answers 201 with an async job (is_completed:false). Captured in `cleanup`.",
+  "POST_DELETE": "POST www.patreon.com/api/posts/bulk/delete",
+
+  "//MEDIA": "media create returns an S3 presigned POST in attributes.upload_url + attributes.upload_parameters, and attributes.state goes pending_upload -> ready.",
+  "MEDIA_CREATE": "POST www.patreon.com/api/media",
+  "MEDIA_GET": "GET www.patreon.com/api/media/{id}",
+
+  "//CSRF": "Not a cookie: the jar carries no csrf entry at all. A small endpoint hands out the token and it goes in x-csrf-signature.",
+  "CSRF": {
+    "path": "/REST/auth/CSRFTicket",
+    "field": "token",
+    "header": "x-csrf-signature"
+  }
+}

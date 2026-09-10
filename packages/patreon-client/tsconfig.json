@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "//": "No DOM lib even though call.ts contains browser code: those functions are serialised into the page by page.evaluate and never run here. They declare the handful of globals they touch locally, so an accidental top-level `document` still fails to typecheck.",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

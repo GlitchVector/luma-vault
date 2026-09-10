@@ -26,7 +26,8 @@
     "rust:test": "cargo test --locked --manifest-path apps/desktop/Cargo.toml",
     "migrate-prompt": "node --env-file-if-exists=.env --experimental-strip-types scripts/migrate-prompt.mjs",
     "open-in-forge": "node --env-file-if-exists=.env --experimental-strip-types scripts/open-in-forge.mjs",
-    "queue": "node --env-file-if-exists=.env --experimental-strip-types scripts/render-queue.mjs"
+    "queue": "node --env-file-if-exists=.env --experimental-strip-types scripts/render-queue.mjs",
+    "patreon": "pnpm --filter @luma/patreon-harness patreon"
   },
   "devDependencies": {
     "oxlint": "^1.19.0",

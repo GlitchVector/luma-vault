@@ -25,3 +25,11 @@ apps/desktop/output-data/
 
 # Tauri generated
 apps/desktop/gen/
+
+# Patreon harness. A HAR of a logged-in session IS the session, and
+# storageState.json is a live login in a text file. The whole capture directory
+# is ignored, not just the raw half: scrubbing makes a HAR safe to share, not
+# small — six of them is over 200MB of regenerable evidence. What is worth
+# keeping from a capture is endpoints.map.json and the generated file.
+packages/patreon-harness/captures/
+**/.state.json

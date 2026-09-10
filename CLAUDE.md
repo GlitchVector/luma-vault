@@ -12,6 +12,7 @@ belongs here; if it is needed only when working *in an area*, it belongs in
 | Writing code, adding a command, touching the wire format | `.ai/conventions.md` |
 | Something behaves unexpectedly, or you are about to "simplify" something | `.ai/gotchas.md` |
 | Adding or changing tests | `.ai/testing.md` |
+| Touching the Patreon post automation, or capturing anything from patreon.com | `packages/patreon-harness/README.md` |
 
 ## The shape, in one paragraph
 
@@ -40,6 +41,10 @@ fixtures that *are* the wire format, checked from both languages.
    through the same `protocol::serve` — keep it that way.
 5. **Per-item failures are rows, not exceptions.** One corrupt file must never
    abort a scan.
+6. **Nothing automated opens patreon.com.** The account is a live creator
+   account behind Cloudflare. Every capture is driven by a human through
+   `pnpm patreon capture`; endpoints are captured, never guessed; the tool
+   produces drafts and never publishes. See `packages/patreon-harness/README.md`.
 
 ## Commands
 
