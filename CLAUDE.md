@@ -13,6 +13,7 @@ belongs here; if it is needed only when working *in an area*, it belongs in
 | Something behaves unexpectedly, or you are about to "simplify" something | `.ai/gotchas.md` |
 | Adding or changing tests | `.ai/testing.md` |
 | Touching the Patreon post automation, or capturing anything from patreon.com | `packages/patreon-harness/README.md` |
+| Rendering with, or training, one of the character LoRAs | `docs/loras.md` |
 
 ## The shape, in one paragraph
 
