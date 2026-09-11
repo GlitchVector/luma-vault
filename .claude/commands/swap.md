@@ -18,8 +18,20 @@ person in it should change.
 
 ## 1. Ask who she should become, and which model
 
-One `AskUserQuestion` call, two questions, both single-select, before anything
+One `AskUserQuestion` call, three questions, all single-select, before anything
 is read.
+
+### The leg-length question
+
+Asked by every render command since 2026-09-10:
+
+| Question | Options |
+|---|---|
+| Leg length | `(long legs:1.2)` — the block's default · `(long legs:1.5)` · `(long legs:1.8)` · `(long legs:2)` — see *Leg length* in `.claude/shot-tags.md`; only applies when the frame shows hips |
+
+The answer goes into the body slot of the migrated prompt when the framing
+shows hips, and is dropped silently for a portrait or close-up. A boost above
+`1.2` pulls the camera out; the catalogue says how each rung is corrected.
 
 ### The character question
 

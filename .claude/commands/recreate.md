@@ -159,7 +159,7 @@ The combo already argues the thighs at 2, so when maximum is picked, drop
 whatever the thighs question answered rather than doubling the tag — one
 term per concept, never a tug of war.
 
-### Call 3 — the shot, the boosts and the style
+### Call 3 — the shot, the boosts, the leg length and the style
 
 Ass and breasts have real rungs, so boosting waits for this call, which always
 happens because it also carries the shot and the style:
@@ -169,6 +169,7 @@ happens because it also carries the shot and the style:
 | Shot | as-is · `cowboy shot` · `full body` · `wide shot` |
 | Ass boost — only if a plain rung was picked | no boost · `:1.3` · `:1.5` · `:2` |
 | Breast boost — only if a plain rung was picked | no boost · `:1.3` · `:1.5` · `:2` |
+| Leg length | `(long legs:1.2)` — the block's default · `(long legs:1.5)` · `(long legs:1.8)` · `(long legs:2)` — see *Leg length* in `.claude/shot-tags.md`; only applies when the frame shows hips |
 
 Boosts apply as `(huge ass:1.3)`; `:2` is the tested ceiling — past it the
 weight warps anatomy without adding size. Axes answered "as seen" get no

@@ -49,8 +49,8 @@ single-select questions:
 | Question | Options (recommended first) |
 |---|---|
 | Thickness | **none** · `curvy, (wide hips:1.2), (thick thighs:1.2)` · `(curvy:1.3), (wide hips:1.6), (thick thighs:1.6)` · **maximum:** `(wide hips:1.8), (thick thighs:1.8)` + `<lora:thicc_slider_ixl_v12:1.0>` |
-| Breasts | `large breasts` · `(large breasts:1.5)` · `(huge breasts:1.3)` · `(huge breasts:1.4)` |
-| Hips / thighs | `wide hips` · `(wide hips:1.2)` · `(wide hips:1.4), (thick thighs:1.5)` · none, slider only |
+| Breasts | `large breasts` · `(large breasts:1.5)` · `(huge breasts:1.3)` · `(gigantic breasts:1.3)` — the rung that actually reads as huge; `(huge breasts:1.8)` still reads large |
+| Hips / thighs | `wide hips` · `(wide hips:1.2)` · `(wide hips:1.4), (thick thighs:1.5)` · `(wide hips:2), (thick thighs:2), (curvy:1.5)` — the sheet-faithful rung for a curvy reference |
 | Rear ass | `(huge ass:1.4)` · `(huge ass:1.6)` · `(huge ass:2)` |
 
 **The recommended rung is the character's own build.** Three sets in a row came
@@ -63,6 +63,25 @@ character as drawn, the slider is off unless asked for, and the heavy rungs
 are still one answer away for anyone who wants them. Front frames get the ass
 tag at `1.2` regardless (§5), and the act stage halves whatever slider was
 chosen, as before.
+
+**The rear geometry's hips rise with its ass.** The hips answer is the *front*
+rung. Rear-camera frames carry the heavier ass tag, and if the hips stay at the
+front rung the ass balloons over hips that did not grow with it — the Ivy set's
+"hips not the same size as her ass". So derive a rear shape: `(huge ass:1.6)`
+pairs with `(wide hips:1.5), (thick thighs:1.4)`, `(huge ass:1.8)` with `(wide
+hips:1.7), (thick thighs:1.5)`, and `(huge ass:2)` with `(wide hips:1.8),
+(thick thighs:1.6)` — roughly the ass weight minus one tenth on the hips, minus
+two on the thighs. `BODY_R` is built from that rear shape, `BODY_F` from the
+answered one; the test back shot is where the pairing is checked.
+
+**And the front hips never sit below the rear ass.** The user's standing rule
+(2026-09-06): "front needs bigger hips, always, to match the always bigger ass
+in back shots." A front frame whose hips are at the answered rung while the
+rear frames carry `(huge ass:1.6)` shows a different woman from the front than
+from behind. So the front hips are pinned to the rear ass weight or above —
+`(huge ass:1.6)` behind means `(wide hips:1.7)` in `BODY_F` *and* `BODY_T`,
+and the rear hips match at 1.7. The rear-shape derivation above then only
+adds the thigh step. Ivy at 1.7 everywhere is the reference render.
 
 **The slider is reserved for the top rung only.** Thickness climbs by *tags*
 first — `curvy`, then the weighted hips and thighs — and
@@ -125,6 +144,17 @@ become the frozen `BODY_F` / `BODY_R` / `BODY_T` tags reused across every stage
 (§5), plus the `SLIDER` / `SLIDER_ACT` pair — and the belly rule rides along in
 every one of them.
 
+**`BODY_T` carries the hips too.** The torso chunk is for the close-up, portrait
+and upper-body frames, and it is tempting to leave the hips out because the
+crop "does not show them". The model does not respect the crop: an outfit that
+names the pelvis (`navel`, `thong`, `highleg`, `midriff`) pulls those frames
+down to the hips, and a chunk with no hip tag and the waist at 1.5 renders them
+narrow next to the full-body frames — the Ivy run-2 close-ups. So `BODY_T` is
+the front hips and thighs with the waist one step *lower* than `BODY_F`, minus
+only the ass tag. And when a character tag anchors the identity, its canon
+build pulls against the answered rung: Ivy needed the front hips at 1.5 where
+the archetype build had held at 1.3.
+
 The **style** question is asked too, exactly as `/recreate` step 3 does. The
 **shot** question is not asked: this command decides framing per stage.
 
@@ -144,6 +174,18 @@ deliberately: at `2` the waist goes to almost nothing between the ribs and the
 hips, which is the point of that build and wrong for a character drawn
 athletic. It is never combined with the slider — under the maximum thickness
 rung the answer is ignored and the tag stays at `1`.
+
+### And ask about the legs — in the same call as the style
+
+| Question | Options (recommended first) |
+|---|---|
+| Leg length | `(long legs:1.2)` — the block's default · `(long legs:1.5)` · `(long legs:1.8)` · **max:** `(long legs:2)` — see *Leg length* in `.claude/shot-tags.md` for what a boost does to the framing |
+
+The default keeps the character's own proportions. A boost lengthens the
+legs *and* pulls the camera out: at `1.8` and `2` every cowboy and close-up
+rung needs its framing word weighted to `1.4` and `full body, wide shot`
+negated, or the frame drifts to a full-body shot on its own. The tag joins the
+body chunk of every frame that shows hips and never changes for the set.
 
 ### And ask who *he* is — in the same call as the style
 
@@ -249,6 +291,18 @@ awk -F, -v q="<the tag, underscored>" '$3==4 && $2==q {print $2, $4}' \
 A high-count character tag (tens of thousands of images) carries its own look, so
 this path is reliable; a thin or absent tag does not, and there you must lean
 harder on the signature features and say in the report that the tag is weak.
+
+**Absent from the CSV is not absent from the checkpoint.** The tagger's list is
+a filtered subset of danbooru, and the checkpoint was trained on the whole
+thing. Ivy (`isabella valentine`, ~3.5k posts) has no row in the CSV, yet
+`isabella valentine, soulcalibur` on deliberate produced her short slicked
+hair, one gold gauntlet and cross-laced purple leotard with no LoRA — while a
+set built from archetype tags because "the tag does not exist" gave her waist-
+length hair and read as somebody else. So when the CSV has no row, render **one
+test frame with the danbooru character tag plus its copyright tag** before
+deciding the tag is dead; drop to archetype tags only if that frame is not her.
+And check Civitai with `tag=` as well as `query=` — the query endpoint was
+returning 503 the day "no Illustrious LoRA exists" was concluded, wrongly.
 Everything downstream — the outfit classification in §4, the stages, the acts —
 is identical whichever path filled `ID`/`WH`/`WT`/`WF`.
 
@@ -418,6 +472,21 @@ contrast is the point; a set that smiles in every frame is as monotonous as one
 that never does. The act stage stays with its own expressions (neutral, `tears`,
 `ahegao`), not smiles, unless the user asks.
 
+**Mostly closed-mouth since 2026-09-10.** After the desert-B set the user said
+"she should smile but not laugh - she laughs too often with open mouth", then
+"she can laugh with open mouth but only in a few". So the solo cycle is now
+three closed-mouth smiles and one laugh — `(light smile:1.2), closed mouth` ·
+`smile, closed mouth, happy` · `(light smile:1.2), closed mouth, looking at
+viewer` · `smile, open mouth, teeth, happy` — the bridges take `(seductive
+smile:1.2), closed mouth`, the act-stage smile share is `(light smile:1.2),
+smile, closed mouth, happy, blush`, and the face pass adds `(closed mouth:1.1)`
+on every frame whose expression is not an open-mouth one. The closed-mouth solo
+frames also negate `(laughing:1.4), (laugh:1.3), (open mouth:1.3), teeth, :d,
+grin, upper teeth only`; the laugh frame and every act frame negate only
+`laughing`, so the moan keeps its open mouth. On delburry75 with the Lara face
+pass `light smile` at 1.2 does read as a smile — the 2026-09-05 "you call this
+smiling?" was on a different checkpoint and an unweighted tag.
+
 **26 renders before the act stage** (10 dressed + 2+2 bridges + 6 + 6), about
 30 minutes warm. Say that before starting.
 
@@ -486,6 +555,20 @@ not deleted** — it stays named in every stage and is pulled out of the way:
 tags; `clothes aside` (37,048) and `clothes pull` (69,767) are the strong
 generic fallbacks for any other one-piece. The garment is never negated — the
 whole point is that it is still on her, just moved.
+
+**The displaced garment loses its colour — say the colour twice and negate the
+rival.** Measured on the desert-B set (2026-09-10): every dressed frame rendered
+the grey ribbed leotard, and every stage 2 and 3 frame rendered its lower half
+as black leather, because once the bodice is pulled down the belt, harness and
+`leather` words in the same chunk recolour what is left. The user: "her bodysuit
+is sometimes just black". Weighting the garment (`(grey leotard:1.4)`) and
+negating `black leotard, leather leotard` did nothing, and neither did the LoRA
+weight (0.75 and 0.9 both black). What fixed it, tested on both stages: add the
+**colour as a clothes tag** — `(grey clothes:1.3)` — and negate the rival colour
+the same way — `(black clothes:1.4), (black:1.2), (leather:1.2)` — alongside the
+garment words. `<colour> clothes` is what the model reads as "what she wears is
+this colour"; `<colour> leotard` alone is outvoted by the accessories. Do this on
+every stage 2 and 3 chunk of a one-piece set from the start.
 
 ### The act-stage wardrobe is fixed: bare body, accessories only
 
@@ -599,6 +682,33 @@ bar censor, heart censor, sticker, emoji, glowing, speech bubble` — `censored`
 name the exact artefact. `pasties` belongs in the same list on a topless stage
 — the star pasties one early Oracle test drew were the same reflex.
 
+**The duo negative is heavier than the solo one.** Measured on the desert-B set
+(2026-09-10, 118 act frames): the two-person frames, which run the character
+LoRA weaker and skip the face pass, produced what the solo frames never did —
+a corner panel or a second copy of her on nine of the first twenty-one act
+frames, blue censor patches on four more, and comic speed-line scribbles. The
+baseline `inset, (multiple views:1.3)` was not enough there. So every act frame
+adds `(inset:1.5), (multiple views:1.5), split screen, extra body, clone,
+(2girls:1.4), (censored:1.6), (blue:1.2), blue pasties, motion lines, speed
+lines` on top of the baseline. Measured on the second desert-B set (154 frames,
+2026-09-11): the same act stage went from 20 misses to 8, breast-grab from 0/6
+to 5/6, and no censor patch at all.
+
+**The camera-in-front reverse suspended frames do not penetrate.** On both
+desert-B sets the two plain vaginal 6b frames with the camera in front rendered
+him holding her up with the penis standing in front of her, not inside — four
+of four, and adding `(penetration:1.3), (vaginal:1.2), (insertion:1.2)` on the
+second set changed nothing. The POV variants (k = 2 and 7) and the anal frames
+of the same act penetrate every time. So 6b's front-camera vaginal frames are
+now POV too: the act's `geometry` stays `front` for the body block, but every
+6b frame takes `POV.front` rather than the rotating camera.
+
+**The third presenting frame collapses.** `all fours, top-down bottom-up` with
+the ass one rung up and a close crop produced an anatomy collapse (a bald,
+distorted head in a fold of skin) on both desert-B sets. That frame is now the
+same standing `bent over, presenting` as the first two with `from behind, (from
+below:1.2)` instead of the top-down pose; the escalation stays in her hands.
+
 | # | Act | Frames | Canvas | Shape |
 |---|---|---|---|---|
 Counts below are the **doubled** counts, standing since the Aqua run. Every act
@@ -608,7 +718,7 @@ three. Do not halve them back without being asked.
 
 | 1a | Irrumatio over the table's edge | 2 beats ×4 seeds = 8 | landscape | opens the story's act stage. She lies on her back on the table, head hanging over the edge, he stands at her head — **and the geometry is kept, not swapped for a kneeling one** (the user rejected that as "a cheap way out"). **Rebuilt 2026-09-05** because the old block broke anatomy in most frames: the culprit was bare `upside-down` (22,255), which flips the whole figure. The recipe that works, `IRR` = `lying, on back, on table, table, (head back:1.3), (upside-down:0.8), arched back, breasts apart, (hand on another's head:1.2), penis, testicles`; positioned → `IRR, open mouth, tongue out, (imminent fellatio:1.2)`; deep → `IRR, fellatio, (irrumatio:1.4), (deepthroat:1.3)`; both with `(tears:1.4)`, side geometry. Measured on 12 frames: without `upside-down` 8/8 coherent but only ~5 hit the head-over-the-edge pose (the rest drift to sitting at the table); at `0.8` all coherent and 3 of 4 hit it. Below `1.0` the tag says "head hangs back", at `1.0` it says "invert her". **No cum here** — the finish belongs to act 7 |
 | 1b | Fellatio, kneeling | 8 | portrait | 4 base; 4 adding `(deepthroat:1.3), (tears:1.4)` |
-| 2 | He grips her bare breasts | 6 | portrait | `(close-up:1.6), (breast focus:1.6)`, `grabbing another's breast, groping, nipples` |
+| 2 | He grips her bare breasts | 6 | portrait | `(upper body:1.3), (close-up:1.1), (breast focus:1.3)`, `(grabbing another's breast:1.3), groping, nipples, male hands`. **Not `(close-up:1.6)`** — measured on the desert-B set (2026-09-10): at 1.6 with the torso body block all six frames drew the hips the crop could not hold as a second panel, an inset or a second woman; at the looser crop the frame is clean |
 | 3 | Missionary, legs held | 8 + 4 + 4 + 6 | portrait, then landscape | exposed → entering → `(deep penetration:1.3)` → `:1.5` + `testicles` (8 portrait across the ladder); 4 landscape repeats of the deep pair; 4 landscape `anal`; then **6 landscape with her legs wrapped around him** — `(leg lock:1.4), hug` (`legs around waist` is not a tag; `leg lock` is 3,432 and needs both the weight and the prop) |
 | 4a | Doggystyle | 6 + 10 + 6 + 4 | landscape | 6 vaginal, some with `arms behind back, (arm grab:1.4)`; then **10 anal** — plain, arm-pulled, and `(deep penetration:2), testicles` frames at the vocabulary's ceiling for depth; then **6 restrained** — `choker, collar, (chain:1.2), (chain leash:1.4), leash, (holding leash:1.3), (leash pull:1.3)` (mostly vaginal, some anal): a chained collar he holds and pulls her by. **Use a collar, not a bit gag**, and do **not** stack `head back` + `looking up` — that pair renders a head twisted past 90°. `bit gag` (2,810), `harness`, `pony play`, `head harness`, `bridle` and `reins` are all dead or near-dead; `choker` (320,504) and `collar` (157,883) hold reliably. Negate `bit gag, gag, harness` so the earlier gear does not creep in; then **4 to close the act — she grabs her own glutes and spreads herself open**: `ass grab, (grabbing own ass:1.5), (spread ass:1.4), (spread anus:1.3), anus, ass focus, own hands together` (2 vaginal, 2 anal). The specific names are thin — `grabbing own ass` 5,574, `spread ass` 4,863 — so assemble from the thick ones (`ass grab` 25,306, `anus` 98,073, `ass focus` 21,648) and weight the specific ones as hints. **Negate `grabbing another's ass`** or the hands become his: that is the exact tag acts 6 and 7 use for him, and without the negation the beat inverts silently |
 | 4b | Presenting, gaped | 3 | portrait | **not doubled** — the one act that read fine at three. **after** the doggystyle, not before. 2 solo standing `bent over, presenting, (gaping:1.4)`; 1 solo `all fours, top-down bottom-up` with the ass **one rung up**. The **last two of the three** add her own hands: `ass grab, (grabbing own ass:1.5), (spread ass:1.4), (spread anus:1.4), own hands together` — she is alone here, so nothing to negate, but the first frame stays clean so the beat still escalates |
@@ -616,8 +726,8 @@ three. Do not halve them back without being asked.
 | 5b | Standing, taken from behind | 6 | portrait | `standing, standing sex, sex from behind, bent over`, both upright, `arms behind back, (arm grab:1.4), (holding another's arm:1.3)`; negate `rope, bondage, all fours, lying` |
 | 6 | Suspended congress | 4 + 4 | portrait | forward-facing; `straddling, carrying, standing sex`; then 4 with both glutes gripped — `ass grab, (grabbing another's ass:1.3)` |
 | 6b | Reverse suspended congress | 6 | portrait | **camera in front, she faces viewer**; 2 vaginal, 4 anal, two of them with `(ahegao:1.5)` |
-| 7 | Reverse cowgirl | 6 + 4 + 4 | portrait | `leaning forward, bent over`, camera behind; negate `cowgirl position`. 6 plain, then 4 with the glute grip as in act 6, then **the last four carry the finish** — `cum, cum in mouth, (cum overflow:1.4), ejaculation` |
-| 8 | Spitroast | 4 + 4 | landscape | **added 2026-09-05 in the piledriver's slot.** She is on all fours between two men, one from behind, one in her mouth: `(spitroast:1.3), all fours, sex from behind, fellatio, (deepthroat:1.2), (hand on another's head:1.2), penis, testicles` + `vaginal` ×4, then `anal` ×4, every other frame with `(tears:1.4)`. The cast line changes for this act only — `2boys, multiple boys, hetero, solo focus, faceless male, <partner>, large penis, erection, (mmf threesome:1.2), group sex, threesome` replaces the `1boy` line — and `2boys, multiple boys` come **out** of its negative (they are in every other act's) while `3boys, 4boys, 1boy` go in. Thick carriers: `multiple boys` 367,969 · `2boys` 232,894 · `group sex` 49,139 · `threesome` 25,283 · `mmf threesome` 11,460; `spitroast` (3,736) is the hint. Side geometry, so the line-up reads |
+| 7 | Spitroast | 4 + 4 | landscape | **added 2026-09-05 in the piledriver's slot; moved ahead of the reverse cowgirl on 2026-09-06 so the finish stays the last thing in the set.** She is on all fours between two men, one from behind, one in her mouth: `(spitroast:1.3), all fours, sex from behind, fellatio, (deepthroat:1.2), (hand on another's head:1.2), penis, testicles` + `vaginal` ×4, then `anal` ×4, every other frame with `(tears:1.4)`. The cast line changes for this act only — `2boys, multiple boys, hetero, solo focus, faceless male, <partner>, large penis, erection, (mmf threesome:1.2), group sex, threesome` replaces the `1boy` line — and `2boys, multiple boys` come **out** of its negative (they are in every other act's) while `3boys, 4boys, 1boy` go in. Thick carriers: `multiple boys` 367,969 · `2boys` 232,894 · `group sex` 49,139 · `threesome` 25,283 · `mmf threesome` 11,460; `spitroast` (3,736) is the hint. Side geometry, so the line-up reads |
+| 8 | Reverse cowgirl | 6 + 4 + 4 | portrait | `leaning forward, bent over`, camera behind; negate `cowgirl position`. 6 plain, then 4 with the glute grip as in act 6, then **the last four carry the finish — the closing frames of the whole set, which is why the spitroast comes before it** — `cum, cum in mouth, (cum overflow:1.4), ejaculation` |
 | — | Piledriver | — | — | **dropped — not renderable, see below** |
 
 Two rules visible in that table and worth stating plainly: **a beat that has a
@@ -634,8 +744,8 @@ four-step rotation for that geometry — frame `n` takes step `((n-1) mod 4)+1`:
 | geometry | acts | 1 | 2 | 3 | 4 |
 |---|---|---|---|---|---|
 | **front** | 1b, 2, 3, 6, 6b | `cowboy shot, looking at viewer, facing viewer` | + `(from above:1.2), looking up` | + `(from below:1.2), (foreshortening:1.2), looking down` | `(pov:1.2), close-up, eye contact, (blurry foreground:1.1), depth of field` |
-| **side** | 1a, 5 | `cowboy shot, from side, looking at viewer` | + `(from above:1.2)` | `close-up, from side, (blurry foreground:1.2), depth of field` | `wide shot, full body, from side, dutch angle` |
-| **rear** | 4a, 4b, 5b, 7 | `cowboy shot, from behind, looking back` | + `(from below:1.2), ass focus, (foreshortening:1.2)` | + `(from above:1.2)` | `close-up, from behind, dutch angle, ass focus, looking back` |
+| **side** | 1a, 5, 7 | `cowboy shot, from side, looking at viewer` | + `(from above:1.2)` | `close-up, from side, (blurry foreground:1.2), depth of field` | `wide shot, full body, from side, dutch angle` |
+| **rear** | 4a, 4b, 5b, 8 | `cowboy shot, from behind, looking back` | + `(from below:1.2), ass focus, (foreshortening:1.2)` | + `(from above:1.2)` | `close-up, from behind, dutch angle, ass focus, looking back` |
 
 Every word in it is checked: `from side` 170,900 · `dutch angle` 104,788 ·
 `pov` 98,619 · `depth of field` 91,237 · `from above` 81,395 · `from below`
@@ -676,7 +786,7 @@ as the framing argument — `go "4-5-spoon-0$i" "$(cam side $i)" …` — rather
 writing the four strings into every loop.
 
 **The finish lands once, at the end.** `cum, cum in mouth, (cum overflow:1.4),
-ejaculation` appears only in the last two frames of act 7 and nowhere else. It
+ejaculation` appears only in the last frames of act 8 — the reverse cowgirl, now the final act — and nowhere else. The spitroast (act 7) sits before it for exactly that reason: the finish has to be the last thing in the set (user, 2026-09-06). It
 used to sit in the irrumatio act as well; having it twice made the sequence read
 as two stories rather than one, so the oral act now stops before it.
 

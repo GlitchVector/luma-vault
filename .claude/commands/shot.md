@@ -65,7 +65,7 @@ to the settings line; the queue and the API payload carry them through.
 Two `AskUserQuestion` calls, because the shot table needs all four question
 slots of its own and the tool caps a call at four.
 
-### Call 1 — the two shots that do not fit the table
+### Call 1 — the two shots that do not fit the table, and the leg length
 
 The sizes are **not asked any more** — they are detected in step 1, and the
 set keeps the input's figure. Exploring other sizes is what the variation
@@ -76,6 +76,7 @@ judged, rather than one global answer up front.
 |---|---|
 | Legs (hips down) | no · yes |
 | Character sheet | no · yes — **landscape**, front/back/side in one frame |
+| Leg length | `(long legs:1.2)` — the block's default · `(long legs:1.5)` · `(long legs:1.8)` · **max:** `(long legs:2)` — see *Leg length* in `.claude/shot-tags.md` for what a boost does to the framing |
 
 **Detected sizes are still filtered per shot in step 3.** A face close-up gets
 none of them whatever was detected — that is not the detection being
@@ -133,10 +134,25 @@ every rung on the ladder.
 
 | Rung | Keep | Drop |
 |---|---|---|
-| `close-up`, `portrait` | nothing below the neck | ass, hips, thighs, legwear, undress state, `arched back`, `bent over` |
-| `upper body` | breasts, waist | ass, hips, thighs, legwear, `arched back`, `bent over` |
-| `cowboy shot` | breasts, waist, hips, thighs | `bent over` on a front shot |
+| `close-up`, `portrait` | **the whole body block**: breasts, waist, hips, thighs, `curvy`, and the slider when the build uses one — all at the same weights as the full-body frame | the ass *weight* (a plain `huge ass` stays on a front), legwear, undress state, `arched back`, `bent over`, `legs together`, the leg-length tag |
+| `upper body` | the whole body block, as above | the ass weight, legwear, `arched back`, `bent over`, the leg-length tag |
+| `cowboy shot` | the whole body block plus the leg-length tag | `bent over` on a front shot |
 | `full body`, `wide shot` | all of them | nothing |
+
+**Every frame carries the identical body block** (changed 2026-09-10, twice in
+one morning). The first version of this note kept only the hips and thighs on
+the tight rungs; the board that followed was "totally inconsistent" because the
+face close-up, headshot and hip-focus still had no breast words, the mid rungs
+had stepped-down hips and no slider, and then none of those frames respected
+its rung anyway — a LoRA or an outfit that names the pelvis pulls a "close-up"
+to cowboy distance, and a frame missing a word falls back to the checkpoint's
+default figure and sits beside the others as a different woman. On a LoRA whose
+captions name the body (`wide hips, thick thighs, large breasts` in every
+caption) the shape is bound to those words, not to the trigger, so they must be
+present, identical, on every frame. What a rung gates is the *ass weight* on
+fronts, the pose words, and the leg-length tag. Nothing else. `/photostory`
+had already learned half of this as `BODY_T`.
+
 
 Drop the **weight** on the ass for anything front-facing — it is not in frame —
 but keep the weights on hips and thighs. Removing all three was tried and the
@@ -172,11 +188,11 @@ entitled to know they are not in that render.
 ## 4. One or two open as tabs; three or more render in the background
 
 Decided by the count, not by preference — and **a bracketed shot counts as its
-five renders** (six for the breast close-up's wardrobe flip), so any bracket
+two renders** (three for the breast close-up's wardrobe flip), so any bracket
 in the selection already puts the run in `--render` territory. The bracket
-shots, the five steps and the flip live in `.claude/shot-tags.md` under
-"Variation brackets"; render a bracket's five in order, base first, each
-captioned with its suffix. `.claude/shot-tags.md` has the
+shots, the two steps and the flip live in `.claude/shot-tags.md` under
+"Variation brackets"; render a bracket's two in order, smaller then bigger,
+each captioned with its suffix. `.claude/shot-tags.md` has the
 measurements under "Getting the shots rendered"; the short version is that a
 Forge page's `load` handler runs on Gradio's queue, which drains one event at a
 time, so past two tabs they wedge behind each other and no amount of waiting
@@ -245,7 +261,8 @@ Then, once rather than per shot:
 
 - **The model**, and whether it is the original's own or a fallback.
 - **The detected figure** — the four rungs the set was built on — and, for
-  each bracket, which direction its two-step went and why (headroom).
+  each bracket, the two rungs it stepped to and any axis that held at a
+  ladder end.
 - **What the framing rules removed or weighted**, from the notes. Identical
   across the set apart from the reframe line — say which line differed.
 - **A tag from a free-text shot that is not in the vocabulary.** Other accepts

@@ -1006,7 +1006,14 @@ export function toApiPayload(block: string): Record<string, unknown> {
   }
 
   const adetailer = adetailerUnit(get)
-  if (adetailer) payload['alwayson_scripts'] = { ADetailer: { args: [true, false, adetailer] } }
+  if (adetailer) {
+    // A second unit rides behind the face pass under the extension's own
+    // infotext suffix (`ADetailer model 2nd`), so a block pasted into the UI
+    // fills both tabs. It is how a nipple pass gets its own detector, prompt
+    // and denoise without disturbing the face.
+    const second = adetailerUnit(get, ' 2nd')
+    payload['alwayson_scripts'] = { ADetailer: { args: [true, false, adetailer, ...(second ? [second] : [])] } }
+  }
 
   return payload
 }
@@ -1021,23 +1028,31 @@ export function toApiPayload(block: string): Record<string, unknown> {
  */
 function adetailerUnit(
   get: (key: string) => string | undefined,
+  suffix = '',
 ): Record<string, unknown> | null {
-  const model = get('ADetailer model')
+  const model = get('ADetailer model' + suffix)
   if (!model) return null
   // Values arrive still wearing the quotes the block wrote them with.
   const unquote = (value: string | undefined) => value?.replace(/^"|"$/g, '')
   const unit: Record<string, unknown> = { ad_model: model }
-  const prompt = unquote(get('ADetailer prompt'))
-  const negative = unquote(get('ADetailer negative prompt'))
+  const prompt = unquote(get('ADetailer prompt' + suffix))
+  const negative = unquote(get('ADetailer negative prompt' + suffix))
   if (prompt) unit['ad_prompt'] = prompt
   if (negative) unit['ad_negative_prompt'] = negative
-  const denoise = Number(get('ADetailer denoising strength'))
+  const denoise = Number(get('ADetailer denoising strength' + suffix))
   if (Number.isFinite(denoise)) unit['ad_denoising_strength'] = denoise
+  // Mask growth and crop padding, the extension's own keys. A detector that
+  // masks a small part (an areola) clips anything drawn larger than the part
+  // (a ring) at the mask edge unless the mask is grown first.
+  const dilate = Number(get('ADetailer dilate erode' + suffix))
+  if (Number.isFinite(dilate)) unit['ad_dilate_erode'] = dilate
+  const padding = Number(get('ADetailer inpaint padding' + suffix))
+  if (Number.isFinite(padding)) unit['ad_inpaint_only_masked_padding'] = padding
   // The face pass can run on a different checkpoint than the base render — the
   // extension's per-unit override, which works even across architectures. The
   // block names the checkpoint the way Forge lists it; the `ad_use_*` flag has
   // to accompany the value or the extension ignores it.
-  const checkpoint = unquote(get('ADetailer checkpoint'))
+  const checkpoint = unquote(get('ADetailer checkpoint' + suffix))
   if (checkpoint) {
     unit['ad_use_checkpoint'] = true
     unit['ad_checkpoint'] = checkpoint

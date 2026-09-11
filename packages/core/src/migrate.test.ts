@@ -722,6 +722,32 @@ describe('toApiPayload', () => {
     })
   })
 
+  it('adds a second ADetailer unit from the extension\'s " 2nd" infotext keys', () => {
+    // A nipple pass behind the face pass: its own detector, prompt and denoise,
+    // under the suffix the extension itself writes, so the block round-trips.
+    const two = toApiPayload(
+      '1girl\nNegative prompt: worst quality\n' +
+        'Steps: 28, Size: 832x1216, ADetailer model: face_yolov8s.pt, ADetailer denoising strength: 0.4, ' +
+        'ADetailer model 2nd: nipples_v2_yolov11s-seg.pt, ADetailer prompt 2nd: "nipple rings, gold", ' +
+        'ADetailer negative prompt 2nd: "lowres", ADetailer denoising strength 2nd: 0.55, ' +
+        'ADetailer dilate erode 2nd: 48, ADetailer inpaint padding 2nd: 64',
+    ) as Record<string, any>
+    const args = two['alwayson_scripts'].ADetailer.args
+    expect(args).toHaveLength(4)
+    expect(args[2]).toEqual({ ad_model: 'face_yolov8s.pt', ad_denoising_strength: 0.4 })
+    expect(args[3]).toEqual({
+      ad_model: 'nipples_v2_yolov11s-seg.pt',
+      ad_prompt: 'nipple rings, gold',
+      ad_negative_prompt: 'lowres',
+      ad_denoising_strength: 0.55,
+      ad_dilate_erode: 48,
+      ad_inpaint_only_masked_padding: 64,
+    })
+    // No second model, no second unit — a disabled entry is not the same as none.
+    const one = toApiPayload('1girl\nSteps: 28, Size: 832x1216, ADetailer model: face_yolov8s.pt') as Record<string, any>
+    expect(one['alwayson_scripts'].ADetailer.args).toHaveLength(3)
+  })
+
   it('carries the refiner pair through as its two payload fields', () => {
     // A1111's own infotext keys. Both are needed — a checkpoint with no switch
     // point never engages, a switch point with no checkpoint is a no-op.
