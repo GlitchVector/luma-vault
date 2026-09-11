@@ -42,6 +42,7 @@ import {
 import { RatingOverrideDialog } from '#/components/RatingOverrideDialog.tsx'
 import { askConfirm, askToEdit, showMessage } from '#/lib/dialogs.ts'
 import { preloadImages } from '#/lib/preload.ts'
+import { shareOriginal } from '#/lib/share.ts'
 import { toast } from '#/lib/toasts.ts'
 import { MD_BREAKPOINT, useViewportWidth } from '#/lib/useViewport.ts'
 
@@ -1375,6 +1376,28 @@ export function Lightbox({
         >
           +
         </button>
+        {/* The favourite, beside the +: the double tap does the same, but a
+            tap that has to be timed against another is not something you can
+            see, and a button is. Lit while the row already has five stars,
+            so stepping back to a favourite says so where the thumb looks. */}
+        <button
+          type="button"
+          onClick={() => {
+            toast(`★★★★★ ${item.name}`, 'picked')
+            judge(5, false)
+          }}
+          aria-pressed={item.stars === 5}
+          aria-label={`Rate 5 stars and show the ${stepBack ? 'previous' : 'next'}`}
+          className={cn(
+            'fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom))] left-[4.75rem] z-20 grid size-12 place-items-center rounded-full text-2xl leading-none backdrop-blur-sm md:hidden',
+            item.stars === 5
+              ? 'bg-rose-500/50 text-rose-100'
+              : 'bg-white/10 text-rose-200 active:bg-rose-500/40',
+            immersive && 'hidden',
+          )}
+        >
+          ♥
+        </button>
         <div
           className={cn(
             'fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom))] left-1/2 z-20 flex -translate-x-1/2 gap-3 md:hidden',
@@ -1398,6 +1421,31 @@ export function Lightbox({
             ›
           </button>
         </div>
+        {/* Saving on a phone: a long-press on the stage picture previews the
+            clipped, stage-sized element and offers to save that half-blank
+            frame. This hands the original file to the system share sheet
+            instead, where "Save Image" is one tap — and opens the bare original
+            in a new tab where files cannot be shared. Beside the −, mirroring
+            the ♥ beside the +. */}
+        <button
+          type="button"
+          onClick={() => {
+            const target = shownImage
+            void shareOriginal(target).then(
+              (outcome) => {
+                if (outcome === 'opened') toast(`Opened ${target.name} — long-press it to save`, 'muted')
+              },
+              () => toast(`Could not fetch ${target.name}`, 'muted'),
+            )
+          }}
+          aria-label="Save or share the original"
+          className={cn(
+            'fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom))] right-[4.75rem] z-20 grid size-12 place-items-center rounded-full bg-white/10 text-2xl leading-none text-zinc-200 backdrop-blur-sm active:bg-white/25 md:hidden',
+            immersive && 'hidden',
+          )}
+        >
+          ⤓
+        </button>
         <button
           type="button"
           onClick={togglePick}
