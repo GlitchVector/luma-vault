@@ -1,7 +1,8 @@
 # Trained LoRAs
 
 Every LoRA trained for the vault's characters, what it carries, and how to
-render with it. All are SDXL LoRAs trained with kohya `sd-scripts` on
+render with it. Mira Solen, Kira Voss and Ember Kael are the owner's original
+characters; the Celestial Oracle and Lara Croft are not. All are SDXL LoRAs trained with kohya `sd-scripts` on
 Illustrious XL 1.1 (`D:\AI\lora-train\train-oracle.ps1`, dim 16 / alpha 8
 unless noted), from OpenAI character sheets cut into view crops and body bands.
 Files live in Forge's `models/Lora/`; datasets, captions and prep scripts in
@@ -38,8 +39,8 @@ at cowboy distance; ask for `portrait, face focus` for a face).
 | `msdb_v2` | `msdb` | body | Mira, desert B: desert A without the shorts, high-leg thong-back leotard with the belt and thigh pouch riding on it | working |
 | `msbs_v4` | `msbs` | body (dim 32) | Mira, base sheet: black SOLEN crop tee over a navy high-leg bodysuit, chunky two-tone sneakers, twintails | working; print needs `english text, solen` in the prompt |
 | `mswt_v2` | `mswt` | body | Mira, winter: cream ribbed hooded sweater dress, fleece hood and hem, brown raglan yoke with emblem, half-zip, chunky brown sneakers over socks | working |
-| `kvoss_v2` | `kvoss` | full | Kira Voss (original): pink high ponytail, black cropped hoodie with underboob and an IHS back print, black thong, black platform combat boots | working; back print needs `english text, ihs` |
-| `embk_v1` | `embk` | full | Ember Kael (original, Pyra-inspired): copper hair with a blonde streak, teal armoured bodysuit, single pauldron, neon trim, armoured heeled boots | training 2026-09-12; round 1 pending |
+| `kvoss_v2` | `kvoss` | full | Kira Voss: pink high ponytail, black cropped hoodie with underboob and an IHS back print, black thong, black platform combat boots | working; back print needs `english text, ihs` |
+| `embk_v1` | `embk` | full | Ember Kael (Pyra-inspired): copper hair with a blonde streak, teal armoured bodysuit, single pauldron, neon trim, armoured heeled boots | training 2026-09-12; round 1 pending |
 
 Superseded versions stay installed (`msw_v2`, `msbs_v1`, `kvoss_v1`, …) and are
 not worth rendering with.
