@@ -1,8 +1,8 @@
 # Trained LoRAs
 
 Every LoRA trained for the vault's characters, what it carries, and how to
-render with it. Mira Solen, Kira Voss and Ember Kael are the owner's original
-characters; the Celestial Oracle and Lara Croft are not. All are SDXL LoRAs trained with kohya `sd-scripts` on
+render with it. The Celestial Oracle, Mira Solen, Kira Voss and Ember Kael are the owner's
+original characters; only Lara Croft is not. All are SDXL LoRAs trained with kohya `sd-scripts` on
 Illustrious XL 1.1 (`D:\AI\lora-train\train-oracle.ps1`, dim 16 / alpha 8
 unless noted), from OpenAI character sheets cut into view crops and body bands.
 Files live in Forge's `models/Lora/`; datasets, captions and prep scripts in
