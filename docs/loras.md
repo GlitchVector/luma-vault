@@ -46,6 +46,7 @@ exist as far as the pipeline is concerned.
 | `kvoss_v2` | `kvoss` | full | Kira Voss: pink high ponytail, black cropped hoodie with underboob and an IHS back print, black thong, black platform combat boots | working; back print needs `english text, ihs` |
 | `embk_v2` | `embk` | full | Ember Kael (Pyra-inspired): copper hair with a blonde streak, teal armoured bodysuit, single pauldron on her left shoulder, neon trim, armoured heeled boots | working; negate `(pauldrons:1.3)` so the plate stays single |
 | `sevenc_v2` | `sevenc` | full | 7C (the sheet says Mira Axiom): infiltration android, white short messy hair, orange eyes, black bodysuit with glowing orange seams, white armour with a single pauldron and a mechanical left arm, orb spine, high-heeled armoured boots | working; the arm holds its side from behind after the back views were weighted x30 in v2 |
+| `sevencb_v1` | `sevencb` | full | 7C, leotard outfit: black high-leg turtleneck leotard with side cutouts and straps, thigh strap and pouch, the same white mechanical left arm and pauldron, orb spine, heeled armoured ankle boots | training 2026-09-12; back views weighted from the start |
 
 Superseded versions stay installed (`msw_v2`, `msbs_v1`, `kvoss_v1`, …) and are
 not worth rendering with.
@@ -65,7 +66,7 @@ the outfit's own colour words; the standard censor negatives
 (`(censored:1.4), mosaic censoring, bar censor, (heart censor:1.3), censor
 sticker, (pasties:1.4), (tape:1.3), sticker, emoji`) stay on every frame.
 
-**Full-character LoRAs** (`kvoss`, `embk`, `sevenc`, `lcroft`, `mirasolen`): same
+**Full-character LoRAs** (`kvoss`, `embk`, `sevenc`, `sevencb`, `lcroft`, `mirasolen`): same
 weights, but the ADetailer prompt carries the LoRA itself at 0.8 with the hair
 and eye words, denoise 0.4, same checkpoint as the composition.
 
