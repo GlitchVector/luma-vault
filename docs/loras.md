@@ -1,8 +1,8 @@
 # Trained LoRAs
 
 Every LoRA trained for the vault's characters, what it carries, and how to
-render with it. The Celestial Oracle, Mira Solen, Kira Voss and Ember Kael are the owner's
-original characters; only Lara Croft is not. All are SDXL LoRAs trained with kohya `sd-scripts` on
+render with it. The Celestial Oracle, Mira Solen, Kira Voss, Ember Kael and 7C are the
+owner's original characters; only Lara Croft is not. All are SDXL LoRAs trained with kohya `sd-scripts` on
 Illustrious XL 1.1 (`D:\AI\lora-train\train-oracle.ps1`, dim 16 / alpha 8
 unless noted), from OpenAI character sheets cut into view crops and body bands.
 Files live in Forge's `models/Lora/`; datasets, captions and prep scripts in
@@ -24,6 +24,10 @@ at cowboy distance; ask for `portrait, face focus` for a face).
 
 ## Catalogue
 
+Every new LoRA gets a row here when its dataset is cut, and the row is
+updated at each version verdict. A LoRA that is not in this table does not
+exist as far as the pipeline is concerned.
+
 | LoRA | Trigger | Kind | Character / outfit | Status |
 |---|---|---|---|---|
 | `celoracle_v3` (+ `celoback_v1`) | `celoracle` / `celoback` | full | Celestial Oracle: lavender thigh-length hair, veil, naked tabard, loincloth on a hip band | working; stack `celoback_v1` at 0.5 on rear frames for the narrow ribbon flap |
@@ -41,6 +45,7 @@ at cowboy distance; ask for `portrait, face focus` for a face).
 | `mswt_v2` | `mswt` | body | Mira, winter: cream ribbed hooded sweater dress, fleece hood and hem, brown raglan yoke with emblem, half-zip, chunky brown sneakers over socks | working |
 | `kvoss_v2` | `kvoss` | full | Kira Voss: pink high ponytail, black cropped hoodie with underboob and an IHS back print, black thong, black platform combat boots | working; back print needs `english text, ihs` |
 | `embk_v2` | `embk` | full | Ember Kael (Pyra-inspired): copper hair with a blonde streak, teal armoured bodysuit, single pauldron on her left shoulder, neon trim, armoured heeled boots | working; negate `(pauldrons:1.3)` so the plate stays single |
+| `sevenc_v1` | `sevenc` | full | 7C (the sheet says Mira Axiom): infiltration android, white short messy hair, orange eyes, black bodysuit with glowing orange seams, white armour with a single pauldron and a mechanical left arm, orb spine, high-heeled armoured boots | training 2026-09-12; round 1 pending |
 
 Superseded versions stay installed (`msw_v2`, `msbs_v1`, `kvoss_v1`, …) and are
 not worth rendering with.
@@ -60,7 +65,7 @@ the outfit's own colour words; the standard censor negatives
 (`(censored:1.4), mosaic censoring, bar censor, (heart censor:1.3), censor
 sticker, (pasties:1.4), (tape:1.3), sticker, emoji`) stay on every frame.
 
-**Full-character LoRAs** (`kvoss`, `embk`, `lcroft`, `mirasolen`): same
+**Full-character LoRAs** (`kvoss`, `embk`, `sevenc`, `lcroft`, `mirasolen`): same
 weights, but the ADetailer prompt carries the LoRA itself at 0.8 with the hair
 and eye words, denoise 0.4, same checkpoint as the composition.
 
