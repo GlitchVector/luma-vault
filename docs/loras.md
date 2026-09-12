@@ -47,6 +47,7 @@ exist as far as the pipeline is concerned.
 | `embk_v2` | `embk` | full | Ember Kael (Pyra-inspired): copper hair with a blonde streak, teal armoured bodysuit, single pauldron on her left shoulder, neon trim, armoured heeled boots | working; negate `(pauldrons:1.3)` so the plate stays single |
 | `sevenc_v2` | `sevenc` | full | 7C (the sheet says Mira Axiom): infiltration android, white short messy hair, orange eyes, black bodysuit with glowing orange seams, white armour with a single pauldron and a mechanical left arm, orb spine, high-heeled armoured boots | working; the arm holds its side from behind after the back views were weighted x30 in v2 |
 | `sevencb_v1` | `sevencb` | full | 7C, leotard outfit: black high-leg turtleneck leotard with side cutouts and straps, thigh strap and pouch, the same white mechanical left arm and pauldron, orb spine, heeled armoured ankle boots | round 1 done 2026-09-12 (32/42, rears mirror the arm), `sevencb_v2` training |
+| `sevencc_v1` | `sevencc` | body | 7C, third outfit (from the sheet named Kaia, trained as her outfit): open cropped leather jacket with emblem, black leotard with a cream chest panel and O-ring, harness, thigh pouch, long gloves with a mechanical left forearm, hip drapes, buckled heeled ankle boots. Worn under `sevenc_v2` for the face | queued 2026-09-12 behind `sevencb_v2` |
 
 Superseded versions stay installed (`msw_v2`, `msbs_v1`, `kvoss_v1`, …) and are
 not worth rendering with.
