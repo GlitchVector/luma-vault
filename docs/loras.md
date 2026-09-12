@@ -46,7 +46,7 @@ exist as far as the pipeline is concerned.
 | `kvoss_v2` | `kvoss` | full | Kira Voss: pink high ponytail, black cropped hoodie with underboob and an IHS back print, black thong, black platform combat boots | working; back print needs `english text, ihs` |
 | `embk_v2` | `embk` | full | Ember Kael (Pyra-inspired): copper hair with a blonde streak, teal armoured bodysuit, single pauldron on her left shoulder, neon trim, armoured heeled boots | working; negate `(pauldrons:1.3)` so the plate stays single |
 | `sevenc_v2` | `sevenc` | full | 7C (the sheet says Mira Axiom): infiltration android, white short messy hair, orange eyes, black bodysuit with glowing orange seams, white armour with a single pauldron and a mechanical left arm, orb spine, high-heeled armoured boots | working; the arm holds its side from behind after the back views were weighted x30 in v2 |
-| `sevencb_v1` | `sevencb` | full | 7C, leotard outfit: black high-leg turtleneck leotard with side cutouts and straps, thigh strap and pouch, the same white mechanical left arm and pauldron, orb spine, heeled armoured ankle boots | v1 proofs on-sheet 2026-09-12 incl. the rear; round 1 rendering |
+| `sevencb_v1` | `sevencb` | full | 7C, leotard outfit: black high-leg turtleneck leotard with side cutouts and straps, thigh strap and pouch, the same white mechanical left arm and pauldron, orb spine, heeled armoured ankle boots | round 1 done 2026-09-12 (32/42, rears mirror the arm), `sevencb_v2` training |
 
 Superseded versions stay installed (`msw_v2`, `msbs_v1`, `kvoss_v1`, …) and are
 not worth rendering with.
