@@ -32,6 +32,15 @@ export interface Fixture {
   readonly startUrl?: string
   /** Why this one may not be capturable on a given account. Printed by `fixtures`. */
   readonly blockedBy?: string
+  /**
+   * Files under `samples/` this fixture attaches, in order.
+   *
+   * Named rather than left to the operator because a capture is only comparable
+   * to the one before it if the inputs match, and "which two images did I use in
+   * September" is not a question anybody can answer three months later. The
+   * banner prints their absolute paths to paste into the file dialog.
+   */
+  readonly samples?: readonly string[]
 }
 
 /**
@@ -68,9 +77,10 @@ export const FIXTURES: readonly Fixture[] = [
     name: 'image-1',
     varies: 'one image — shows the media create/upload/attach shape',
     baseline: 'text-only',
+    samples: ['01-red.png'],
     steps: [
       'The editor opens on a fresh draft. Title it "harness image-1", same body text as text-only.',
-      'Attach exactly one image and wait until the editor shows it as ready.',
+      'Attach 01-red.png (path below) and wait until the editor shows it as ready.',
       'Save the draft.',
       ...COMMON_TAIL,
     ],
@@ -79,9 +89,10 @@ export const FIXTURES: readonly Fixture[] = [
     name: 'image-2',
     varies: 'a second image — ordering, which is post_metadata.image_order',
     baseline: 'image-1',
+    samples: ['01-red.png', '02-blue.png'],
     steps: [
       'The editor opens on a fresh draft. Title it "harness image-2", same body text.',
-      'Attach two images, in a deliberate order you can recognise later.',
+      'Attach 01-red.png, then 02-blue.png (paths below). Red first, blue second.',
       'Reorder them once. That drag is what writes post_metadata.image_order, and re-capturing it is how drift in the ordering field gets caught.',
       'Save the draft.',
       ...COMMON_TAIL,
@@ -109,10 +120,11 @@ export const FIXTURES: readonly Fixture[] = [
     name: 'teaser',
     varies: 'choosing the teaser still, rather than letting Patreon default to the first image',
     baseline: 'image-2',
+    samples: ['01-red.png', '02-blue.png'],
     steps: [
       'The editor opens on a fresh draft. Title it "harness teaser", same body text.',
-      'Attach the SAME two images as image-2, in the SAME order. Only the teaser should differ.',
-      'Now make the SECOND image the teaser — the still shown to people who cannot see the post.',
+      'Attach 01-red.png, then 02-blue.png — the same two as image-2, same order. Do not reorder them.',
+      'Now make the BLUE one the teaser: the still shown to people who cannot see the post.',
       'Look for a thumbnail / cover / preview control: on the image itself, in Preview post, or',
       '  further down the Settings sidebar past Add tags. It scrolls.',
       'The point is to change it away from the default. An unchanged default captures nothing.',

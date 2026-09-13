@@ -27,6 +27,15 @@ import { BODY_ID, COUNT_ID, installOverlay, PANEL_ID } from './overlay.ts'
  */
 const EDITOR_URL = 'https://www.patreon.com/posts/new'
 
+/**
+ * Fixed inputs, so two captures of the same fixture are actually comparable.
+ *
+ * The alternative was "attach any two images", and it failed the first time it
+ * mattered: re-capturing meant reproducing a choice made weeks earlier that
+ * nobody had written down.
+ */
+const SAMPLES_DIR = resolve(import.meta.dirname, '..', '..', 'samples')
+
 export interface CaptureOptions {
   readonly fixture: Fixture
   /** Root for `raw/`, `profile/` and the scrubbed output. */
@@ -136,6 +145,13 @@ function banner(fixture: Fixture): string {
     '  The checklist sits bottom-left; click its header to collapse it.',
     '',
     ...fixture.steps.map((step, at) => `   ${at + 1}. ${step}`),
+    ...(fixture.samples === undefined
+      ? []
+      : [
+          '',
+          '  Attach these, in this order — paste the path into the file dialog:',
+          ...fixture.samples.map((name) => `    ${resolve(SAMPLES_DIR, name)}`),
+        ]),
     '',
     '  Nothing here publishes. Everything stays a draft.',
   ].join('\n')
