@@ -117,22 +117,6 @@ export const FIXTURES: readonly Fixture[] = [
     ],
   },
   {
-    name: 'teaser',
-    varies: 'choosing the teaser still, rather than letting Patreon default to the first image',
-    baseline: 'image-2',
-    samples: ['01-red.png', '02-blue.png'],
-    steps: [
-      'The editor opens on a fresh draft. Title it "harness teaser", same body text.',
-      'Attach 01-red.png, then 02-blue.png — the same two as image-2, same order. Do not reorder them.',
-      'Now make the BLUE one the teaser: the still shown to people who cannot see the post.',
-      'Look on the image itself, in Preview post, or below Add tags in the Settings sidebar (it scrolls).',
-      'Change it away from the default. A default left alone captures nothing.',
-      'Save the draft.',
-      'No such control anywhere? Stop and say so — like the adult flag, that is itself the answer.',
-      ...COMMON_TAIL,
-    ],
-  },
-  {
     name: 'tier-locked',
     varies: 'access control — diff against text-only to find the tier fields',
     baseline: 'text-only',
@@ -144,6 +128,21 @@ export const FIXTURES: readonly Fixture[] = [
     ],
   },
 ]
+
+/**
+ * There is no `teaser` fixture either, and for the same reason as `adult-on`:
+ * the control is not there to be captured.
+ *
+ * Patreon's documentation says custom thumbnails and unblurring "are not
+ * available for Adult/18+ creators at this time". This campaign is adult, so
+ * the picker is withheld by policy — absent in both the free and paid states.
+ * Every capture shows `preview_asset_type: "default"` and
+ * `is_preview_blurred: true`, unchangeable. The preview is the first image.
+ *
+ * Two fixtures now written on the assumption that a field existed, both wrong.
+ * The lesson is cheap to state: check the product documentation before writing
+ * a fixture that sends somebody hunting through a UI for it.
+ */
 
 /**
  * There is no `adult-on` fixture, and looking for one cost an afternoon.

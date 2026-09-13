@@ -90,7 +90,7 @@ export function describePlan(post: ResolvedPost, plan: Plan): string {
     `title      ${post.title}`,
     `body       ${post.body.length} chars`,
     `media      ${post.media.length} (${post.media.filter((file) => file.kind === 'video').length} video)`,
-    `teaser     ${post.teaser?.name ?? '(none)'}`,
+    `preview    ${post.preview?.name ?? '(none)'} (always the first image — Patreon withholds the picker from adult creators)`,
     `access     ${post.access}${post.access === 'tier' ? ` -> ${post.tiers.join(', ')}` : ''}`,
     `adult      ${post.adult}`,
     `upload     ${megabytes(plan.bytesToUpload)} MB new, ${megabytes(plan.bytesReused)} MB already there`,

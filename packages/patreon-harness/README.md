@@ -43,9 +43,13 @@ in exactly one dimension say what each field *means*:
 | `image-1` | media create/upload/attach | `text-only` |
 | `image-2` | ordering — `post_metadata.image_order` | `image-1` |
 | `video` | transcoding states | `image-1` | **blocked**: needs video-upload eligibility on the account |
-| `teaser` | choosing the teaser still rather than defaulting to the first image | `image-2` |
 | `tier-locked` | access control fields | `text-only` |
 | `cleanup` | not a matrix row: deletes leftover `harness` drafts, capturing the delete call | — |
+
+There is **no `teaser` fixture**. Patreon's documentation says custom thumbnails
+and unblurring are "not available for Adult/18+ creators at this time", and this
+campaign is adult — so the picker is withheld by policy, in both the free and
+paid states. The preview is always the first image.
 
 There is **no `adult-on` fixture**, and that is a finding rather than a gap.
 Patreon has no per-post adult flag: `is_nsfw` is a *campaign* attribute and the

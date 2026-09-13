@@ -28,8 +28,29 @@ export const manifestSchema = z.object({
   body: z.string(),
   /** File names relative to the set directory. Order is the order they are attached in. */
   media: z.array(z.string().min(1)).min(1),
-  /** Which of `media` is the public teaser image. Optional; no teaser is a legitimate choice. */
-  teaser: z.string().min(1).optional(),
+  /**
+   * NOT a field. Kept in the schema only to reject it with an explanation,
+   * because the brief specified it and a set written against that brief will
+   * still carry it.
+   *
+   * Patreon's own documentation: custom thumbnails and unblurring "are not
+   * available for Adult/18+ creators at this time". This campaign is
+   * `is_nsfw: true`, so the picker is withheld by policy — it is absent from
+   * the editor in both the free and paid states, and every capture shows
+   * `preview_asset_type: "default"` with `is_preview_blurred: true` and no way
+   * to change either.
+   *
+   * Accepting it silently would be the bad outcome: a manifest that names a
+   * teaser, a run that ignores it, and a post whose preview is not the one the
+   * set asked for.
+   */
+  teaser: z
+    .never({
+      error:
+        'teaser cannot be set: Patreon withholds custom thumbnails from adult/18+ creators, ' +
+        'so the preview is always the first image. Remove the field and order `media` instead.',
+    })
+    .optional(),
   access: z.enum(['public', 'tier']),
   /**
    * Required and non-empty when `access` is `tier`.
@@ -59,7 +80,8 @@ export interface ResolvedPost {
   /** Body text, with a `body: "notes.md"` reference already read off disk. */
   readonly body: string
   readonly media: readonly ResolvedMedia[]
-  readonly teaser: ResolvedMedia | null
+  /** The preview Patreon will show. Always the first image — see `teaser` on the schema. */
+  readonly preview: ResolvedMedia | null
   readonly access: 'public' | 'tier'
   readonly tiers: readonly string[]
   readonly adult: boolean
@@ -174,16 +196,6 @@ export async function loadManifest(dir: string): Promise<ResolvedPost> {
     media.push({ name, path, bytes: info.size, modifiedMs: info.mtimeMs, kind })
   }
 
-  let teaser: ResolvedMedia | null = null
-  if (manifest.teaser !== undefined) {
-    teaser = media.find((item) => item.name === manifest.teaser) ?? null
-    if (teaser === null) {
-      problems.push(`teaser ${manifest.teaser} is not one of the media files`)
-    } else if (teaser.kind !== 'image') {
-      problems.push(`teaser ${manifest.teaser} is a video — the teaser is the still shown to non-patrons`)
-    }
-  }
-
   if (problems.length > 0) throw new ManifestError(manifestPath, problems)
 
   return {
@@ -192,7 +204,9 @@ export async function loadManifest(dir: string): Promise<ResolvedPost> {
     title: manifest.title,
     body,
     media,
-    teaser,
+    // Not a choice: the first image is what non-patrons see, and nothing on
+    // this account can change that.
+    preview: media[0] ?? null,
     access: manifest.access,
     tiers: manifest.tiers ?? [],
     adult: manifest.adult,

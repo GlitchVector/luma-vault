@@ -8,7 +8,7 @@ const post = (adult: boolean): ResolvedPost => ({
   title: 'Set',
   body: 'body',
   media: [],
-  teaser: null,
+  preview: null,
   access: 'public',
   tiers: [],
   adult,

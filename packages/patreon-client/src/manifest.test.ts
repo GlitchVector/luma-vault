@@ -66,11 +66,10 @@ describe('loadManifest', () => {
   })
 
   it('reports every problem at once, not the first one', async () => {
-    const problems = await problemsOf({ ...valid, media: ['01.png', 'missing.png', 'notes.txt'], teaser: 'nope.png' })
-    expect(problems).toHaveLength(3)
+    const problems = await problemsOf({ ...valid, media: ['01.png', 'missing.png', 'notes.txt'] })
+    expect(problems).toHaveLength(2)
     expect(problems.join('\n')).toMatch(/missing\.png/)
     expect(problems.join('\n')).toMatch(/notes\.txt/)
-    expect(problems.join('\n')).toMatch(/nope\.png/)
   })
 
   it('refuses a tier-locked post with no tiers', async () => {
@@ -85,11 +84,19 @@ describe('loadManifest', () => {
     expect((await problemsOf({ ...valid, media: ['../../secrets.png'] })).join('\n')).toMatch(/plain file name/)
   })
 
-  it('refuses a video as the teaser', async () => {
-    const problems = await problemsOf({ ...valid, media: ['01.png', 'clip.mp4'], teaser: 'clip.mp4' }, {
-      'clip.mp4': 'x',
+  // The brief specified a `teaser` field; Patreon withholds the control from
+  // adult creators, so a set still carrying one must be told, not ignored.
+  it('rejects a teaser field rather than silently dropping it', async () => {
+    expect((await problemsOf({ ...valid, teaser: '01.png' })).join('\n')).toMatch(/adult/)
+  })
+
+  it('treats the first image as the preview, since nothing can change it', async () => {
+    const dir = await set({
+      'post.json': JSON.stringify({ ...valid, media: ['01.png', '02.png'] }),
+      '01.png': 'x',
+      '02.png': 'y',
     })
-    expect(problems.join('\n')).toMatch(/still shown to non-patrons/)
+    expect((await loadManifest(dir)).preview?.name).toBe('01.png')
   })
 
   it('says so plainly when there is no post.json', async () => {

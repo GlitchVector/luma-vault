@@ -13,7 +13,7 @@ async function set(): Promise<ResolvedPost> {
     title: 'Set',
     body: '',
     media: [],
-    teaser: null,
+    preview: null,
     access: 'public',
     tiers: [],
     adult: true,
