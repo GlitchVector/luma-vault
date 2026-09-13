@@ -106,6 +106,23 @@ export const FIXTURES: readonly Fixture[] = [
     ],
   },
   {
+    name: 'teaser',
+    varies: 'choosing the teaser still, rather than letting Patreon default to the first image',
+    baseline: 'image-2',
+    steps: [
+      'The editor opens on a fresh draft. Title it "harness teaser", same body text.',
+      'Attach the SAME two images as image-2, in the SAME order. Only the teaser should differ.',
+      'Now make the SECOND image the teaser — the still shown to people who cannot see the post.',
+      'Look for a thumbnail / cover / preview control: on the image itself, in Preview post, or',
+      '  further down the Settings sidebar past Add tags. It scrolls.',
+      'The point is to change it away from the default. An unchanged default captures nothing.',
+      'Save the draft.',
+      'If you genuinely cannot find such a control, stop and say so — that is a real answer, and',
+      '  it means the teaser is not a per-post field, exactly like the adult flag was not.',
+      ...COMMON_TAIL,
+    ],
+  },
+  {
     name: 'tier-locked',
     varies: 'access control — diff against text-only to find the tier fields',
     baseline: 'text-only',

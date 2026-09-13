@@ -43,6 +43,7 @@ in exactly one dimension say what each field *means*:
 | `image-1` | media create/upload/attach | `text-only` |
 | `image-2` | ordering — `post_metadata.image_order` | `image-1` |
 | `video` | transcoding states | `image-1` | **blocked**: needs video-upload eligibility on the account |
+| `teaser` | choosing the teaser still rather than defaulting to the first image | `image-2` |
 | `tier-locked` | access control fields | `text-only` |
 | `cleanup` | not a matrix row: deletes leftover `harness` drafts, capturing the delete call | — |
 
