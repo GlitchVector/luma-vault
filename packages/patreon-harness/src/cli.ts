@@ -18,6 +18,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { captureLogin } from './auth.ts'
+import { probe } from './probe.ts'
 import { attachToRunningChrome } from './browser.ts'
 import { CLEANUP, FIXTURES, fixtureByName } from './capture/fixtures.ts'
 import { runCapture } from './capture/run.ts'
@@ -91,6 +92,7 @@ const usage = [
   '  generate --har <har> --map <m> rewrite endpoints.generated.ts from a capture',
   '  scrub <har>                    take the credentials out of a HAR',
   '  tiers                          list the campaign access rules a manifest can name',
+  '  probe                          does a plain Node request work, or is Chrome really needed?',
   '  post <set> [--dry-run]         the plan, then the draft (never published)',
   '  post --job <file>              the same, from a job the desktop app assembled',
   '',
@@ -109,6 +111,7 @@ const ACCEPTS: Record<string, readonly string[]> = {
   scrub: ['out'],
   post: ['dry-run', 'job'],
   tiers: [],
+  probe: ['url'],
 }
 
 /**
@@ -266,6 +269,34 @@ switch (command) {
     const leftovers = findSecrets(har)
     process.stdout.write(`wrote ${out} (${redactions} values redacted)\n`)
     for (const leftover of leftovers) process.stdout.write(`  STILL PRESENT: ${leftover}\n`)
+    break
+  }
+
+  case 'probe': {
+    const statePath = resolve(CAPTURE_DIR, 'storageState.json')
+    const url = option('url') ?? 'https://www.patreon.com/api/current_user'
+    process.stdout.write(`one GET to ${url}, from Node, with the cookies from ${statePath}\n\n`)
+    const result = await probe(statePath, url)
+    process.stdout.write(
+      [
+        `  status      ${result.status}`,
+        `  server      ${result.server ?? '(none)'}`,
+        `  json body   ${result.looksLikeJson}`,
+        `  challenged  ${result.challenged}`,
+        '',
+        `  ${result.bodyHead.split('\n').join(' ')}`,
+        '',
+      ].join('\n'),
+    )
+    if (result.looksLikeJson && result.status === 200) {
+      process.stdout.write('Node is enough. Chrome could be dropped from the posting path.\n')
+    } else if (result.status === 401) {
+      process.stdout.write('The stored session has expired. Run `pnpm patreon auth`, then probe again.\n')
+    } else if (result.challenged) {
+      process.stdout.write('Challenged, as the brief said. The page-evaluate design is doing real work.\n')
+    } else {
+      process.stdout.write('Neither clearly — read the body above before concluding.\n')
+    }
     break
   }
 
