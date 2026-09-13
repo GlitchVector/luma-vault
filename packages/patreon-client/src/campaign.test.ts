@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assertAdultMatchesCampaign, type Campaign } from './campaign.ts'
+import { accessRulesFor, assertAdultMatchesCampaign, type Campaign } from './campaign.ts'
 import type { ResolvedPost } from './manifest.ts'
 
 const post = (adult: boolean): ResolvedPost => ({
@@ -14,7 +14,41 @@ const post = (adult: boolean): ResolvedPost => ({
   adult,
 })
 
-const campaign = (isNsfw: boolean): Campaign => ({ id: '16736888', name: 'jebaz', isNsfw })
+const campaign = (isNsfw: boolean, accessRules: Campaign['accessRules'] = []): Campaign => ({
+  id: '16736888',
+  name: 'jebaz',
+  isNsfw,
+  accessRules,
+})
+
+const RULES = [
+  { id: '68432072', type: 'public' as const },
+  { id: '68475917', type: 'tier' as const },
+]
+
+describe('accessRulesFor', () => {
+  // Public is a rule with an id, not the absence of one, and the id is
+  // per-campaign — so it is looked up rather than written into the library.
+  it('resolves public to the campaign own public rule', () => {
+    expect(accessRulesFor(post(false), campaign(true, RULES))).toEqual(['68432072'])
+  })
+
+  it('passes tier ids through once it has checked they exist', () => {
+    const locked = { ...post(true), access: 'tier' as const, tiers: ['68475917'] }
+    expect(accessRulesFor(locked, campaign(true, RULES))).toEqual(['68475917'])
+  })
+
+  // A tier id from another campaign, or a stale one, would otherwise produce a
+  // post locked to a rule this page does not have.
+  it('refuses a tier id the campaign does not have, and says how to list them', () => {
+    const locked = { ...post(true), access: 'tier' as const, tiers: ['99999'] }
+    expect(() => accessRulesFor(locked, campaign(true, RULES))).toThrow(/patreon tiers/)
+  })
+
+  it('refuses a public post when the campaign has no public rule', () => {
+    expect(() => accessRulesFor(post(false), campaign(true, [RULES[1]!]))).toThrow(/no public access rule/)
+  })
+})
 
 describe('assertAdultMatchesCampaign', () => {
   // Patreon has no per-post adult flag, so `adult: true` cannot be sent — it can

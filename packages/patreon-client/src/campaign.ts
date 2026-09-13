@@ -19,15 +19,30 @@ import { CAMPAIGN_GET } from './endpoints.generated.ts'
 import type { ResolvedPost } from './manifest.ts'
 import type { Session } from './session.ts'
 
+/**
+ * One row of the campaign's access control.
+ *
+ * `public` is a rule like any other — not the absence of one — which is why the
+ * post PATCH always carries an `access_rules` relationship even for a post
+ * everybody can see. The `tier` rows are what a manifest's `tiers` names.
+ */
+export interface AccessRule {
+  readonly id: string
+  readonly type: 'public' | 'patrons' | 'non_member' | 'tier' | (string & {})
+}
+
 export interface Campaign {
   readonly id: string
   readonly name: string
   /** Whether the page as a whole is marked as adult. Every post inherits it. */
   readonly isNsfw: boolean
+  /** Every access rule on the page, so "public" can be resolved rather than hardcoded. */
+  readonly accessRules: readonly AccessRule[]
 }
 
 interface CampaignResponse {
   data?: { id?: string; attributes?: { name?: string; is_nsfw?: boolean } }
+  included?: { type?: string; id?: string; attributes?: { access_rule_type?: string } }[]
 }
 
 export async function readCampaign(session: Session, campaignId: string): Promise<Campaign> {
@@ -43,13 +58,51 @@ export async function readCampaign(session: Session, campaignId: string): Promis
     )
   }
   const attributes = result.json.data.attributes ?? {}
+  const accessRules: AccessRule[] = []
+  for (const entry of result.json.included ?? []) {
+    if (entry.type !== 'access-rule' || entry.id === undefined) continue
+    accessRules.push({ id: entry.id, type: entry.attributes?.access_rule_type ?? 'unknown' })
+  }
+
   return {
     id: result.json.data.id ?? campaignId,
     name: attributes.name ?? '(unnamed)',
     // Absent is not false. A response shape that changed under us must not read
     // as "this page is safe for work" — that is the direction that does damage.
     isNsfw: attributes.is_nsfw === true,
+    accessRules,
   }
+}
+
+/**
+ * The access-rule ids a post should carry, for the access a manifest asked for.
+ *
+ * Public is looked up rather than written down: the id is per-campaign, and a
+ * constant here would be one account's number baked into a shared library.
+ */
+export function accessRulesFor(post: ResolvedPost, campaign: Campaign): string[] {
+  if (post.access === 'public') {
+    const rule = campaign.accessRules.find((each) => each.type === 'public')
+    if (rule === undefined) {
+      throw new Error(
+        `campaign ${campaign.id} has no public access rule, so a public post cannot be expressed.
+` +
+          `It has: ${campaign.accessRules.map((each) => `${each.type}=${each.id}`).join(', ') || '(none)'}`,
+      )
+    }
+    return [rule.id]
+  }
+
+  const known = new Set(campaign.accessRules.map((each) => each.id))
+  const missing = post.tiers.filter((id) => !known.has(id))
+  if (missing.length > 0) {
+    throw new Error(
+      `${post.manifestPath}: tiers ${missing.join(', ')} are not access rules on campaign ${campaign.id}.
+` +
+        `Run \`pnpm patreon tiers\` to list the ids this page actually has.`,
+    )
+  }
+  return [...post.tiers]
 }
 
 /**
