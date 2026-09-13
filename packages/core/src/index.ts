@@ -191,3 +191,5 @@ export type {
   ShareStatus,
   SourceOrigin,
 } from './schemas.ts'
+export { actKeyOf, actLabelOf, mergeSetOrder } from './setorder.ts'
+export type { ActKey, SetMember } from './setorder.ts'
