@@ -17,7 +17,6 @@
 
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
-import { CAPTURED_FROM, describePlan, loadManifest, loadState, planRun, pruneState } from '@luma/patreon-client'
 import { captureLogin } from './auth.ts'
 import { CLEANUP, FIXTURES, fixtureByName } from './capture/fixtures.ts'
 import { runCapture } from './capture/run.ts'
@@ -240,6 +239,13 @@ switch (command) {
   }
 
   case 'post': {
+    // Imported here, not at the top of the file. `generate` rewrites a module
+    // this package would otherwise load on startup, so a client that does not
+    // currently compile — which is exactly the state `generate` exists to fix —
+    // would take the generator down with it.
+    const { CAPTURED_FROM, describePlan, loadManifest, loadState, planRun, pruneState } = await import(
+      '@luma/patreon-client'
+    )
     const dir = positionals[0]
     if (dir === undefined) fail('usage: patreon post <set-dir> [--dry-run]')
     const post = await loadManifest(fromCwd(dir))

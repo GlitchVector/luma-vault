@@ -34,6 +34,7 @@ export interface CsrfMapping {
 
 /** Constants the client declares. A mapping naming anything else is a typo, and is reported as one. */
 export const KNOWN_ENDPOINTS = [
+  'CAMPAIGN_GET',
   'MEDIA_CREATE',
   'MEDIA_GET',
   'POST_CREATE',

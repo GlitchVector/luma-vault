@@ -116,18 +116,21 @@ export const FIXTURES: readonly Fixture[] = [
       ...COMMON_TAIL,
     ],
   },
-  {
-    name: 'adult-on',
-    varies: 'the adult content flag — diff against text-only to find its field',
-    baseline: 'text-only',
-    steps: [
-      'The editor opens on a fresh draft. Title it "harness adult-on", same body text.',
-      'Turn the adult / mature content flag ON and nothing else.',
-      'Save the draft.',
-      ...COMMON_TAIL,
-    ],
-  },
 ]
+
+/**
+ * There is no `adult-on` fixture, and looking for one cost an afternoon.
+ *
+ * The matrix had one, on the assumption that a per-post adult flag existed to
+ * be found. It does not. `is_nsfw` is a **campaign** attribute — the post
+ * payload carries no adult, nsfw or mature field of any kind — so no amount of
+ * clicking in the post editor would ever have produced a diff, and the operator
+ * hunting the Settings sidebar for a toggle was hunting something that is not
+ * there.
+ *
+ * The manifest's `adult` is therefore checked against the campaign rather than
+ * sent with the post. See `campaign.ts` in the client.
+ */
 
 /**
  * Not a matrix row: it varies nothing and creates nothing.

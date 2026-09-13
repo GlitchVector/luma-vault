@@ -2,7 +2,7 @@
  * GENERATED FILE — do not hand-edit the values.
  *
  * Written by packages/harness generate from: image-1-2026-09-10T15-18-51-996Z.scrubbed.har, cleanup-2026-09-10T15-05-29-811Z.scrubbed.har, text-only-2026-09-10T15-09-53-417Z.scrubbed.har
- * At: 2026-09-10T15:31:22.815Z
+ * At: 2026-09-13T12:37:44.392Z
  *
  * Regenerate from a fresh capture rather than patching this by hand. A value
  * edited here is a value with no capture behind it, which is the failure mode
@@ -24,6 +24,12 @@ export interface CsrfTicket {
 }
 
 export const CSRF: CsrfTicket | null = {"path":"/REST/auth/CSRFTicket","field":"token","header":"x-csrf-signature"}
+
+export const CAMPAIGN_GET: Endpoint | null = {
+  method: "GET",
+  path: "/api/campaigns/{id}",
+  fixture: "image-1",
+}
 
 export const MEDIA_CREATE: Endpoint | null = {
   method: "POST",

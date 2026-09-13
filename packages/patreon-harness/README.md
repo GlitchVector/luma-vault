@@ -44,8 +44,13 @@ in exactly one dimension say what each field *means*:
 | `image-2` | ordering, array shape | `image-1` |
 | `video` | transcoding states | `image-1` | **blocked**: needs video-upload eligibility on the account |
 | `tier-locked` | access control fields | `text-only` |
-| `adult-on` | the content flag field | `text-only` |
 | `cleanup` | not a matrix row: deletes leftover `harness` drafts, capturing the delete call | — |
+
+There is **no `adult-on` fixture**, and that is a finding rather than a gap.
+Patreon has no per-post adult flag: `is_nsfw` is a *campaign* attribute and the
+post payload carries no adult, nsfw or mature field at all. No amount of
+clicking in the editor would have produced a diff. The manifest's `adult` is
+therefore checked against the campaign before a run, not sent with the post.
 
 **Opening the editor is what creates the draft.** The first capture showed
 `GET /posts/new` answering 302 to `/<page>/posts/<id>/edit`, with no POST

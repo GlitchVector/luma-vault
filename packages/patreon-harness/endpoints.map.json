@@ -6,6 +6,9 @@
 
   "POST_UPDATE": "PATCH www.patreon.com/api/posts/{id}",
 
+  "//CAMPAIGN_GET": "is_nsfw is a CAMPAIGN attribute — the post payload has no adult/nsfw/mature field at all. So the manifest's `adult` is checked against this, not sent.",
+  "CAMPAIGN_GET": "GET www.patreon.com/api/campaigns/{id}",
+
   "//POST_DELETE": "Delete goes through the bulk endpoint even for one post, and answers 201 with an async job (is_completed:false). Captured in `cleanup`.",
   "POST_DELETE": "POST www.patreon.com/api/posts/bulk/delete",
 

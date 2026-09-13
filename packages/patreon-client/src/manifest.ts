@@ -11,9 +11,16 @@ import { z } from 'zod'
 import { ManifestError } from './errors.ts'
 
 /**
- * `adult` is `.optional()`-free and has no `.default()`, on purpose. The
- * content is NSFW; a missing flag falling back to `false` is an account-level
- * problem, not a warning. Undefined must be a hard parse failure.
+ * `adult` is `.optional()`-free and has no `.default()`, on purpose. A missing
+ * flag falling back to `false` is an account-level problem, not a warning, so
+ * undefined must be a hard parse failure.
+ *
+ * What it turned out to *do* is not what the brief assumed. Patreon has no
+ * per-post adult flag — `is_nsfw` is a campaign attribute — so this is never
+ * sent anywhere. It is checked against the campaign before a run starts, and a
+ * set marked adult aimed at a page that is not refuses to post. See
+ * `campaign.ts`. That makes the field more useful than a payload value, not
+ * less: it guards the mistake that cannot be undone.
  */
 export const manifestSchema = z.object({
   title: z.string().min(1),

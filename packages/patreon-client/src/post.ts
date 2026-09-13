@@ -17,10 +17,7 @@
  *   - delete goes through the bulk endpoint even for one post, and returns an
  *     async job rather than doing the work inline.
  *
- * WHAT IS STILL MISSING: the update payload's own shape — which relationship
- * carries the attachments and in what order, and the two fields behind access
- * control and the adult flag. `tier-locked` has the first, `adult-on` the
- * second, and `adult-on` has not been captured yet.
+ * WHAT IS STILL MISSING: attachment order, and nothing else of substance.
  */
 
 import { POST_CREATE, POST_DELETE, POST_UPDATE } from './endpoints.generated.ts'
@@ -129,9 +126,9 @@ export function createDraft(_session: Session, _post: ResolvedPost): Promise<Dra
  *   - attachment *order*. Nothing order-shaped showed up in the image-2 diff,
  *     so it is either plain creation order or something that capture did not
  *     exercise. Worth one more capture that reorders and saves, deliberately.
- *   - the adult flag's field. `adult-on` has not been captured yet — it was
- *     blocked by this project's own checklist overlay covering the Settings
- *     sidebar, which is now fixed.
+ *   - nothing, for the adult flag. There is no per-post field: `is_nsfw` is a
+ *     campaign attribute, so the manifest's `adult` is a precondition checked
+ *     before a run rather than a value sent with the post. See `campaign.ts`.
  */
 export function updateDraft(
   _session: Session,
