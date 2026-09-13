@@ -47,7 +47,9 @@ export type MediaState = z.infer<typeof mediaStateSchema>
 export type RunState = z.infer<typeof stateSchema>
 
 export function statePath(post: ResolvedPost): string {
-  return resolve(post.dir, '.state.json')
+  // A job names its own, to keep the app from writing into a folder its own
+  // watcher is indexing. A hand-written set keeps it beside the pictures.
+  return post.stateFile ?? resolve(post.dir, '.state.json')
 }
 
 export function emptyState(): RunState {

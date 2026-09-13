@@ -92,6 +92,7 @@ const usage = [
   '  scrub <har>                    take the credentials out of a HAR',
   '  tiers                          list the campaign access rules a manifest can name',
   '  post <set> [--dry-run]         the plan, then the draft (never published)',
+  '  post --job <file>              the same, from a job the desktop app assembled',
   '',
   '  Everything ends in a draft. Nothing here publishes.',
   '',
@@ -106,7 +107,7 @@ const ACCEPTS: Record<string, readonly string[]> = {
   diff: ['out', 'volatile', 'host'],
   generate: ['har', 'map', 'out', 'host'],
   scrub: ['out'],
-  post: ['dry-run'],
+  post: ['dry-run', 'job'],
   tiers: [],
 }
 
@@ -289,11 +290,17 @@ switch (command) {
     // this package would otherwise load on startup, so a client that does not
     // currently compile — which is exactly the state `generate` exists to fix —
     // would take the generator down with it.
-    const { attach, CAPTURED_FROM, describePlan, loadManifest, loadState, planRun, pruneState, runPost } =
+    const { attach, CAPTURED_FROM, describePlan, loadJob, loadManifest, loadState, planRun, pruneState, runPost } =
       await import('@luma/patreon-client')
+    const job = option('job')
     const dir = positionals[0]
-    if (dir === undefined) fail('usage: patreon post <set-dir> [--dry-run]')
-    const post = await loadManifest(fromCwd(dir))
+    if (job === undefined && dir === undefined) {
+      fail('usage: patreon post <set-dir> [--dry-run]\n   or: patreon post --job <file>')
+    }
+    // Two front doors onto the same run: a set somebody wrote by hand, and a
+    // job the desktop app assembled from a selection. They converge before
+    // anything below this line can tell them apart.
+    const post = job === undefined ? await loadManifest(fromCwd(dir as string)) : await loadJob(fromCwd(job))
     const state = pruneState(await loadState(post), post)
     process.stdout.write(`${describePlan(post, planRun(post, state))}
 `)

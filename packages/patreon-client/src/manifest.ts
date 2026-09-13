@@ -85,6 +85,15 @@ export interface ResolvedPost {
   readonly access: 'public' | 'tier'
   readonly tiers: readonly string[]
   readonly adult: boolean
+  /**
+   * Where the resume state lives, when the caller chose.
+   *
+   * A hand-written set keeps it beside the pictures, which is where somebody
+   * looking for it would expect it. A job from the app names its own, because
+   * the pictures are inside a watched folder and the app must not write into
+   * one it is itself indexing.
+   */
+  readonly stateFile?: string
 }
 
 export interface ResolvedMedia {

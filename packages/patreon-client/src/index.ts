@@ -7,6 +7,8 @@
  */
 
 export { ApiError, ManifestError, NotCapturedError, SessionError } from './errors.ts'
+export { jobSchema, loadJob } from './job.ts'
+export type { Job } from './job.ts'
 export { kindOf, loadManifest, manifestSchema } from './manifest.ts'
 export type { Manifest, ResolvedMedia, ResolvedPost } from './manifest.ts'
 export { assertLoggedIn, attach, DEFAULT_LOGIN_PROBE } from './session.ts'
