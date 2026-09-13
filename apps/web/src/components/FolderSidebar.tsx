@@ -9,6 +9,16 @@ import {
 import { Button, cn } from '@luma/ui'
 import { MAX_TILE_SIZE, MIN_TILE_SIZE } from './MediaTile.tsx'
 
+/**
+ * The `--set` command that a LoRA training round queues under, and therefore
+ * the only thing that separates working material from a shoot. It is the first
+ * segment of `--set lora/<character>-r1/<stamp>`.
+ */
+export const LORA_COMMAND = 'lora'
+
+/** Which of the three lists the panel is showing. */
+export type Listing = 'characters' | 'sets' | 'lora'
+
 interface FolderSidebarProps {
   folders: Folder[]
   stats: LibraryStats | null
@@ -26,8 +36,8 @@ interface FolderSidebarProps {
    */
   sets: SetSummary[]
   /** Which list the panel is showing. Characters is the default. */
-  listing: 'characters' | 'sets'
-  onListing: (listing: 'characters' | 'sets') => void
+  listing: Listing
+  onListing: (listing: Listing) => void
   /** The run currently filtering the grid, if any. */
   selectedSet: string | null
   /** A set was clicked — or the same one again, which clears it. */
@@ -68,6 +78,15 @@ export function FolderSidebar({
   exclusions,
   onInclude,
 }: FolderSidebarProps) {
+  // Two audiences for the same record. A shoot is something to look at; a LoRA
+  // round is working material — forty near-identical candidates that exist to be
+  // judged once and then sit in the way. Mixed together the shoots drown, and
+  // the owner asked for the split. `lora` is not a guess: `--set` is parsed as
+  // <command>/<character>/<stamp>, and every training round is queued under
+  // `lora/…`, so the command *is* the flag.
+  const loraSets = sets.filter((set) => set.command === LORA_COMMAND)
+  const shootSets = sets.filter((set) => set.command !== LORA_COMMAND)
+
   return (
     <aside className="flex w-60 shrink-0 flex-col gap-3 border-r border-white/5 bg-zinc-950/60 p-3">
       <div className="flex items-center justify-between">
@@ -170,11 +189,18 @@ export function FolderSidebar({
               active={listing === 'characters'}
               onClick={() => onListing('characters')}
             />
-            {sets.length > 0 ? (
+            {shootSets.length > 0 ? (
               <SidebarTab
                 label="Sets"
                 active={listing === 'sets'}
                 onClick={() => onListing('sets')}
+              />
+            ) : null}
+            {loraSets.length > 0 ? (
+              <SidebarTab
+                label="LoRA"
+                active={listing === 'lora'}
+                onClick={() => onListing('lora')}
               />
             ) : null}
           </div>
@@ -203,7 +229,11 @@ export function FolderSidebar({
               ))}
             </ul>
           ) : (
-            <SetList sets={sets} selected={selectedSet} onSet={onSet} />
+            <SetList
+              sets={listing === 'lora' ? loraSets : shootSets}
+              selected={selectedSet}
+              onSet={onSet}
+            />
           )}
         </div>
       ) : null}

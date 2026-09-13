@@ -9,7 +9,7 @@ import {
 } from '@luma/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FilterBar } from '#/components/FilterBar.tsx'
-import { FolderSidebar } from '#/components/FolderSidebar.tsx'
+import { FolderSidebar, type Listing } from '#/components/FolderSidebar.tsx'
 import { Lightbox } from '#/components/Lightbox.tsx'
 import { MediaGrid } from '#/components/MediaGrid.tsx'
 import { DEFAULT_TILE_SIZE, MAX_TILE_SIZE, MIN_TILE_SIZE } from '#/components/MediaTile.tsx'
@@ -134,7 +134,7 @@ export function App() {
    * session that opens on a set list you chose a week ago has to be understood
    * before it can be used.
    */
-  const [listing, setListing] = useState<'characters' | 'sets'>('characters')
+  const [listing, setListing] = useState<Listing>('characters')
   const [openId, setOpenId] = useState<number | null>(null)
 
   // The lightbox as a history entry, so the phone's back gesture closes it
