@@ -85,8 +85,7 @@ export function accessRulesFor(post: ResolvedPost, campaign: Campaign): string[]
     const rule = campaign.accessRules.find((each) => each.type === 'public')
     if (rule === undefined) {
       throw new Error(
-        `campaign ${campaign.id} has no public access rule, so a public post cannot be expressed.
-` +
+        `campaign ${campaign.id} has no public access rule, so a public post cannot be expressed.\n` +
           `It has: ${campaign.accessRules.map((each) => `${each.type}=${each.id}`).join(', ') || '(none)'}`,
       )
     }
@@ -97,9 +96,8 @@ export function accessRulesFor(post: ResolvedPost, campaign: Campaign): string[]
   const missing = post.tiers.filter((id) => !known.has(id))
   if (missing.length > 0) {
     throw new Error(
-      `${post.manifestPath}: tiers ${missing.join(', ')} are not access rules on campaign ${campaign.id}.
-` +
-        `Run \`pnpm patreon tiers\` to list the ids this page actually has.`,
+      `${post.manifestPath}: tiers ${missing.join(', ')} are not access rules on campaign ${campaign.id}.\n` +
+        'Run `pnpm patreon tiers` to list the ids this page actually has.',
     )
   }
   return [...post.tiers]

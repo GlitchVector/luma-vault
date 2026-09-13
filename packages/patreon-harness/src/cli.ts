@@ -18,6 +18,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { captureLogin } from './auth.ts'
+import { attachToRunningChrome } from './browser.ts'
 import { CLEANUP, FIXTURES, fixtureByName } from './capture/fixtures.ts'
 import { runCapture } from './capture/run.ts'
 import { diffHars, renderReport } from './diff.ts'
@@ -61,6 +62,19 @@ function fromCwd(path: string): string {
   return resolve(process.env['INIT_CWD'] ?? process.cwd(), path)
 }
 
+/** The campaign is configuration, not something the API hands back. See `.env.example`. */
+function requireCampaignId(): string {
+  const id = process.env['PATREON_CAMPAIGN_ID']
+  if (id === undefined || id.trim() === '') {
+    fail(
+      'PATREON_CAMPAIGN_ID is not set.\n' +
+        'It is needed for the delete payload and for the campaign-level adult check, and it is not\n' +
+        'discoverable from the API. Put it in .env — see .env.example.',
+    )
+  }
+  return id.trim()
+}
+
 function fail(message: string): never {
   process.stderr.write(`${message}\n`)
   process.exit(1)
@@ -76,7 +90,8 @@ const usage = [
   '  diff <a.har> <b.har>           what one changed dimension did to the protocol',
   '  generate --har <har> --map <m> rewrite endpoints.generated.ts from a capture',
   '  scrub <har>                    take the credentials out of a HAR',
-  '  post <set> [--dry-run]         the plan, and eventually the draft',
+  '  tiers                          list the campaign access rules a manifest can name',
+  '  post <set> [--dry-run]         the plan, then the draft (never published)',
   '',
   '  Everything ends in a draft. Nothing here publishes.',
   '',
@@ -92,6 +107,7 @@ const ACCEPTS: Record<string, readonly string[]> = {
   generate: ['har', 'map', 'out', 'host'],
   scrub: ['out'],
   post: ['dry-run'],
+  tiers: [],
 }
 
 /**
@@ -121,6 +137,20 @@ if (argv.includes('--help') || argv.includes('-h') || argv.length === 0) {
   process.exit(0)
 }
 refuseUnknownFlags()
+
+/**
+ * A manifest problem is not a crash, and a stack trace is not an explanation.
+ *
+ * The client's errors are written for a person reading a terminal — which is
+ * wasted if Node prints them with twenty lines of frames on top. Anything
+ * unrecognised still gets the full trace, because that one is a bug.
+ */
+const KNOWN = new Set(['ManifestError', 'SessionError', 'NotCapturedError', 'BodyError', 'ApiError'])
+process.on('uncaughtException', (error: Error) => {
+  if (!KNOWN.has(error.name)) throw error
+  process.stderr.write(`\n${error.message}\n`)
+  process.exit(1)
+})
 
 switch (command) {
   case 'fixtures':
@@ -238,19 +268,35 @@ switch (command) {
     break
   }
 
+  case 'tiers': {
+    const { attach, readCampaign } = await import('@luma/patreon-client')
+    const campaignId = requireCampaignId()
+    const browser = await attachToRunningChrome(process.env['PATREON_CDP'] ?? 'http://localhost:9222')
+    const session = await attach(browser)
+    const campaign = await readCampaign(session, campaignId)
+    process.stdout.write(`${campaign.name} (${campaign.id})${campaign.isNsfw ? ' — adult' : ''}\n\n`)
+    for (const rule of campaign.accessRules) {
+      process.stdout.write(`  ${rule.id.padEnd(12)} ${rule.type}\n`)
+    }
+    process.stdout.write(
+      '\nPut the tier ids into a manifest\'s "tiers". "public" is implied by access: "public".\n',
+    )
+    break
+  }
+
   case 'post': {
     // Imported here, not at the top of the file. `generate` rewrites a module
     // this package would otherwise load on startup, so a client that does not
     // currently compile — which is exactly the state `generate` exists to fix —
     // would take the generator down with it.
-    const { CAPTURED_FROM, describePlan, loadManifest, loadState, planRun, pruneState } = await import(
-      '@luma/patreon-client'
-    )
+    const { attach, CAPTURED_FROM, describePlan, loadManifest, loadState, planRun, pruneState, runPost } =
+      await import('@luma/patreon-client')
     const dir = positionals[0]
     if (dir === undefined) fail('usage: patreon post <set-dir> [--dry-run]')
     const post = await loadManifest(fromCwd(dir))
     const state = pruneState(await loadState(post), post)
-    process.stdout.write(`${describePlan(post, planRun(post, state))}\n`)
+    process.stdout.write(`${describePlan(post, planRun(post, state))}
+`)
 
     if (flag('dry-run')) break
     // Refuse before opening a browser rather than after: there is nothing to
@@ -262,7 +308,24 @@ switch (command) {
           'then: patreon generate --har <har> --map endpoints.map.json',
       )
     }
-    fail('\nthe run path lands here once the captures exist. Nothing was sent.')
+
+    const campaignId = requireCampaignId()
+    const browser = await attachToRunningChrome(process.env['PATREON_CDP'] ?? 'http://localhost:9222')
+    const session = await attach(browser)
+    const result = await runPost({
+      session,
+      post,
+      campaignId,
+      onProgress: (line) => process.stdout.write(`  ${line}
+`),
+    })
+
+    process.stdout.write(
+      `\nDRAFT: ${result.draft.url}\n` +
+        `  ${result.uploaded} uploaded, ${result.reused} reused\n\n` +
+        'Open it, check it, and publish it yourself. This tool does not.\n',
+    )
+    break
   }
 
   default:

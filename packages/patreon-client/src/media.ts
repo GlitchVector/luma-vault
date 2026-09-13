@@ -20,8 +20,8 @@
 
 import { createReadStream } from 'node:fs'
 import { Readable } from 'node:stream'
+import { call, callOrThrow, endpointPath, required } from './call.ts'
 import { MEDIA_CREATE, MEDIA_GET } from './endpoints.generated.ts'
-import { NotCapturedError } from './errors.ts'
 import type { ResolvedMedia } from './manifest.ts'
 import type { Session } from './session.ts'
 
@@ -98,16 +98,68 @@ export async function pollUntil<T>(
 /**
  * Step 1 — ask Patreon for a media record and an upload target.
  *
- * TODO(capture): the request body and the response shape. Fixture `image-1`
- * gives both; `video` confirms they do not differ by kind.
+ * The record names its post at creation: `owner_id` is the draft's id, and that
+ * is what attaches it. There is no later "attach" call — the post PATCH only
+ * flips `post_type` and lists the order.
+ *
+ * The upload target that comes back is an S3 presigned POST:
+ * `upload_url` plus `upload_parameters`, the latter being the signed policy
+ * fields. Their order in the object is the order they must be written, which is
+ * why `multipartBody` takes an array of pairs rather than a record.
  */
-export function createMedia(_session: Session, _file: ResolvedMedia): Promise<{ id: string; target: UploadTarget }> {
-  if (MEDIA_CREATE === null) {
-    return Promise.reject(new NotCapturedError('the media-create endpoint and its request body', 'image-1'))
+export async function createMedia(
+  session: Session,
+  postId: string,
+  file: ResolvedMedia,
+): Promise<{ id: string; target: UploadTarget }> {
+  const endpoint = required(MEDIA_CREATE, 'the media-create endpoint', 'image-1')
+  const result = await callOrThrow<MediaResponse>(session, {
+    method: endpoint.method,
+    path: endpoint.path,
+    body: {
+      data: {
+        type: 'media',
+        attributes: {
+          state: 'pending_upload',
+          file_name: file.name,
+          size_bytes: file.bytes,
+          owner_id: postId,
+          owner_type: 'post',
+          owner_relationship: 'main',
+          media_type: file.kind,
+        },
+      },
+    },
+  })
+
+  const data = result.json?.data
+  const attributes = data?.attributes
+  if (data?.id === undefined || attributes?.upload_url === undefined || attributes.upload_parameters === undefined) {
+    throw new Error(`media-create for ${file.name} answered ${result.status} without an upload target`)
   }
-  return Promise.reject(
-    new NotCapturedError('the shape of the media-create response (media id + upload target)', 'image-1'),
-  )
+
+  return {
+    id: data.id,
+    target: {
+      url: attributes.upload_url,
+      // S3 presigned uploads are a POST of a multipart form; AWS requires the
+      // file part to be named `file` and to come last.
+      method: 'POST',
+      fields: Object.entries(attributes.upload_parameters).map(([name, value]) => [name, String(value)] as const),
+      fileField: 'file',
+    },
+  }
+}
+
+interface MediaResponse {
+  data?: {
+    id?: string
+    attributes?: {
+      state?: string
+      upload_url?: string
+      upload_parameters?: Record<string, unknown>
+    }
+  }
 }
 
 /**
@@ -140,29 +192,32 @@ export async function uploadBytes(target: UploadTarget, file: ResolvedMedia): Pr
 /**
  * Step 3 — wait for usable, not for uploaded.
  *
- * BLOCKED, and it matters. The `video` fixture is the one that would show the
- * processing states, and this account does not have video-upload eligibility
- * yet — so the one case where "uploaded" and "usable" genuinely differ cannot
- * be captured at all right now.
+ * `attributes.state` goes `pending_upload` -> `ready`. An image is very often
+ * ready on the first ask, which is why `pollUntil` asks immediately rather than
+ * sleeping first.
  *
- * That is an argument for keeping the poll, not for dropping it. An image
- * capture showing a media record that is ready the instant it is created proves
- * nothing about video, and the failure mode it hides — a draft with a silently
- * broken attachment — is exactly the one nobody notices until a patron does.
- * So this stays a poll against whatever state field the `image-1` capture
- * reveals, and the ready semantics get confirmed the day video is available.
- *
- * TODO(capture): the state field and its ready value, from `image-1`; the
- * transcoding states themselves, from `video`, when the account can run it.
+ * A video would be the interesting case and cannot be captured on this account
+ * — Patreon gates video uploads on eligibility — so the transcoding states in
+ * between are unknown. That is an argument for keeping the poll rather than
+ * short-circuiting it for images: anything that is not `ready` is treated as
+ * not ready, whatever it turns out to be called.
  */
 export function waitUntilReady(session: Session, mediaId: string, options: PollOptions = {}): Promise<string> {
   return pollUntil(() => readMediaState(session, mediaId), options)
 }
 
 /** Returns the media id once the record reports ready, `null` while it is still working. */
-function readMediaState(_session: Session, _mediaId: string): Promise<string | null> {
-  if (MEDIA_GET === null) return Promise.reject(new NotCapturedError('the media-read endpoint', 'video'))
-  return Promise.reject(new NotCapturedError('the media state field and its ready value', 'video'))
+async function readMediaState(session: Session, mediaId: string): Promise<string | null> {
+  const endpoint = required(MEDIA_GET, 'the media-read endpoint', 'image-1')
+  const result = await call<MediaResponse>(session, {
+    method: endpoint.method,
+    path: endpointPath(endpoint, { id: mediaId }),
+  })
+  // A 404 immediately after creation is "not there yet", not "gone". Anything
+  // else non-2xx is worth failing on rather than polling for half an hour.
+  if (result.status === 404) return null
+  if (!result.ok) throw new Error(`media ${mediaId} read answered ${result.status}: ${result.text.slice(0, 300)}`)
+  return result.json?.data?.attributes?.state === 'ready' ? mediaId : null
 }
 
 /** A presigned PUT: the file is the whole body. */

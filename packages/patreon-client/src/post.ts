@@ -6,23 +6,14 @@
  * timidity, it is the only version of this that is safe to run unattended
  * against a live creator account.
  *
- * Hand-written, like `media.ts`.
- *
- * WHAT THE CAPTURES SETTLED:
- *
- *   - the body format, which was the one genuinely open question. The editor
- *     sends HTML *and* a ProseMirror tree, both buildable from a markdown body.
- *     See `bodyStrategy` — the DOM-typing fallback is not needed.
- *   - there is no create call; a navigation mints the draft. See `createDraft`.
- *   - delete goes through the bulk endpoint even for one post, and returns an
- *     async job rather than doing the work inline.
- *
- * WHAT IS STILL MISSING: nothing of substance. Every field this needs has been
- * captured; what remains is writing the calls, not discovering them.
+ * Hand-written, like `media.ts`. Every payload below is transcribed from a
+ * capture rather than reconstructed from what JSON:API usually looks like.
  */
 
+import { renderBody } from './body.ts'
+import { accessRulesFor, type Campaign } from './campaign.ts'
+import { call, callOrThrow, endpointPath, required } from './call.ts'
 import { POST_CREATE, POST_DELETE, POST_UPDATE } from './endpoints.generated.ts'
-import { NotCapturedError } from './errors.ts'
 import type { ResolvedPost } from './manifest.ts'
 import type { Session } from './session.ts'
 
@@ -31,7 +22,7 @@ export interface Draft {
   readonly url: string
 }
 
-/** How the body text gets into the post. Decided by the `text-only` capture. */
+/** How the body text gets into the post. Settled by the `text-only` capture. */
 export type BodyStrategy =
   /** We can build the editor's document ourselves and PATCH it. */
   | { readonly kind: 'api' }
@@ -41,37 +32,13 @@ export type BodyStrategy =
   | { readonly kind: 'undecided' }
 
 /**
- * ANSWERED by the `text-only` and `image-1` captures, and the answer is the
- * good one: the API path works, so no DOM typing is needed.
- *
- * The editor PATCHes two fields side by side:
- *
- *   data.attributes.content
- *     HTML. Literally
- *     `<p>paragraph one</p><p>paragraph <strong>two</strong> and a
- *      <a href="https://github.com/">link</a></p>`.
- *
- *   data.attributes.content_json_string
- *     the same document as a ProseMirror/TipTap tree, JSON-encoded *into a
- *     string*:
- *     `{"type":"doc","content":[{"type":"paragraph","content":[
- *       {"type":"text","text":"paragraph one"}]}]}`
- *
- * Both are sent, and the response echoes a `content_json_string` consistent
- * with what went in. A markdown body of paragraphs, bold and links maps onto
- * that tree directly, so `renderBody` can emit both and the hybrid fallback —
- * typing into the real editor — is not needed.
- *
- * TODO: build the pair from `ResolvedPost.body`. The shape is known; what is
- * not yet pinned is which marks the editor accepts beyond strong and link.
+ * The API path works, so the DOM-typing fallback the brief hedged on is not
+ * needed. See `body.ts` for the two forms the editor sends and why each shape
+ * is what it is.
  */
 export const bodyStrategy: BodyStrategy = { kind: 'api' }
 
-/**
- * `data.attributes.post_type`, which the editor changes as attachments appear:
- * `text_only` for a body-only post, `image_file` once an image is attached.
- * Sent on the same PATCH as the attachments, so it is part of step 5.
- */
+/** `data.attributes.post_type`, which the editor changes as attachments appear. */
 export type PostType = 'text_only' | 'image_file'
 
 /**
@@ -88,92 +55,153 @@ export interface PostMetadata {
 }
 
 /**
- * Step 4 — create the draft.
+ * Attributes the editor sends on every autosave and never varies.
  *
- * WHAT THE FIRST CAPTURE SHOWED, and it is not what this file assumed:
- * **there is no create call.** The `text-only` capture contains no POST that
- * makes a post. The draft is minted by *navigating* to the editor —
- * `GET /posts/new` answers 302, and the redirect lands on
- * `/<page>/posts/<id>/edit`, which is the first place the new post id exists.
- * Everything after that is `PATCH /api/posts/{id}`, six of them, autosaving.
+ * Compared across the public and the tier-locked captures: identical in both,
+ * `is_paid` included — which is the surprise. Access is expressed *entirely*
+ * through the `access_rules` relationship, and `is_paid` stays false in the
+ * request even for a post locked to a tier; the server derives it.
  *
- * Two consequences worth writing down:
- *   - `POST_CREATE` may never be filled in. The create is a navigation, so this
- *     function will drive `session.page` and read the id back out of the URL
- *     rather than call anything.
- *   - opening the editor is itself a side effect. Every capture leaves a draft
- *     behind whether or not anything was typed.
- *
- * Not implemented on one capture. A second `text-only` run confirms the
- * redirect shape is stable and not a one-off experiment bucket — that is cheap,
- * and being wrong here means minting drafts on a live account.
- *
- * TODO(capture): confirm the 302 target shape, then implement by navigation.
+ * They are sent because the editor sends them. Whether a PATCH carrying only
+ * the fields we care about would merge, or would blank the rest, is not
+ * something any capture answers — and finding out experimentally costs a real
+ * post on a real page.
  */
-export function createDraft(_session: Session, _post: ResolvedPost): Promise<Draft> {
-  return Promise.reject(
-    new NotCapturedError(
-      POST_CREATE === null
-        ? 'the create step — the first capture says it is a navigation to /posts/new, not an API call, and that needs one more capture to confirm'
-        : 'the create step',
-      'text-only',
-    ),
-  )
+const CONSTANT_ATTRIBUTES = {
+  allow_preview_in_rss: true,
+  comments_write_access_level: 'all',
+  is_header_media_free: null,
+  is_monetized: false,
+  is_paid: false,
+  is_preview_blurred: true,
+  new_post_email_type: 'full_post',
+  paywall_display: 'post_layout',
+  preview_asset_type: 'default',
+  tags: { publish: false },
+  thumbnail_position: null,
+} as const
+
+/**
+ * Query string the editor puts on every post PATCH.
+ *
+ * Carried verbatim. `include=[]` with `json-api-use-default-includes=false` is
+ * what keeps the response from dragging half the campaign along with it.
+ */
+const POST_QUERY = {
+  'json-api-version': '1.0',
+  'json-api-use-default-includes': 'false',
+  include: '[]',
 }
 
 /**
- * Step 5 — set access control, and confirm the attachments.
+ * Step 4 — create the draft.
  *
- * "Attach" turns out to be the wrong verb. The `image-2` capture shows a second
- * image costing exactly one more `POST /api/media` and one more poll, with *no*
- * new relationship on the post — because a media record names its post at
- * creation time via `owner_id` / `owner_type: 'post'` / `owner_relationship:
- * 'main'`. Uploading it to the right owner is what attaches it. The post-side
- * PATCH only flips `post_type` from `text_only` to `image_file`.
+ * There is no create call. The draft is minted by *navigating* to the editor:
+ * `GET /posts/new` answers 302 and the redirect lands on
+ * `/<page>/posts/<id>/edit`, which is the first place the new post id exists.
+ * Everything after that is `PATCH /api/posts/{id}`.
  *
- * Access control is `data.relationships.access_rules.data`, an array of
- * `{ type: 'access-rule', id }` with a matching `included` entry. Public and
- * paid are two different access-rule ids — "public" is a rule, not the absence
- * of one. See the note on `tiers` in `manifest.ts`.
- *
- * ATTACHMENT ORDER is `data.attributes.post_metadata.image_order`: a flat array
- * of media id strings, in display order. The `image-2` capture walks it —
- * `["a"]`, then `["a","b"]` as the second image lands, then `["b","a"]` when the
- * operator dragged them. It is not a JSON:API relationship and not creation
- * order; it is this one field, and the manifest's `media` array maps onto it
- * directly.
- *
- * `post_metadata` is sent whole rather than merged — every capture shows
- * `{"platform":{},"image_order":[…]}` — so `platform` has to be carried along
- * or it is dropped.
- *
- * The adult flag is not here and never was: `is_nsfw` is a campaign attribute,
- * so the manifest's `adult` is a precondition checked before a run rather than
- * a value sent with the post. See `campaign.ts`.
+ * So this drives the page rather than calling anything, and reads the id back
+ * out of the URL. Note the side effect: opening the editor creates a draft
+ * whether or not anything after it succeeds. That is what `.state.json` is for,
+ * and what `patreon capture cleanup` sweeps up.
  */
-export function updateDraft(
-  _session: Session,
-  _draft: Draft,
-  _post: ResolvedPost,
-  _mediaIds: readonly string[],
+export async function createDraft(session: Session): Promise<Draft> {
+  const endpoint = required(POST_CREATE, 'the create step', 'text-only')
+  const target = new URL(endpoint.path, session.origin).toString()
+  await session.page.goto(target, { waitUntil: 'domcontentloaded' })
+
+  const landed = session.page.url()
+  const id = /\/posts\/(\d+)(?:\/|$)/.exec(landed)?.[1]
+  if (id === undefined) {
+    throw new Error(
+      `opening ${target} did not land on a post editor — ended up at ${landed}.\n` +
+        'If that is the login wall, the session has expired: sign in again in that Chrome window.',
+    )
+  }
+  return { id, url: landed }
+}
+
+/**
+ * Step 5 — the body, the ordering, the access control, in one PATCH.
+ *
+ * "Attach" is the wrong verb and there is no attach call: a media record names
+ * its post at creation via `owner_id`, so uploading it to the right owner is
+ * what attaches it. All this does on that front is state the order.
+ */
+export async function updateDraft(
+  session: Session,
+  draft: Draft,
+  post: ResolvedPost,
+  campaign: Campaign,
+  mediaIds: readonly string[],
 ): Promise<void> {
-  if (POST_UPDATE === null) return Promise.reject(new NotCapturedError('the post-update endpoint', 'text-only'))
-  return Promise.reject(
-    new NotCapturedError('the post-update payload: attachments, tiers and the adult flag', 'public-vs-tier'),
-  )
+  const endpoint = required(POST_UPDATE, 'the post-update endpoint', 'text-only')
+  const body = renderBody(post.body)
+  const rules = accessRulesFor(post, campaign)
+  const metadata: PostMetadata =
+    mediaIds.length === 0 ? { platform: {} } : { platform: {}, image_order: [...mediaIds] }
+  const postType: PostType = mediaIds.length === 0 ? 'text_only' : 'image_file'
+
+  await callOrThrow(session, {
+    method: endpoint.method,
+    path: endpointPath(endpoint, { id: draft.id }),
+    query: POST_QUERY,
+    body: {
+      data: {
+        type: 'post',
+        attributes: {
+          ...CONSTANT_ATTRIBUTES,
+          title: post.title,
+          content: body.content,
+          content_json_string: body.contentJsonString,
+          post_type: postType,
+          post_metadata: metadata,
+        },
+        relationships: {
+          // Both spellings, because the editor sends both: a singular object and
+          // a plural array naming the same rules. Which one the server actually
+          // reads is not something a capture can show, so neither is dropped.
+          'access-rule': { data: { type: 'access-rule', id: rules[0] } },
+          access_rules: { data: rules.map((id) => ({ id, type: 'access-rule' })) },
+          user_defined_tags: { data: [] },
+          collections: { data: [] },
+        },
+      },
+      included: rules.map((id) => ({ type: 'access-rule', id, attributes: {} })),
+      // The editor's own words. The post stays a draft either way, and
+      // `send_notifications` only takes effect when a human publishes.
+      meta: { auto_save: true, send_notifications: true },
+    },
+  })
 }
 
 /**
  * Delete a draft.
  *
- * Exists for fixture teardown and for nothing else. Every fixture creates a
- * real draft; a fixture that does not clean up leaves litter on a real creator
- * page. Drafts cannot reach patrons even if this fails, which is why the whole
- * capture matrix is draft-only.
+ * Goes through the bulk endpoint even for a single post, and answers 201 with
+ * an async job rather than doing the work inline — `is_completed: false` and a
+ * job id. Nothing here waits for it: this is teardown, and a draft that lingers
+ * a few seconds more harms nobody.
+ *
+ * `post_ids` are numbers in the capture while `campaign_id` is a string.
+ * Transcribed rather than tidied, because that asymmetry is the server's.
  */
-export function deleteDraft(_session: Session, _draft: Draft): Promise<void> {
-  if (POST_DELETE === null) return Promise.reject(new NotCapturedError('the post-delete endpoint', 'text-only'))
-  return Promise.reject(new NotCapturedError('the post-delete request', 'text-only'))
+export async function deleteDraft(session: Session, draft: Draft, campaignId: string): Promise<void> {
+  const endpoint = required(POST_DELETE, 'the post-delete endpoint', 'cleanup')
+  const result = await call(session, {
+    method: endpoint.method,
+    path: endpoint.path,
+    body: {
+      data: {
+        type: 'bulk-post-operation',
+        attributes: { filters: { post_ids: [Number(draft.id)], campaign_id: campaignId } },
+      },
+    },
+  })
+  if (!result.ok) {
+    throw new Error(`could not delete draft ${draft.id} (${result.status}): ${result.text.slice(0, 300)}`)
+  }
 }
 
 /**
