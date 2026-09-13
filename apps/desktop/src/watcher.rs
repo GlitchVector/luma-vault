@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use notify::{RecursiveMode, Watcher};
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
+use notify::RecursiveMode;
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use tauri::AppHandle;
 
 use crate::db::{Db, ScannedFile};
@@ -25,7 +25,7 @@ use crate::thumbs;
 const DEBOUNCE: Duration = Duration::from_secs(3);
 
 pub struct FolderWatcher {
-    debouncer: Mutex<Option<Debouncer<notify::RecommendedWatcher, FileIdMap>>>,
+    debouncer: Mutex<Option<Debouncer<notify::RecommendedWatcher, RecommendedCache>>>,
     watched: Mutex<HashSet<PathBuf>>,
 }
 
@@ -87,7 +87,7 @@ impl FolderWatcher {
         let Some(debouncer) = guard.as_mut() else {
             return;
         };
-        if let Err(error) = debouncer.watcher().watch(path, RecursiveMode::Recursive) {
+        if let Err(error) = debouncer.watch(path, RecursiveMode::Recursive) {
             eprintln!("[luma] cannot watch {}: {error}", path.display());
             return;
         }
@@ -100,7 +100,7 @@ impl FolderWatcher {
     pub fn unwatch(&self, path: &Path) {
         let mut guard = self.debouncer.lock().expect("watcher mutex");
         if let Some(debouncer) = guard.as_mut() {
-            let _ = debouncer.watcher().unwatch(path);
+            let _ = debouncer.unwatch(path);
         }
         self.watched.lock().expect("watched mutex").remove(path);
     }

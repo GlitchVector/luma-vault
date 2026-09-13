@@ -27,7 +27,8 @@
     "migrate-prompt": "node --env-file-if-exists=.env --experimental-strip-types scripts/migrate-prompt.mjs",
     "open-in-forge": "node --env-file-if-exists=.env --experimental-strip-types scripts/open-in-forge.mjs",
     "queue": "node --env-file-if-exists=.env --experimental-strip-types scripts/render-queue.mjs",
-    "patreon": "pnpm --filter @luma/patreon-harness patreon"
+    "patreon": "pnpm --filter @luma/patreon-harness patreon",
+    "stress-watcher": "node scripts/stress-watcher.mjs"
   },
   "devDependencies": {
     "oxlint": "^1.19.0",
