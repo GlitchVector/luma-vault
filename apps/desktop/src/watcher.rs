@@ -27,13 +27,26 @@ const DEBOUNCE: Duration = Duration::from_secs(3);
 pub struct FolderWatcher {
     debouncer: Mutex<Option<Debouncer<notify::RecommendedWatcher, RecommendedCache>>>,
     watched: Mutex<HashSet<PathBuf>>,
+    /// Paths the app wrote itself, to be skipped once when they come back.
+    ///
+    /// Reordering a set rewrites its manifest, and without this the app's own
+    /// write returns as an event, is read back, and re-records a set that is
+    /// already correct in the index. Pointless work at best; at worst it is
+    /// more traffic through the path that three heap-corruption exits happened
+    /// in. Cleared on use, so a later genuine edit by a render script is still
+    /// seen.
+    self_written: SelfWritten,
 }
+
+/// Shared with the event handler, which is a free function rather than a method.
+type SelfWritten = Arc<Mutex<HashSet<PathBuf>>>;
 
 impl FolderWatcher {
     pub fn new() -> Self {
         Self {
             debouncer: Mutex::new(None),
             watched: Mutex::new(HashSet::new()),
+            self_written: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -47,6 +60,7 @@ impl FolderWatcher {
         let handler_db = Arc::clone(&db);
         let handler_pipeline = Arc::clone(&pipeline);
         let handler_app = app.clone();
+        let handler_self_written = Arc::clone(&self.self_written);
 
         let debouncer = new_debouncer(
             DEBOUNCE,
@@ -57,7 +71,7 @@ impl FolderWatcher {
                         .into_iter()
                         .flat_map(|event| event.event.paths.clone())
                         .collect();
-                    handle_changes(&handler_db, &handler_pipeline, &handler_app, paths);
+                    handle_changes(&handler_db, &handler_pipeline, &handler_app, &handler_self_written, paths);
                 }
                 Err(errors) => {
                     for error in errors {
@@ -97,6 +111,14 @@ impl FolderWatcher {
             .insert(path.to_path_buf());
     }
 
+    /// Announce a write the app is about to make, so its echo is ignored once.
+    pub fn expect_self_write(&self, path: &Path) {
+        self.self_written
+            .lock()
+            .expect("self-written mutex")
+            .insert(path.to_path_buf());
+    }
+
     pub fn unwatch(&self, path: &Path) {
         let mut guard = self.debouncer.lock().expect("watcher mutex");
         if let Some(debouncer) = guard.as_mut() {
@@ -130,6 +152,7 @@ fn handle_changes(
     db: &Arc<Db>,
     pipeline: &Arc<Pipeline>,
     app: &AppHandle,
+    self_written: &SelfWritten,
     paths: HashSet<PathBuf>,
 ) {
     let folders = db.folder_paths().unwrap_or_default();
@@ -182,6 +205,18 @@ fn handle_changes(
             // through here, and without this the set appeared on the next full
             // rescan and not before.
             if crate::sets::is_manifest(&path) {
+                // Our own write coming back. The index already has the change —
+                // reading it again would re-record a set that is already right,
+                // and would put more traffic through the path three
+                // heap-corruption exits happened in. Removed as it is answered,
+                // so a later edit by a render script is still picked up.
+                if self_written
+                    .lock()
+                    .expect("self-written mutex")
+                    .remove(&path)
+                {
+                    continue;
+                }
                 manifests.push(path);
                 continue;
             }

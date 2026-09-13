@@ -185,6 +185,54 @@ pub fn library_sets(
         .map_err(stringify)
 }
 
+/// Put a set's pictures in a new order, everywhere.
+///
+/// Order is what a set *is* — the stage-by-stage progression of a photostory is
+/// carried by nothing else — so a reorder has to reach the manifest, not just
+/// the index. The manifest is the record; an index-only change would be undone
+/// by the next rescan.
+///
+/// Index first, then the file. That way the grid reorders the instant the drag
+/// ends, and nothing downstream waits on the watcher noticing a file the app
+/// itself wrote. The write is atomic and announced, so the watcher skips its
+/// echo — see `sets::write_manifest` for why a rename rather than a truncate.
+///
+/// A set whose manifest has gone is reordered in the index and reported as
+/// such, rather than refused: the pictures are still there, and so is the point
+/// of the drag.
+pub fn reorder_set(state: &AppState, run: String, paths: Vec<String>) -> Result<usize, String> {
+    let moved = state.db.reorder_set(&run, &paths).map_err(stringify)?;
+
+    let Some(folder) = state.db.set_folder(&run).map_err(stringify)? else {
+        return Ok(moved);
+    };
+    let manifest_path = Path::new(&folder)
+        .join(crate::sets::MANIFEST_DIR)
+        .join(format!("{run}.json"));
+
+    let Ok((manifest, _)) = crate::sets::read_manifest(&manifest_path) else {
+        // Nothing to rewrite. The index still holds the new order.
+        return Ok(moved);
+    };
+
+    // The manifest names files, the index names paths.
+    let names: Vec<String> = paths
+        .iter()
+        .filter_map(|path| {
+            Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
+        .collect();
+
+    let reordered = crate::sets::reorder_members(&manifest, &names);
+    state.watcher.expect_self_write(&manifest_path);
+    crate::sets::write_manifest(&manifest_path, &reordered)?;
+
+    Ok(moved)
+}
+
 /// What an img2img was made from, found perceptually and walked back to the
 /// picture that started the lineage.
 ///
@@ -1103,6 +1151,7 @@ pub async fn dispatch(
         "library_stats" => ok(library_stats(state)?),
         "set_stars" => ok(set_stars(state, arg(args, "id")?, arg(args, "stars")?)?),
         "set_stars_many" => ok(set_stars_many(state, arg(args, "ids")?, arg(args, "stars")?)?),
+        "reorder_set" => ok(reorder_set(state, arg(args, "run")?, arg(args, "paths")?)?),
         "import_image_browser_db" => ok(import_image_browser_db(state, arg(args, "path")?)?),
         "retry_failed" => ok(retry_failed(app, state, arg(args, "folderId")?)?),
         "reveal_item" => ok(reveal_item(app, arg(args, "path")?)?),

@@ -351,6 +351,15 @@ async fn deviantart_send(
 }
 
 #[tauri::command(async)]
+async fn reorder_set(
+    state: State<'_, AppState>,
+    run: String,
+    paths: Vec<String>,
+) -> Result<usize, String> {
+    api::reorder_set(&state, run, paths)
+}
+
+#[tauri::command(async)]
 async fn deviantart_mark(
     state: State<'_, AppState>,
     ids: Vec<i64>,
@@ -850,6 +859,7 @@ pub fn run() {
             deviantart_disconnect,
             deviantart_galleries,
             deviantart_send,
+            reorder_set,
             deviantart_mark,
             set_rating_override,
             remote_status,
