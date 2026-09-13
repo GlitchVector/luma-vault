@@ -33,3 +33,6 @@ apps/desktop/gen/
 # keeping from a capture is endpoints.map.json and the generated file.
 packages/patreon-harness/captures/
 **/.state.json
+
+# Throwaway set for the first real Patreon draft.
+scratch-patreon-test/
