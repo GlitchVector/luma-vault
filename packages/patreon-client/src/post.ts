@@ -17,7 +17,8 @@
  *   - delete goes through the bulk endpoint even for one post, and returns an
  *     async job rather than doing the work inline.
  *
- * WHAT IS STILL MISSING: attachment order, and nothing else of substance.
+ * WHAT IS STILL MISSING: nothing of substance. Every field this needs has been
+ * captured; what remains is writing the calls, not discovering them.
  */
 
 import { POST_CREATE, POST_DELETE, POST_UPDATE } from './endpoints.generated.ts'
@@ -74,6 +75,19 @@ export const bodyStrategy: BodyStrategy = { kind: 'api' }
 export type PostType = 'text_only' | 'image_file'
 
 /**
+ * `data.attributes.post_metadata`, sent whole on every update.
+ *
+ * `image_order` is the attachment order — media ids as strings, in display
+ * order. `platform` is always present and always empty in these captures; it is
+ * carried rather than understood, because dropping a field the editor always
+ * sends is a change we have no evidence is safe.
+ */
+export interface PostMetadata {
+  readonly platform: Record<string, never>
+  readonly image_order?: readonly string[]
+}
+
+/**
  * Step 4 — create the draft.
  *
  * WHAT THE FIRST CAPTURE SHOWED, and it is not what this file assumed:
@@ -122,13 +136,20 @@ export function createDraft(_session: Session, _post: ResolvedPost): Promise<Dra
  * paid are two different access-rule ids — "public" is a rule, not the absence
  * of one. See the note on `tiers` in `manifest.ts`.
  *
- * STILL OPEN:
- *   - attachment *order*. Nothing order-shaped showed up in the image-2 diff,
- *     so it is either plain creation order or something that capture did not
- *     exercise. Worth one more capture that reorders and saves, deliberately.
- *   - nothing, for the adult flag. There is no per-post field: `is_nsfw` is a
- *     campaign attribute, so the manifest's `adult` is a precondition checked
- *     before a run rather than a value sent with the post. See `campaign.ts`.
+ * ATTACHMENT ORDER is `data.attributes.post_metadata.image_order`: a flat array
+ * of media id strings, in display order. The `image-2` capture walks it —
+ * `["a"]`, then `["a","b"]` as the second image lands, then `["b","a"]` when the
+ * operator dragged them. It is not a JSON:API relationship and not creation
+ * order; it is this one field, and the manifest's `media` array maps onto it
+ * directly.
+ *
+ * `post_metadata` is sent whole rather than merged — every capture shows
+ * `{"platform":{},"image_order":[…]}` — so `platform` has to be carried along
+ * or it is dropped.
+ *
+ * The adult flag is not here and never was: `is_nsfw` is a campaign attribute,
+ * so the manifest's `adult` is a precondition checked before a run rather than
+ * a value sent with the post. See `campaign.ts`.
  */
 export function updateDraft(
   _session: Session,

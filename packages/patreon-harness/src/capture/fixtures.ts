@@ -77,12 +77,12 @@ export const FIXTURES: readonly Fixture[] = [
   },
   {
     name: 'image-2',
-    varies: 'a second image — shows whether attachment order is an array and where',
+    varies: 'a second image — ordering, which is post_metadata.image_order',
     baseline: 'image-1',
     steps: [
       'The editor opens on a fresh draft. Title it "harness image-2", same body text.',
       'Attach two images, in a deliberate order you can recognise later.',
-      'Reorder them once, so the reorder call is in the capture too.',
+      'Reorder them once. That drag is what writes post_metadata.image_order, and re-capturing it is how drift in the ordering field gets caught.',
       'Save the draft.',
       ...COMMON_TAIL,
     ],
