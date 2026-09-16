@@ -13,21 +13,25 @@ is a ritual with one answer.
 and `.claude/shot-tags.md` and follow them exactly, with these differences and
 nothing else:
 
-- **Both `AskUserQuestion` calls are skipped.** The camera set is the entire
-  table — all sixteen — plus the legs shot. The **character sheet is not
-  included**: it is the one entry that argues with `1girl, solo` and cannot be
-  steered per panel, so it stays behind `/shot`'s explicit yes. Someone who
-  wants it asks for it there.
-- **Leg length is the one question it still asks** (user 2026-09-10: every
-  command asks it). One `AskUserQuestion`, single-select: `(long legs:1.2)` —
-  the block's default · `(long legs:1.5)` · `(long legs:1.8)` · `(long legs:2)`.
-  The answer replaces the body chunk's leg tag on every frame that shows hips,
-  and a boost above 1.2 re-weights the framing rungs as described under *Leg
-  length* in `.claude/shot-tags.md`. The frames carry ` legs <n>` in their
-  shot label so a 1.2 board and a 2 board can sit in one set.
-- **Sizes are detected, never asked** — exactly as `/shot` already does. The
-  set keeps the input's figure, and the seven bracket shots are where it
-  varies.
+- **Only the camera-set question is skipped.** The camera set is the entire
+  table — all sixteen — plus groups E, F and G. **Everything else is asked,
+  and nothing is derived** (user 2026-09-15: "the command has several
+  questions, they should all be questioned and you should derive nothing").
+  Two `AskUserQuestion` calls before anything renders:
+  1. **The figure**, `/photostory`'s four ladders — thickness, breasts, hips
+     and thighs, rear ass — with "none, the LoRA's / block's own" as the
+     first option on each axis. A "none" axis stays unnamed on every frame
+     and the brackets leave it alone.
+  2. **Waist · leg length · the legs shot (yes/no) · the character sheet
+     (yes/no) · the setting.** Leg length is `(long legs:1.2)` · `1.5` ·
+     `1.8` · `2` as in `.claude/shot-tags.md`; the setting offers a plain
+     ground first and two or three scenes. The character sheet still argues
+     with `1girl, solo`, so it is asked rather than assumed.
+  The answers are the frozen body block and setting for all 51 frames; the
+  frames carry ` legs <n>` in their shot label so two boards can share a set.
+- **Sizes are answered, not detected.** The old rule read the block and kept
+  its figure; a LoRA-driven board has no block, and a detected rung is a
+  derivation the user did not make.
 - **Say the arithmetic before starting.** Ten singles, seven brackets of two,
   the breast close-up's wardrobe flip, group E's sixteen, group F's four and
   group G's six: **51 renders, roughly 30 minutes warm**. Scale is the reason this command was invoked, but announced rather

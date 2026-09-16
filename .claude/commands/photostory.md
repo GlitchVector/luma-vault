@@ -860,6 +860,15 @@ turns the *head*; a front frame stays rear-on until the positive asserts
 one in cheeky shorts needed both halves on every front frame. Wire it into the
 frame helper rather than per frame.
 
+**A trained undressed state must survive the rear frames.** The render script
+strips `topless, breasts out, nipples` from every `from behind` prompt, because
+on a tag-driven character those words turn her back around. On a LoRA whose
+undressed states are *trained* (Ari) the word is the caption: strip it and the
+rear topless frame comes back dressed in the outfit, the only back view in its
+data. Pass `--keep-facing` on every frame of such a set; the framing is still
+weighted, only the hide list is skipped. Measured 2026-09-16 on Ari's stage 2
+rear cowboy and the second bridge frame.
+
 ### Five things measured on the first real run
 
 **Position names are the thin end of the vocabulary; their components are the
