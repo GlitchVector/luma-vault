@@ -110,6 +110,12 @@ async function tauri<T>(command: string, args?: Record<string, unknown>): Promis
  * `forge_select_checkpoint` is deliberately *not* here: it is an HTTP call
  * rather than an address, and letting the peer make it means the peer reaching
  * its own loopback, which no firewall is going to argue with.
+ *
+ * `patreon_post` is not here either, though it spawns a process: the rows the
+ * ids name, the Node client and the Patreon cookie jar all live with the
+ * library, so a post started from the iPad has to run on the host — the same
+ * as `deviantart_send`. Only the progress lines are lost over HTTP; the
+ * summary still comes back.
  */
 const LOCAL_ONLY = new Set([
   'remote_status',
@@ -122,8 +128,6 @@ const LOCAL_ONLY = new Set([
   'reveal_item',
   'forge_url',
   'set_forge_url',
-  // Spawns the Node client on this machine, with this machine's cookie jar.
-  'patreon_post',
 ])
 
 // ---------------------------------------------------------------------------

@@ -1257,6 +1257,10 @@ pub async fn dispatch(
         "deviantart_connect" => ok(deviantart_connect(app, state).await?),
         "deviantart_disconnect" => ok(deviantart_disconnect(state)?),
         "deviantart_galleries" => ok(deviantart_galleries(state).await?),
+        // Runs where the library is: that machine has the rows the ids name,
+        // the repo with the Node client, and the cookie jar. A browser on the
+        // iPad has none of those, and neither would a desktop peer.
+        "patreon_post" => ok(patreon_post(app, state, arg(args, "request")?).await?),
         "deviantart_send" => ok(deviantart_send(
             app,
             state,
