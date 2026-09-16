@@ -1,29 +1,25 @@
 /**
- * Every control-plane call goes through here, and every one of them runs
- * *inside the authenticated page*.
+ * Every control-plane call goes through here.
  *
- * Patreon sits behind Cloudflare. A Node fetch/axios client has a different TLS
- * and HTTP/2 fingerprint from Chrome and gets challenged even with correct
- * cookies and headers. The fix is not an impersonation library — it is to stop
- * being a second client at all and issue the call from the page that is already
- * trusted: real Chrome fingerprint, real cookies, same origin so anti-CSRF
- * passes.
+ * *How* it reaches Patreon is `transport.ts`'s business, and that answer
+ * changed on 2026-09-16: a plain Node request carrying a saved cookie jar is
+ * enough. The whole client had been built on the brief's untested claim that
+ * Cloudflare would challenge anything that was not really Chrome. It does not,
+ * for this account, so Chrome is no longer required to post.
  *
- * `page.request` looks like it would do, and does not: it shares the cookie jar
- * but uses Node's network stack, so it is fingerprintable exactly like axios.
- * `page.evaluate` for all of it.
+ * What stays true either way is the anti-CSRF dance. A write needs a token from
+ * `/REST/auth/CSRFTicket` in an `x-csrf-signature` header — there is no csrf
+ * cookie to mirror, which is what an earlier version of this file assumed.
  *
- * The one exception is the binary upload leg, which targets a storage host with
- * a presigned URL and is normally not behind the same protection — see
- * `media.ts`, which streams it from Node so a 400MB video is not marshalled
- * through the CDP bridge as a byte array.
+ * The binary upload leg does not come through here at all. It targets a storage
+ * host with a presigned URL and streams from Node — see `media.ts`.
  */
 
 import { ApiError, NotCapturedError } from './errors.ts'
 import { CSRF, type CsrfTicket, type Endpoint } from './endpoints.generated.ts'
-import type { PageLike, Session } from './session.ts'
+import type { Session } from './session.ts'
 
-/** JSON:API. The public API speaks it, so the internal one almost certainly does — but the generator confirms it from the capture. */
+/** JSON:API — confirmed from the captures, not assumed from the public API. */
 export const JSON_API = 'application/vnd.api+json'
 
 export interface CallSpec {
@@ -33,8 +29,10 @@ export interface CallSpec {
   readonly query?: Readonly<Record<string, string>>
   readonly body?: unknown
   readonly headers?: Readonly<Record<string, string>>
-  /** Where to get the anti-CSRF token; fetched in the page, not here. Defaults to the captured one. */
+  /** Where to get the anti-CSRF token. Defaults to the captured one; `null` to skip. */
   readonly csrf?: CsrfTicket | null
+  /** Do not follow a 3xx. The create step reads the redirect target for the post id. */
+  readonly manualRedirect?: boolean
 }
 
 export interface CallResult<T = unknown> {
@@ -46,13 +44,26 @@ export interface CallResult<T = unknown> {
   readonly json: T | null
 }
 
-/** What crosses into the page. Must be plain data: it is structured-cloned. */
-interface Wire {
-  url: string
-  method: string
-  bodyText: string | null
-  headers: Record<string, string>
-  csrf: CsrfTicket | null
+/**
+ * Fetch an anti-CSRF token.
+ *
+ * Fetched per write rather than cached. One extra GET against maybe a dozen
+ * calls in a run is nothing next to a stale token failing a PATCH halfway
+ * through a post that is already half-built — and the token does rotate.
+ */
+async function csrfToken(session: Session, ticket: CsrfTicket): Promise<string | null> {
+  const response = await session.transport.send({
+    url: new URL(ticket.path, session.origin).toString(),
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    bodyText: null,
+  })
+  try {
+    const value = (JSON.parse(response.text) as Record<string, unknown>)[ticket.field]
+    return typeof value === 'string' ? value : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -63,19 +74,28 @@ export async function call<T = unknown>(session: Session, spec: CallSpec): Promi
   const url = new URL(spec.path, session.origin)
   for (const [key, value] of Object.entries(spec.query ?? {})) url.searchParams.set(key, value)
 
-  const wire: Wire = {
-    url: url.toString(),
-    method: spec.method,
-    bodyText: spec.body === undefined ? null : JSON.stringify(spec.body),
-    headers: {
-      accept: JSON_API,
-      ...(spec.body === undefined ? {} : { 'content-type': JSON_API }),
-      ...spec.headers,
-    },
-    csrf: spec.csrf === undefined ? CSRF : spec.csrf,
+  const headers: Record<string, string> = {
+    accept: JSON_API,
+    ...(spec.body === undefined ? {} : { 'content-type': JSON_API }),
+    ...spec.headers,
   }
 
-  const raw = await evaluateFetch(session.page, wire)
+  const ticket = spec.csrf === undefined ? CSRF : spec.csrf
+  // Only writes need it, and asking for one on every GET would double a run's
+  // request count for nothing.
+  if (ticket !== null && spec.method !== 'GET') {
+    const token = await csrfToken(session, ticket)
+    if (token !== null) headers[ticket.header] = token
+  }
+
+  const raw = await session.transport.send({
+    url: url.toString(),
+    method: spec.method,
+    headers,
+    bodyText: spec.body === undefined ? null : JSON.stringify(spec.body),
+    ...(spec.manualRedirect === true ? { manualRedirect: true } : {}),
+  })
+
   return {
     status: raw.status,
     ok: raw.status >= 200 && raw.status < 300,
@@ -120,68 +140,4 @@ function parseJson<T>(text: string): T | null {
   } catch {
     return null
   }
-}
-
-/**
- * The bridge. Everything the page needs travels in `wire`, because the function
- * below is serialised to source and evaluated in a context where this module
- * does not exist — a reference to anything in this file's scope is a
- * ReferenceError in Chrome, not a compile error here.
- */
-function evaluateFetch(
-  page: PageLike,
-  wire: Wire,
-): Promise<{ status: number; headers: Record<string, string>; text: string }> {
-  return page.evaluate(async (spec: Wire) => {
-    // Runs in the page. The module has no DOM lib, so the two globals used are
-    // reached through a local shape rather than by importing lib.dom.
-    const inPage = globalThis as unknown as {
-      fetch: (
-        url: string,
-        init: {
-          method: string
-          credentials: string
-          headers: Record<string, string>
-          body?: string
-        },
-      ) => Promise<{
-        status: number
-        headers: { forEach(visit: (value: string, key: string) => void): void }
-        text(): Promise<string>
-      }>
-    }
-
-    const headers: Record<string, string> = { ...spec.headers }
-    const csrf = spec.csrf
-    if (csrf !== null) {
-      // Fetched here rather than passed in: the token rotates, and one that
-      // crossed the bridge a second ago may already be the previous one.
-      //
-      // One extra GET per control-plane call, and that is a deliberate trade.
-      // A whole run makes on the order of ten of these, so the volume is
-      // nothing next to a class of bug where a stale token fails a PATCH
-      // halfway through a post that is already half-built.
-      const ticket = await inPage.fetch(csrf.path, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { accept: 'application/json' },
-      })
-      const token = (JSON.parse(await ticket.text()) as Record<string, unknown>)[csrf.field]
-      if (typeof token === 'string') headers[csrf.header] = token
-    }
-
-    const response = await inPage.fetch(spec.url, {
-      method: spec.method,
-      // Same-origin call from the logged-in page: this is the whole trick.
-      credentials: 'include',
-      headers,
-      ...(spec.bodyText === null ? {} : { body: spec.bodyText }),
-    })
-
-    const out: Record<string, string> = {}
-    response.headers.forEach((value, key) => {
-      out[key] = value
-    })
-    return { status: response.status, headers: out, text: await response.text() }
-  }, wire)
 }

@@ -19,7 +19,6 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { captureLogin } from './auth.ts'
 import { probe } from './probe.ts'
-import { attachToRunningChrome } from './browser.ts'
 import { CLEANUP, FIXTURES, fixtureByName } from './capture/fixtures.ts'
 import { runCapture } from './capture/run.ts'
 import { diffHars, renderReport } from './diff.ts'
@@ -301,10 +300,9 @@ switch (command) {
   }
 
   case 'tiers': {
-    const { attach, readCampaign } = await import('@luma/patreon-client')
+    const { fromCookies, readCampaign } = await import('@luma/patreon-client')
     const campaignId = requireCampaignId()
-    const browser = await attachToRunningChrome(process.env['PATREON_CDP'] ?? 'http://localhost:9222')
-    const session = await attach(browser)
+    const session = await fromCookies(resolve(CAPTURE_DIR, 'storageState.json'))
     const campaign = await readCampaign(session, campaignId)
     process.stdout.write(`${campaign.name} (${campaign.id})${campaign.isNsfw ? ' — adult' : ''}\n\n`)
     for (const rule of campaign.accessRules) {
@@ -321,7 +319,7 @@ switch (command) {
     // this package would otherwise load on startup, so a client that does not
     // currently compile — which is exactly the state `generate` exists to fix —
     // would take the generator down with it.
-    const { attach, CAPTURED_FROM, describePlan, loadJob, loadManifest, loadState, planRun, pruneState, runPost } =
+    const { fromCookies, CAPTURED_FROM, describePlan, loadJob, loadManifest, loadState, planRun, pruneState, runPost } =
       await import('@luma/patreon-client')
     const job = option('job')
     const dir = positionals[0]
@@ -348,8 +346,10 @@ switch (command) {
     }
 
     const campaignId = requireCampaignId()
-    const browser = await attachToRunningChrome(process.env['PATREON_CDP'] ?? 'http://localhost:9222')
-    const session = await attach(browser)
+    // No browser. The probe showed a plain Node request gets through, so the
+    // desktop app will not have to ask anyone to start Chrome with a debugging
+    // port. `transport.ts` keeps the page path as the fallback.
+    const session = await fromCookies(resolve(CAPTURE_DIR, 'storageState.json'))
     const result = await runPost({
       session,
       post,

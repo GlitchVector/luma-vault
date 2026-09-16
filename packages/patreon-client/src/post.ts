@@ -101,25 +101,36 @@ const POST_QUERY = {
  * `/<page>/posts/<id>/edit`, which is the first place the new post id exists.
  * Everything after that is `PATCH /api/posts/{id}`.
  *
- * So this drives the page rather than calling anything, and reads the id back
- * out of the URL. Note the side effect: opening the editor creates a draft
- * whether or not anything after it succeeds. That is what `.state.json` is for,
- * and what `patreon capture cleanup` sweeps up.
+ * From Node that is a plain GET with redirects off: the `Location` header *is*
+ * the answer, and following it would mean fetching the whole editor page and
+ * hunting the id in a megabyte of HTML.
+ *
+ * Note the side effect: asking for `/posts/new` creates a draft whether or not
+ * anything after it succeeds. That is what `.state.json` is for, and what
+ * `patreon capture cleanup` sweeps up.
  */
 export async function createDraft(session: Session): Promise<Draft> {
   const endpoint = required(POST_CREATE, 'the create step', 'text-only')
-  const target = new URL(endpoint.path, session.origin).toString()
-  await session.page.goto(target, { waitUntil: 'domcontentloaded' })
+  // `redirect: 'manual'` on purpose: the 302's Location *is* the answer. Left
+  // to follow it, this would fetch the whole editor page and then have to find
+  // the id in a megabyte of HTML.
+  const result = await call(session, {
+    method: 'GET',
+    path: endpoint.path,
+    headers: { accept: 'text/html' },
+    manualRedirect: true,
+  })
 
-  const landed = session.page.url()
-  const id = /\/posts\/(\d+)(?:\/|$)/.exec(landed)?.[1]
+  const landed = result.headers['location'] ?? ''
+  const id = /\/posts\/(\d+)(?:\/|$|\?)/.exec(landed)?.[1]
   if (id === undefined) {
     throw new Error(
-      `opening ${target} did not land on a post editor — ended up at ${landed}.\n` +
-        'If that is the login wall, the session has expired: sign in again in that Chrome window.',
+      `${endpoint.path} did not redirect to a post editor (${result.status}, location: ${landed || '(none)'}).
+` +
+        'If that is a login wall the session has expired: run `pnpm patreon auth`.',
     )
   }
-  return { id, url: landed }
+  return { id, url: new URL(landed, session.origin).toString() }
 }
 
 /**
