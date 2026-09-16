@@ -625,6 +625,54 @@ pub struct DeviantArtSummary {
 }
 
 // ---------------------------------------------------------------------------
+// Patreon
+// ---------------------------------------------------------------------------
+
+/// What the panel asks for. Ids, never paths: the webview does not name a file
+/// for the backend to read, and the order of `ids` is the order of the post.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PatreonRequest {
+    pub ids: Vec<i64>,
+    pub title: String,
+    /// Markdown: paragraphs, bold, links. See the client's `body.ts`.
+    pub body: String,
+    /// Access-rule ids for a tier-locked post. Empty means public.
+    #[serde(default)]
+    pub tiers: Vec<String>,
+    /// Stated, never defaulted — the client checks it against the campaign.
+    pub adult: bool,
+}
+
+/// One line of the client's own progress, plus enough to draw a bar.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PatreonProgress {
+    /// `checking`, `creating`, `uploading`, `configuring`, `running`, `done`.
+    pub phase: String,
+    pub done: i64,
+    pub total: i64,
+    /// The client's line, verbatim — "upload 03.png (2.1 MB)".
+    pub line: String,
+}
+
+/// What a run did. A failed run is a summary with `error`, not an `Err`, so
+/// the panel can show the client's own sentence for it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PatreonSummary {
+    /// The draft's editor page, once the run reached it.
+    pub url: Option<String>,
+    pub post_id: Option<String>,
+    pub uploaded: i64,
+    pub reused: i64,
+    pub error: Option<String>,
+    /// Every line the client printed, for the panel's log.
+    #[serde(default)]
+    pub log: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Remote
 // ---------------------------------------------------------------------------
 

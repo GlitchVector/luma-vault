@@ -778,6 +778,36 @@ export const deviantArtSummarySchema = z.object({
 })
 export type DeviantArtSummary = z.infer<typeof deviantArtSummarySchema>
 
+/**
+ * What the Patreon panel asks for. Ids, never paths — the webview does not name
+ * a file for the backend to read — and the order of `ids` is the order of the
+ * post.
+ */
+export const patreonRequestSchema = z.object({
+  ids: z.array(z.number()),
+  title: z.string(),
+  /** Markdown: paragraphs, bold, links. */
+  body: z.string(),
+  /** Access-rule ids for a tier-locked post. Empty means public. */
+  tiers: z.array(z.string()).default([]),
+  /** Stated, never defaulted — the client checks it against the campaign. */
+  adult: z.boolean(),
+})
+export type PatreonRequest = z.infer<typeof patreonRequestSchema>
+
+/** What a Patreon run did. A failed run is a summary with `error`, not a throw. */
+export const patreonSummarySchema = z.object({
+  /** The draft's editor page, once the run reached it. */
+  url: z.string().nullable(),
+  postId: z.string().nullable(),
+  uploaded: z.number(),
+  reused: z.number(),
+  error: z.string().nullable(),
+  /** Every line the client printed. */
+  log: z.array(z.string()).default([]),
+})
+export type PatreonSummary = z.infer<typeof patreonSummarySchema>
+
 // ---------------------------------------------------------------------------
 // Remote
 // ---------------------------------------------------------------------------
