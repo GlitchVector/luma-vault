@@ -151,7 +151,9 @@ const SLOW_CALL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// ends: the client will not dial it and the host will not answer it.
 pub fn is_lan(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
+        IpAddr::V4(v4) => {
+            v4.is_private() || v4.is_loopback() || v4.is_link_local() || is_tailscale(v4)
+        }
         IpAddr::V6(v6) => {
             // A dual-stack listener reports an IPv4 peer as ::ffff:192.168.x.y,
             // so the v4 rules have to be applied to it rather than the v6 ones.
@@ -166,6 +168,20 @@ pub fn is_lan(ip: IpAddr) -> bool {
                 || (segments[0] & 0xffc0) == 0xfe80
         }
     }
+}
+
+/// 100.64.0.0/10 — the carrier-grade NAT block, which Tailscale hands out to
+/// every node on a tailnet.
+///
+/// It is not RFC 1918, so `is_private()` says no, and without this the host
+/// refused every Tailscale peer with "not a local address". A tailnet address
+/// is a private overlay reachable only by devices signed into the same
+/// account — it belongs on this list for the same reason 192.168.x does.
+/// Found 2026-09-14, when a phone only reached the app because a subnet
+/// router on the LAN rewrote it to a 192.168 address.
+fn is_tailscale(v4: std::net::Ipv4Addr) -> bool {
+    let [a, b, _, _] = v4.octets();
+    a == 100 && (64..=127).contains(&b)
 }
 
 /// This machine talking to itself — the peer [`Shared::trust_loopback`] waves
@@ -1121,6 +1137,21 @@ mod tests {
         assert!(is_lan("fe80::1".parse().unwrap()));
         assert!(is_lan("fd00::1".parse().unwrap()));
         assert!(!is_lan("2606:4700::1111".parse().unwrap()));
+    }
+
+    #[test]
+    fn a_tailnet_address_counts_as_local() {
+        // 100.64.0.0/10 is what Tailscale hands out. Until 2026-09-14 the host
+        // refused every tailnet peer, so a phone only ever got in through a
+        // subnet router that disguised it as 192.168.x.
+        for address in ["100.64.0.1", "100.72.26.22", "100.127.255.254"] {
+            assert!(is_lan(address.parse().unwrap()), "{address} should be local");
+        }
+        // The block ends at 100.127; the neighbours on either side are public.
+        for address in ["100.63.255.255", "100.128.0.0"] {
+            assert!(!is_lan(address.parse().unwrap()), "{address} should not be");
+        }
+        assert!(is_lan("::ffff:100.72.26.22".parse().unwrap()));
     }
 
     #[test]

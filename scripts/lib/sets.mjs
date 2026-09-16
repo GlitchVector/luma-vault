@@ -197,7 +197,15 @@ export async function recordMember(set, { seed, since, label, destination }) {
     const existing = manifest.members.findIndex((member) => member.file === found.file)
     const member = { file: found.file, ...(label ? { label } : {}) }
     if (existing >= 0) manifest.members[existing] = member
-    else manifest.members.push(member)
+    else {
+      // A re-render carries the shot label of the frame it replaces. Appended, it
+      // lands at the end of the set behind every later act; the owner reads a
+      // photostory in order, so it goes in right after the last frame with the
+      // same label instead (2026-09-16). A label nobody has yet appends as before.
+      const sibling = label ? manifest.members.map((each) => each.label).lastIndexOf(label) : -1
+      if (sibling >= 0) manifest.members.splice(sibling + 1, 0, member)
+      else manifest.members.push(member)
+    }
 
     writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n')
     return path

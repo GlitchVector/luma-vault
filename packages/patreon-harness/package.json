@@ -1,0 +1,21 @@
+{
+  "name": "@luma/patreon-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "//": "Dev-only. This is the half that owns Playwright and the half a human drives. @luma/patreon-client must never depend on it.",
+  "scripts": {
+    "patreon": "node --experimental-strip-types src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@luma/patreon-client": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "playwright-core": "^1.56.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

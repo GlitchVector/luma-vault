@@ -1681,6 +1681,63 @@ impl Db {
     ///
     /// `character` narrows to one cast member, which is how the sidebar's
     /// "sets per character" mode reads it. `None` lists every run.
+    /// Put a set's members in a new order, by path.
+    ///
+    /// The index is updated directly rather than waiting for the manifest write
+    /// to come back through the watcher. Two reasons, and the second is the real
+    /// one: the grid should reorder the moment the user lets go of the drag, and
+    /// the fewer things that depend on a watcher re-read of a manifest the app
+    /// just wrote, the better.
+    ///
+    /// Paths not in the set are ignored; members the caller did not name keep
+    /// their relative order after the ones it did.
+    pub fn reorder_set(&self, run: &str, paths: &[String]) -> Result<usize> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+
+        let mut existing: Vec<(i64, String)> = {
+            let mut stmt = tx.prepare(
+                "SELECT s.media_id, m.path FROM media_sets s
+                 JOIN media m ON m.id = s.media_id
+                 WHERE s.run = ?1 ORDER BY s.position ASC, s.media_id ASC",
+            )?;
+            let rows = stmt.query_map(params![run], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        let mut ordered: Vec<i64> = Vec::with_capacity(existing.len());
+        for path in paths {
+            if let Some(at) = existing.iter().position(|(_, each)| each == path) {
+                ordered.push(existing.remove(at).0);
+            }
+        }
+        ordered.extend(existing.into_iter().map(|(id, _)| id));
+
+        let moved = {
+            let mut update =
+                tx.prepare("UPDATE media_sets SET position = ?1 WHERE run = ?2 AND media_id = ?3")?;
+            let mut moved = 0;
+            for (position, id) in ordered.iter().enumerate() {
+                moved += update.execute(params![position as i64, run, id])?;
+            }
+            moved
+        };
+
+        tx.commit()?;
+        Ok(moved)
+    }
+
+    /// The folder a set's pictures are in. Its manifest is
+    /// `<folder>/.luma-sets/<run>.json` — the run names the file after itself.
+    pub fn set_folder(&self, run: &str) -> Result<Option<String>> {
+        Ok(self
+            .connection()
+            .query_row("SELECT folder FROM set_runs WHERE run = ?1", params![run], |row| {
+                row.get(0)
+            })
+            .optional()?)
+    }
+
     pub fn sets(
         &self,
         query: &MediaQuery,
@@ -5858,5 +5915,52 @@ mod tests {
         db.mark_anime_done(ids[0], 20).unwrap();
         assert!(db.pending_anime(100).unwrap().is_empty());
         assert_eq!(db.completed_in_phase(PhaseQueue::AnimeReview).unwrap(), 1);
+    }
+
+    /// Order is the whole point of a set, so the app must be able to change it
+    /// without waiting for its own manifest write to come back through the
+    /// watcher. Members the caller does not name keep their place after the
+    /// ones it does — a set that grew since the grid read it is not truncated.
+    #[test]
+    fn reordering_a_set_moves_named_members_and_keeps_the_rest_after() {
+        let (db, _) = seeded();
+
+        let manifest = crate::sets::SetManifest {
+            run: "shotall-reorder".to_string(),
+            command: "shotall".to_string(),
+            character: None,
+            title: None,
+            created_at: 1,
+            members: Vec::new(),
+        };
+        let member = |file: &str| {
+            (
+                std::path::PathBuf::from(file),
+                crate::sets::SetMember {
+                    file: file.to_string(),
+                    label: None,
+                },
+            )
+        };
+        let members = [member("/media/a.jpg"), member("/media/b.mp4")];
+        assert_eq!(db.record_set(&manifest, "/media", &members).expect("record"), 2);
+
+        let moved = db
+            .reorder_set("shotall-reorder", &["/media/b.mp4".to_string()])
+            .expect("reorder");
+        assert_eq!(moved, 2);
+
+        let order: Vec<String> = db
+            .connection()
+            .prepare(
+                "SELECT m.path FROM media_sets s JOIN media m ON m.id = s.media_id
+                 WHERE s.run = 'shotall-reorder' ORDER BY s.position ASC",
+            )
+            .expect("prepare")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query")
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("rows");
+        assert_eq!(order, vec!["/media/b.mp4", "/media/a.jpg"]);
     }
 }

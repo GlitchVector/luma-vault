@@ -9,7 +9,7 @@ import {
 } from '@luma/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FilterBar } from '#/components/FilterBar.tsx'
-import { FolderSidebar } from '#/components/FolderSidebar.tsx'
+import { FolderSidebar, LORA_COMMAND, type Listing } from '#/components/FolderSidebar.tsx'
 import { Lightbox } from '#/components/Lightbox.tsx'
 import { MediaGrid } from '#/components/MediaGrid.tsx'
 import { DEFAULT_TILE_SIZE, MAX_TILE_SIZE, MIN_TILE_SIZE } from '#/components/MediaTile.tsx'
@@ -23,6 +23,7 @@ import { ToastHost } from '#/components/ToastHost.tsx'
 import { toast } from '#/lib/toasts.ts'
 import { UpscaleResults } from '#/components/UpscaleResults.tsx'
 import { askConfirm, showMessage } from '#/lib/dialogs.ts'
+import { readSet, writeSet } from '#/lib/deepLink.ts'
 import {
   backend,
   deleteMedia,
@@ -134,7 +135,40 @@ export function App() {
    * session that opens on a set list you chose a week ago has to be understood
    * before it can be used.
    */
-  const [listing, setListing] = useState<'characters' | 'sets'>('characters')
+  const [listing, setListing] = useState<Listing>('characters')
+
+  /**
+   * Deep link to a set: `…/?set=<run>` opens the library with that set showing,
+   * and selecting one writes the parameter back so the address bar is always a
+   * link worth sending. A query parameter rather than a hash because the hash
+   * belongs to the lightbox (see below) and two writers there would fight.
+   *
+   * Read once, on mount. Re-reading would fight the user: `setQuery` is what
+   * *changes* the set, and an effect that reapplied the URL on every render
+   * would drag them back to the linked set the moment they clicked away.
+   */
+  const applyQuery = library.setQuery
+  useEffect(() => {
+    const set = readSet(globalThis.location?.search ?? '')
+    if (set === null) return
+    applyQuery({ set })
+    // A link names a sitting, so open on the list that contains sittings
+    // rather than on the character list the app otherwise starts with.
+    setListing(set.startsWith(LORA_COMMAND) ? 'lora' : 'sets')
+  }, [applyQuery])
+
+  // Written on change, never in the same effect that reads: `replaceState` so
+  // the link updates without stacking a history entry per click, which would
+  // turn the back gesture into a walk through every set you looked at.
+  const selectedSet = library.query.set
+  useEffect(() => {
+    const location = globalThis.location
+    if (!location) return
+    const search = writeSet(location.search, selectedSet)
+    if (search === location.search) return
+    globalThis.history?.replaceState(globalThis.history.state, '', location.pathname + search + location.hash)
+  }, [selectedSet])
+
   const [openId, setOpenId] = useState<number | null>(null)
 
   // The lightbox as a history entry, so the phone's back gesture closes it
@@ -854,6 +888,15 @@ export function App() {
       selectedSet={library.query.set}
       onSet={(run) => {
         setQuery({ set: run })
+        setShowLibrary(false)
+      }}
+      // Home is the unified grid with nothing narrowing it: every folder, no
+      // set, no search. The character list is what the app opens on, so the
+      // sidebar goes back to it too rather than leaving a set list with
+      // nothing selected in it.
+      onHome={() => {
+        setQuery({ folderId: null, set: null, search: '' })
+        setListing('characters')
         setShowLibrary(false)
       }}
       // The name is a ready-made search term: detection found it verbatim

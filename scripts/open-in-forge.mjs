@@ -54,12 +54,26 @@ function parseArgs(argv) {
     else if (flag === '--prompt') args.prompt = unescape(argv[++at])
     else if (flag === '--negative') args.negative = unescape(argv[++at])
     else if (flag === '--no-adetailer') args.noAdetailer = true
+    else if (flag === '--keep-facing') args.keepFacing = true
     else if (flag === '--no-hires') args.noHires = true
+    // The hires pass and the face pass each have one denoise and the hires pass one upscaler; the defaults
+    // (0.4 / 0.4 / 4xUltraSharp) are the booru tuning, overridable for a face that a repaint keeps smoothing.
+    else if (flag === '--hires-denoise') args.hiresDenoise = Number(argv[++at])
+    else if (flag === '--hires-upscaler') args.hiresUpscaler = argv[++at]
+    else if (flag === '--adetailer-denoise') args.adDenoise = Number(argv[++at])
     else if (flag === '--adetailer-prompt') args.adPrompt = unescape(argv[++at])
     else if (flag === '--adetailer-negative') args.adNegative = unescape(argv[++at])
     // Run the face pass on a different checkpoint than the base render — a
     // substring, resolved like --model. The extension's per-unit override.
     else if (flag === '--adetailer-checkpoint') args.adCheckpoint = argv[++at]
+    // A second ADetailer unit — a detector of its own, its own prompt and denoise.
+    // Written under the extension's ` 2nd` infotext suffix so the block round-trips.
+    else if (flag === '--adetailer2-model') args.ad2Model = argv[++at]
+    else if (flag === '--adetailer2-prompt') args.ad2Prompt = unescape(argv[++at])
+    else if (flag === '--adetailer2-negative') args.ad2Negative = unescape(argv[++at])
+    else if (flag === '--adetailer2-denoise') args.ad2Denoise = Number(argv[++at])
+    else if (flag === '--adetailer2-dilate') args.ad2Dilate = Number(argv[++at])
+    else if (flag === '--adetailer2-padding') args.ad2Padding = Number(argv[++at])
     // Hand the last part of the sampling to another checkpoint. The base model
     // decides the composition in the early steps (which garment, where its seams
     // fall), the refiner paints the finish — the split that lets a model that
@@ -108,6 +122,8 @@ if (!args.prompt) {
     '',
     '  --model defaults to ' + DEFAULT_MODEL + `; the canvas is ${PORTRAIT} unless overridden,`,
     '  whatever shape the source image was — it is not read off the attachment.',
+    '  --keep-facing leaves `topless`/`nipples` in a from-behind prompt: for a LoRA whose',
+    '  undressed states are trained, the state word is the caption, and without it the back is dressed.',
     '  --dry-run prints the parameter block without touching Forge.',
     '  --refiner <substring> [--refiner-switch 0.5] hands the sampling to a second checkpoint',
     '  part-way: the base model composes, the refiner paints the finish.',
@@ -122,7 +138,7 @@ if (!Number.isFinite(args.width) || !Number.isFinite(args.height)) {
 // topless` does not produce a back view missing those details, it produces a
 // front view — the framing is outvoted, silently, and a row of tabs meant to be
 // different angles comes back as one angle repeated. See FACING_CONFLICTS.
-const framed = enforceFraming(args.prompt)
+const framed = enforceFraming(args.prompt, { keepFrontOnly: Boolean(args.keepFacing) })
 args.prompt = framed.text
 
 // Garments the prompt's own state of undress rules out. `/swap` is where this
@@ -189,10 +205,10 @@ const settings = [
   // --no-hires omits the whole pass, the same way --no-adetailer does. The
   // upscaler invents ring-shaped specular highlights on large, smooth,
   // low-detail areas - it has nothing to sharpen there, so it hallucinates.
-  args.noHires ? null : 'Denoising strength: 0.4',
+  args.noHires ? null : `Denoising strength: ${args.hiresDenoise ?? 0.4}`,
   args.noHires ? null : 'Hires upscale: 1.5',
   args.noHires ? null : 'Hires steps: 30',
-  args.noHires ? null : 'Hires upscaler: 4xUltrasharp_4xUltrasharpV10',
+  args.noHires ? null : `Hires upscaler: ${args.hiresUpscaler ?? '4xUltrasharp_4xUltrasharpV10'}`,
   // --no-adetailer omits the whole block, which is how the prefill extension
   // knows to leave the toggle off. The pass repaints EVERY face it detects with
   // the same prompt, so on a two-person frame where the man's head is in shot it
@@ -200,8 +216,14 @@ const settings = [
   args.noAdetailer ? null : 'ADetailer model: face_yolov8s.pt',
   args.noAdetailer || !args.adPrompt ? null : `ADetailer prompt: ${quote(args.adPrompt)}`,
   args.noAdetailer ? null : `ADetailer negative prompt: ${quote(args.adNegative ?? args.negative ?? 'worst quality, low quality, lowres')}`,
-  args.noAdetailer ? null : 'ADetailer denoising strength: 0.4',
+  args.noAdetailer ? null : `ADetailer denoising strength: ${args.adDenoise ?? 0.4}`,
   args.noAdetailer || !adTarget ? null : `ADetailer checkpoint: ${adTarget.name}`,
+  args.noAdetailer || !args.ad2Model ? null : `ADetailer model 2nd: ${args.ad2Model}`,
+  args.noAdetailer || !args.ad2Model || !args.ad2Prompt ? null : `ADetailer prompt 2nd: ${quote(args.ad2Prompt)}`,
+  args.noAdetailer || !args.ad2Model ? null : `ADetailer negative prompt 2nd: ${quote(args.ad2Negative ?? args.negative ?? 'worst quality, low quality, lowres')}`,
+  args.noAdetailer || !args.ad2Model ? null : `ADetailer denoising strength 2nd: ${args.ad2Denoise ?? 0.5}`,
+  args.noAdetailer || !args.ad2Model || args.ad2Dilate == null ? null : `ADetailer dilate erode 2nd: ${args.ad2Dilate}`,
+  args.noAdetailer || !args.ad2Model || args.ad2Padding == null ? null : `ADetailer inpaint padding 2nd: ${args.ad2Padding}`,
   // A1111's own infotext keys, so a pasted block round-trips through the UI too.
   refinerTarget ? `Refiner: ${refinerTarget.name}` : null,
   refinerTarget ? `Refiner switch at: ${args.refinerSwitch ?? 0.6}` : null,

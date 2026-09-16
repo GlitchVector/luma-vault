@@ -1,0 +1,23 @@
+{
+  "name": "@luma/patreon-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "//": "Consumed as source, like @luma/core. NO Playwright dependency, ever: this library receives a page handle, it never creates one. The harness owns the browser.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

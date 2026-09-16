@@ -351,6 +351,15 @@ async fn deviantart_send(
 }
 
 #[tauri::command(async)]
+async fn reorder_set(
+    state: State<'_, AppState>,
+    run: String,
+    paths: Vec<String>,
+) -> Result<usize, String> {
+    api::reorder_set(&state, run, paths)
+}
+
+#[tauri::command(async)]
 async fn deviantart_mark(
     state: State<'_, AppState>,
     ids: Vec<i64>,
@@ -714,8 +723,22 @@ pub fn run() {
                 throttle,
             ));
 
+            // Off the main thread, deliberately. Attaching a recursive watch to a
+            // folder on a network share is an OS call that can block for as long
+            // as the share takes to answer - on 2026-09-14 it blocked for over ten
+            // minutes on `\jebpot\devs` (107k files) and the window never
+            // appeared, because this used to run inline in setup before the
+            // server was started. The watches attach whenever the OS returns;
+            // the startup walk below already covers anything that changed in
+            // the meantime, so nothing is lost by not waiting here.
             let watcher = Arc::new(FolderWatcher::new());
-            watcher.start(Arc::clone(&db), Arc::clone(&pipeline), app.handle().clone());
+            {
+                let watcher = Arc::clone(&watcher);
+                let db = Arc::clone(&db);
+                let pipeline = Arc::clone(&pipeline);
+                let handle = app.handle().clone();
+                std::thread::spawn(move || watcher.start(db, pipeline, handle));
+            }
 
             app.manage(AppState {
                 deviantart: Arc::new(DeviantArt::new(Arc::clone(&db))),
@@ -850,6 +873,7 @@ pub fn run() {
             deviantart_disconnect,
             deviantart_galleries,
             deviantart_send,
+            reorder_set,
             deviantart_mark,
             set_rating_override,
             remote_status,

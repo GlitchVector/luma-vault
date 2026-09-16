@@ -118,6 +118,64 @@ pub fn read_manifest(path: &Path) -> Result<(SetManifest, Vec<(PathBuf, SetMembe
     Ok((manifest, members))
 }
 
+/// Rewrite a manifest with its members in a new order.
+///
+/// Members are named by file, and every name given must already be in the
+/// manifest: this reorders what a run recorded, it does not add to it or remove
+/// from it. Anything the caller does not mention keeps its relative position at
+/// the end, so a manifest that grew between the app reading it and the user
+/// dragging something is not quietly truncated.
+pub fn reorder_members(manifest: &SetManifest, order: &[String]) -> SetManifest {
+    let mut moved: Vec<SetMember> = Vec::with_capacity(manifest.members.len());
+    for name in order {
+        if let Some(member) = manifest.members.iter().find(|each| &each.file == name) {
+            if !moved.iter().any(|each| each.file == member.file) {
+                moved.push(member.clone());
+            }
+        }
+    }
+    for member in &manifest.members {
+        if !moved.iter().any(|each| each.file == member.file) {
+            moved.push(member.clone());
+        }
+    }
+    SetManifest {
+        members: moved,
+        ..manifest.clone()
+    }
+}
+
+/// Write a manifest, atomically.
+///
+/// Temp file then rename, and the rename is the point rather than tidiness. The
+/// app's own watcher is live on this folder, and three STATUS_HEAP_CORRUPTION
+/// exits all happened while manifests were being rewritten under it — one of
+/// them by a render script that rewrote its manifest forty times in an
+/// afternoon. A rename is one event and can never be observed half-written; a
+/// truncate-and-write is at least two and can be.
+///
+/// The temp file is created in the same directory so the rename stays on one
+/// filesystem, and it is named to be ignored by [`is_manifest`] — otherwise the
+/// watcher would read the half-written file we are trying to hide from it.
+pub fn write_manifest(path: &Path, manifest: &SetManifest) -> Result<(), String> {
+    let Some(dir) = path.parent() else {
+        return Err("manifest has no directory".to_string());
+    };
+    std::fs::create_dir_all(dir).map_err(|error| format!("{error}"))?;
+
+    let text = serde_json::to_string_pretty(manifest)
+        .map_err(|error| format!("cannot serialise manifest: {error}"))?;
+
+    // `.tmp`, not `.json`: `is_manifest` matches on the extension, so a `.json`
+    // temp beside the real one would be read as a second set of the same run.
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, text.as_bytes()).map_err(|error| format!("{error}"))?;
+    std::fs::rename(&temp, path).map_err(|error| {
+        let _ = std::fs::remove_file(&temp);
+        format!("{error}")
+    })
+}
+
 /// A name that names a file in one folder, and cannot mean anywhere else.
 fn is_plain_filename(name: &str) -> bool {
     !name.is_empty()
@@ -195,6 +253,71 @@ mod tests {
         let names: Vec<_> =
             members.iter().map(|(path, _)| path.file_name().unwrap().to_owned()).collect();
         assert_eq!(names, vec!["good.png"], "only plain filenames may resolve");
+    }
+
+    #[test]
+    fn reordering_moves_named_members_and_keeps_the_rest() {
+        let manifest = SetManifest {
+            run: "r".into(),
+            command: "shotall".into(),
+            character: None,
+            title: None,
+            created_at: 1,
+            members: vec![
+                SetMember { file: "a.png".into(), label: None },
+                SetMember { file: "b.png".into(), label: Some("two".into()) },
+                SetMember { file: "c.png".into(), label: None },
+            ],
+        };
+
+        let moved = reorder_members(&manifest, &["c.png".to_string(), "a.png".to_string()]);
+        let names: Vec<&str> = moved.members.iter().map(|m| m.file.as_str()).collect();
+        // b was not named, so it keeps its place at the end rather than vanishing:
+        // a manifest that grew since the app read it must not be truncated.
+        assert_eq!(names, vec!["c.png", "a.png", "b.png"]);
+        assert_eq!(moved.members[2].label.as_deref(), Some("two"));
+        assert_eq!(moved.run, "r");
+    }
+
+    #[test]
+    fn reordering_ignores_a_name_the_manifest_does_not_have() {
+        let manifest = SetManifest {
+            run: "r".into(),
+            command: "shotall".into(),
+            character: None,
+            title: None,
+            created_at: 1,
+            members: vec![SetMember { file: "a.png".into(), label: None }],
+        };
+        let moved = reorder_members(&manifest, &["ghost.png".to_string(), "a.png".to_string()]);
+        assert_eq!(moved.members.len(), 1);
+        assert_eq!(moved.members[0].file, "a.png");
+    }
+
+    #[test]
+    fn writing_round_trips_and_leaves_no_temp_behind() {
+        let dir = std::env::temp_dir().join(format!("luma-sets-write-{}", std::process::id()));
+        let manifest_dir = dir.join(MANIFEST_DIR);
+        std::fs::create_dir_all(&manifest_dir).expect("dirs");
+        let path = manifest_dir.join("r.json");
+
+        let manifest = SetManifest {
+            run: "r".into(),
+            command: "photostory".into(),
+            character: Some("Mira".into()),
+            title: Some("set 042".into()),
+            created_at: 7,
+            members: vec![SetMember { file: "a.png".into(), label: Some("one".into()) }],
+        };
+        write_manifest(&path, &manifest).expect("write");
+
+        let (back, members) = read_manifest(&path).expect("read");
+        assert_eq!(back, manifest);
+        assert_eq!(members.len(), 1);
+        // The temp must not survive, and must never have looked like a manifest.
+        assert!(!manifest_dir.join("r.json.tmp").exists());
+        assert!(!is_manifest(&manifest_dir.join("r.json.tmp")));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

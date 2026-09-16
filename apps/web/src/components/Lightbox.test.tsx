@@ -1518,6 +1518,68 @@ describe('the touch judgement buttons', () => {
     expect(onStep).toHaveBeenCalledWith(1)
   })
 
+  it('the ♥ favourites — five stars — and steps on, exactly as the double tap does', () => {
+    const onStep = vi.fn()
+    renderLightbox({ seed: makeItem(1), onStep })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rate 5 stars and show the next' }))
+
+    expect(starWrites).toEqual([{ id: 1, stars: 5 }])
+    expect(onStep).toHaveBeenCalledWith(1)
+  })
+
+  describe('the ⤓ hands the original to the share sheet', () => {
+    const nav = navigator as Navigator & { share?: unknown; canShare?: unknown }
+    let share: ReturnType<typeof vi.fn>
+    let opened: ReturnType<typeof vi.fn>
+    beforeEach(() => {
+      share = vi.fn(() => Promise.resolve())
+      opened = vi.fn()
+      Object.defineProperty(nav, 'share', { value: share, configurable: true, writable: true })
+      Object.defineProperty(nav, 'canShare', { value: () => true, configurable: true, writable: true })
+      // jsdom's Response drops the blob's type on the way through, so the
+      // fetch is stubbed at the shape the helper reads rather than as a Response.
+      vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, blob: () => Promise.resolve(new Blob(['png'], { type: 'image/png' })) })))
+      vi.stubGlobal('open', opened)
+    })
+    afterEach(() => {
+      delete (nav as { share?: unknown }).share
+      delete (nav as { canShare?: unknown }).canShare
+      vi.unstubAllGlobals()
+    })
+
+    it('fetches the original and shares it as a file named like the row', async () => {
+      renderLightbox({ seed: makeItem(1) })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save or share the original' }))
+      await vi.waitFor(() => expect(share).toHaveBeenCalledTimes(1))
+
+      const [data] = share.mock.calls[0] as [{ files: File[]; title: string }]
+      expect(data.files[0]?.name).toBe('holiday-1.jpg')
+      expect(data.files[0]?.type).toBe('image/png')
+      expect(data.title).toBe('holiday-1.jpg')
+      // No share, no tab: the sheet is the whole point.
+      expect(opened).not.toHaveBeenCalled()
+    })
+
+    it('opens the bare original in a new tab where files cannot be shared', async () => {
+      delete (nav as { share?: unknown }).share
+      renderLightbox({ seed: makeItem(1) })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save or share the original' }))
+      await vi.waitFor(() => expect(opened).toHaveBeenCalledTimes(1))
+
+      expect(String(opened.mock.calls[0]?.[0])).toContain(encodeURIComponent('/media/holiday-1.jpg'))
+    })
+  })
+
+  it('the ♥ is lit on a row that already has five stars', () => {
+    renderLightbox({ seed: makeItem(1, { stars: 5 }) })
+
+    const button = screen.getByRole('button', { name: 'Rate 5 stars and show the next' })
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+  })
+
   it('the − picks and steps on, exactly as ArrowDown does', () => {
     const onStep = vi.fn()
     const onToggleSelect = vi.fn()

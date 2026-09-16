@@ -56,6 +56,94 @@ question still has to answer one. It is also the rung that survives a heavy body
 prompt best — `full body` invites the model to shrink the figure until the size
 tags stop reading.
 
+### E — Angles and canvas (rendered by `/shotall`, offered under Other by `/shot`)
+
+Added 2026-09-08 because the sixteen above are all portrait and almost all
+level with the subject; a board of them reads as one camera on a tripod.
+`/photostory` had already learned to flip every third act frame and to take
+POV frames — this is the same idea for a static set.
+
+| Option | Rung | Framing tags | Canvas |
+|---|---|---|---|
+| Three-quarter (front) | `full body` | `(full body:1.3), standing, contrapposto, (from side:0.3), looking at viewer, hand in own hair` | portrait |
+| Three-quarter (behind) | `full body` | `(full body:1.3), standing, (from side:0.3), from behind, looking back` | portrait |
+| Dutch angle | `cowboy shot` | `cowboy shot, dutch angle, looking at viewer` | **landscape** |
+| Full body from above | `full body` | `(full body:1.3), from above, standing, looking up` | **landscape** |
+| Full body from below | `full body` | `(full body:1.3), from below, standing, looking down` | portrait |
+| Lying | `full body` | `lying, on back, (full body:1.2), looking at viewer` + a surface from the setting | **landscape** |
+| Sitting | `full body` | `sitting, (full body:1.2), looking at viewer` + a seat from the setting | **landscape** |
+| Kneeling | `cowboy shot` | `kneeling, cowboy shot, looking at viewer, arched back` | portrait |
+| Over the shoulder | `upper body` | `upper body, from behind, looking back, over shoulder` | **landscape** |
+| Walking away | `wide shot` | `(wide shot:1.3), walking, from behind, scenery` | **landscape** |
+
+### F — Posed rear frames
+
+The rear entries in A–D are camera instructions with no pose, and a character
+whose rear garment comes from a concept LoRA will fall into that LoRA's training
+pose on every one of them (the Oracle's back LoRA was trained on one standing
+back view; measured 2026-09-08, every rear frame of a 62-shot board came out in
+it — user: "is this the backside lora forcing every single backshot render into
+the exact same pose?"). So `/shotall` adds four rear frames that *state* a pose
+at weight, negate `(standing:1.3), arms at sides`, and run any rear-garment LoRA
+at **0.3** instead of 0.5 — the A/B showed the pose comes through at 0.3 and the
+garment still holds; without the LoRA the garment reverts.
+
+| Option | Rung | Framing tags | Canvas |
+|---|---|---|---|
+| Bent over, low angle | `cowboy shot` | `cowboy shot, (from behind:1.3), (from below:1.2), (ass focus:1.4), (bent over:1.4), leaning forward, arched back, looking back, (foreshortening:1.3)` | portrait |
+| All fours from behind | `full body` | `(all fours:1.4), (from behind:1.3), (ass focus:1.3), looking back, (full body:1.2)` | **landscape** |
+| Arched cowboy from behind | `cowboy shot` | `cowboy shot, (from behind:1.3), (arched back:1.4), hands on own ass, looking back, ass focus` | portrait |
+| Kneeling from behind | `cowboy shot` | `(kneeling:1.3), (from behind:1.3), looking back, ass focus, cowboy shot` | portrait |
+
+### G — Nude frames
+
+Six frames with the wardrobe gone (user 2026-09-08: "add a few more where she
+is naked"). The rule is `/photostory`'s: **jewellery, headwear, gauntlets and
+footwear stay** — they are what keeps the nude frames the same woman as the
+dressed ones, and the heels keep a full body from cropping at the thigh. The
+state is asserted, `(completely nude:1.4), nude, nipples, ass, pussy,
+uncensored`, and **every garment is negated by name** — `(clothes:1.4), dress,
+tabard, loincloth, halterneck, bikini, panties, bra, shirt, skirt, armor,
+pauldrons, shoulder armor, cape, train` — because a character whose costume is
+in a LoRA or a character tag draws it back from any frame that merely stops
+mentioning it. The dressed-surface negative (`impossible clothes`…) is off on
+these; there is no fabric to mould.
+
+| Option | Rung | Framing tags | Canvas |
+|---|---|---|---|
+| Nude full front | `full body` | `(full body:1.3), standing, (facing viewer:1.3), looking at viewer, contrapposto` | portrait |
+| Nude cowboy front | `cowboy shot` | `cowboy shot, looking at viewer, arms up, hands up` | portrait |
+| Nude full from behind | `full body` | `(full body:1.3), (from behind:1.3), looking back, arched back` | portrait |
+| Nude bent over, low angle | `cowboy shot` | group F's bent-over line | portrait |
+| Nude lying | `full body` | `(lying:1.3), on back, (from above:1.2), looking at viewer, (full body:1.2)` | **landscape** |
+| Nude all fours from behind | `full body` | group F's all-fours line | **landscape** |
+
+The rear ones carry `facing viewer, straight-on` in the negative instead of the
+dressed rear backstop, which negates `nude` and would fight the frame.
+
+**Nipple detail is a second ADetailer unit, not a prompt weight.** A ring, a
+piercing, an areola is drawn at the nipple's pixel size, so on a cowboy or full
+body it is a smudge whatever the tags say (`(nipple rings:1.9)` drew the same
+ring as 1.3 — measured 2026-09-08, user: "big thick rings are not possible?").
+`open-in-forge` takes a second unit under the extension's own ` 2nd` infotext
+keys: `--adetailer2-model nipples_v2_yolov11s-seg.pt --adetailer2-prompt "…"
+--adetailer2-denoise 0.6 --adetailer2-dilate 64 --adetailer2-padding 96`, plus
+`--adetailer2-negative`. The detector masks the areola only, so the dilation is
+what gives a ring room to be larger than the nipple. The unit's prompt is
+close-up jargon — `close-up, nipples, (large areolae:1.2), (nipple piercing:1.5),
+(nipple rings:1.6), (gold:1.3)` and the piercing LoRA at 1.0 — with `silver,
+steel, (multiple piercings:1.3), barbell` negated, because past denoise 0.6 the
+pass invents a second ring and drifts to steel. Only frames whose axes include
+breasts get it; the generators switch it on with `AD2_PROMPT`.
+
+**And the canvas flip:** six catalogue shots render a second time on the other
+shape with the same prompt — side profile, cowboy front, cowboy behind, full
+body from behind (portrait → landscape), the ass close-up (landscape → tall)
+and the breast close-up (portrait → wide). `(from side:0.3)` is deliberately
+weak: at 0.5 it turns the figure fully sideways (measured on the Oracle and
+Lara sets). `dutch angle` 104,788 · `over shoulder` 10,451 · `lying` 380k ·
+`sitting` 782k · `kneeling` 102k · `walking` 30k. `knees together` is not a tag.
+
 ### Two more, asked in the sizes call
 
 The table above is exactly sixteen because `AskUserQuestion` caps a call at four
@@ -138,13 +226,20 @@ outgrowing her. Per-shot frame filtering still applies first: a breast
 close-up steps breasts alone, an ass close-up steps ass, hips and thighs. On
 front-facing shots the ass weight has already been swapped onto the hips (the
 two-sides rule), so the step moves the hips rung it became. A step below rung
-0 drops the tag; a step past the top holds at the top — which is why the
-bracket picks its two-step direction by headroom.
+0 drops the tag; a step past the top holds at the top.
 
 ## Variation brackets
 
-Seven shots render as a **bracket of five** whenever they are ticked, because
+Seven shots render as a **bracket of two** whenever they are ticked, because
 they are the frames size is judged in. Everything else stays a single render.
+
+It was a bracket of five until 2026-09-08 — base, a fresh-seed re-roll of
+base, one rung down, one up, two in whichever direction had headroom — and a
+board that also carried groups E and F reached 66 frames (user: "shotall has
+too many frames now" → "brackets of two"). The re-roll showed nothing the base
+did not, and the two-rung step mostly showed the framing drifting. The base
+rung of six of the seven still appears on the board once, on the other canvas,
+through group E's canvas flips; only the cowboy-from-below has no base frame.
 
 - Side profile
 - Cowboy shot (front)
@@ -154,17 +249,14 @@ they are the frames size is judged in. Everything else stays a single render.
 - Ass close-up
 - Breast close-up
 
-The five, in render order, each captioned with what it is:
+The two, in render order, each captioned with what it is:
 
 | # | Suffix | What |
 |---|---|---|
-| 1 | `base` | the detected sizing — the set's shared figure |
-| 2 | `again` | the same prompt, fresh seed — a free re-roll |
-| 3 | `smaller` | every in-frame axis one rung down |
-| 4 | `bigger` | every in-frame axis one rung up |
-| 5 | `bigger2` / `smaller2` | two rungs — **up when every in-frame axis has the headroom, otherwise down**. Bigger is preferred; the ladder end is what forces the other direction |
+| 1 | `smaller` | every in-frame axis one rung down from the detected sizing |
+| 2 | `bigger` | every in-frame axis one rung up |
 
-**The breast close-up gets a sixth: the wardrobe flip.** Read the block's
+**The breast close-up gets a third: the wardrobe flip.** Read the block's
 chest state first. A clothed chest renders once more `topless` with the top
 garments dropped; a topless one renders once more wearing a **matching top** —
 derived from the outfit that is already there (its colours and style: a lace
@@ -172,9 +264,10 @@ set begets a matching lace bra, a white hoodie a white crop top), because an
 invented mismatched garment breaks the set the same way a drifting wardrobe
 does. Caption it `flip`.
 
-Name bracket files `<n>-<shot>-<suffix>.png` so a set of fifty stays sortable,
-and **say the count and the time before starting**: a full board — ten singles
-plus seven brackets and the flip — is ~46 renders, around 25 minutes warm.
+Name bracket files `<n>-<shot>-<suffix>.png` so a set stays sortable, and
+**say the count and the time before starting**: `/shot`'s full catalogue — ten
+singles plus seven brackets and the flip — is 25 renders, around 15 minutes
+warm; `/shotall` adds groups E, F and G for 51.
 Unannounced, that is not a quiet quarter of an hour, it is a hang.
 
 ## Rules that make the table work
@@ -311,6 +404,31 @@ sticker, emoji, glowing, speech bubble` in the negative stop it. Applies to any
 frame with `penis`, `pussy` or `nipples` in it — which is every act and every
 topless stage.
 
+**A character sheet is four tags, not a checkpoint.** Measured on the Celestial
+Oracle (2026-09-06): the DeviantArt-style turnaround sheets — front, side and
+back of one character on white — come out of the ordinary refiner pair with
+`(multiple views:1.3), (reference sheet:1.2), turnaround, character name, front
+view, side view, back view, (full body:1.3), standing, arms at sides` in the
+framing chunk and `white background, simple background` as the setting, on a
+`1216x832` canvas. `multiple views` 119,546 · `reference sheet` 11,529 ·
+`turnaround` 2,484 · `character name` 164,580. Two seeds, two clean sheets: one
+three-view, one two-view. `character name` is the label tag, and it draws a
+gold *pseudo-text* caption — which is why the sheets on DeviantArt have their
+labels typed on afterwards; no booru model writes legible words. Negate
+`2girls, 3girls, multiple girls` or the views become different women. The
+body reads consistent across the views, which is the whole point of the tag.
+
+**The sheet LoRA buys layout and costs finish.** `CharacterDesignIllustrious_Concept-10V2`
+(Civitai 100435, YeiyeiArt, installed 2026-09-06; trigger `CharacterDesignIllustrious`
++ `reference sheet, simple white background, (color guide:1.2), (multiple views),
+(full body)`) makes the three-view turnaround land on every seed and adds the
+colour-palette strip the plain tags never draw — but it is anime-trained and pulls
+the render flat even on the refiner pair: at its recommended 0.8 the skin went
+orange and the bodies cartoonish, at 0.5 the layout held and the finish was
+merely flatter than without it. Use it at 0.5 when the layout has to be reliable,
+leave it off when the finish matters more; the plain-tag sheet on the refiner pair
+is closer to the glossy DeviantArt look.
+
 **`--style 2.5d` delivers 3D, and the preset table is why.** Measured across a
 session of renders that all came back looking like plastic. The three presets in
 `STYLES` (`packages/core/src/migrate.ts`) are:
@@ -440,10 +558,25 @@ in frame:
 
 | Rung | Keep | Drop |
 |---|---|---|
-| `close-up`, `portrait` | nothing below the neck | ass, hips, thighs, legwear, undress state, `arched back`, `bent over`, `legs together` |
-| `upper body` | breasts, waist | ass, hips, thighs, legwear, `arched back`, `bent over` |
-| `cowboy shot` | breasts, waist, hips, thighs | `bent over` on a front shot |
+| `close-up`, `portrait` | **the whole body block**: breasts, waist, hips, thighs, `curvy`, and the slider when the build uses one — all at the same weights as the full-body frame | the ass *weight* (a plain `huge ass` stays on a front), legwear, undress state, `arched back`, `bent over`, `legs together`, the leg-length tag |
+| `upper body` | the whole body block, as above | the ass weight, legwear, `arched back`, `bent over`, the leg-length tag |
+| `cowboy shot` | the whole body block plus the leg-length tag | `bent over` on a front shot |
 | `full body`, `wide shot` | all of them | nothing |
+
+**Every frame carries the identical body block** (changed 2026-09-10, twice in
+one morning). The first version of this note kept only the hips and thighs on
+the tight rungs; the board that followed was "totally inconsistent" because the
+face close-up, headshot and hip-focus still had no breast words, the mid rungs
+had stepped-down hips and no slider, and then none of those frames respected
+its rung anyway — a LoRA or an outfit that names the pelvis pulls a "close-up"
+to cowboy distance, and a frame missing a word falls back to the checkpoint's
+default figure and sits beside the others as a different woman. On a LoRA whose
+captions name the body (`wide hips, thick thighs, large breasts` in every
+caption) the shape is bound to those words, not to the trigger, so they must be
+present, identical, on every frame. What a rung gates is the *ass weight* on
+fronts, the pose words, and the leg-length tag. Nothing else. `/photostory`
+had already learned half of this as `BODY_T`.
+
 
 **Hips and ass are one body seen from two sides — carry the weight across.**
 Cutting an out-of-frame tag is right; letting the *figure* change with it is
@@ -463,6 +596,15 @@ side:
   matching weight on one tag.
 - **Source boosted the hips** → back-facing shots take the matching boost on
   `huge ass`, for exactly the same reason in reverse.
+
+**The wide rungs read slimmer than the mid rungs at the same weight** (measured
+2026-09-10, Mira white board): `(wide hips:2), (thick thighs:2)` on a cowboy
+frame and on a full-body frame are not the same woman — the full body comes back
+narrower, and a leg boost widens the gap. Two corrections that together closed
+it in the test — but the stepped-down mid rungs then read as a *different* woman
+next to the wide ones on the board, so the rule that survived is simpler: the
+same weights on every rung, and the thicc slider (`<lora:thicc_slider_ixl_v12:0.6>`)
+on **every** frame when the build asks for it, not only the wide ones.
 
 The number is a judgement, not a formula: match the *silhouette*, and check the
 two angles side by side before sending the rest of the set.
@@ -827,3 +969,42 @@ from the command. Say that rather than suggesting a reload.
 with `1girl, solo` and produces one image of several small figures — which is
 the opposite of what a tab-per-shot run is for. Available under Other for
 someone who wants it deliberately.
+
+## Leg length
+
+Asked by every render command since 2026-09-10 (user: "add a question to all
+commands about leg length and its boosting"). Single-select:
+
+| Option | Body chunk | Framing side effect |
+|---|---|---|
+| `(long legs:1.2)` | the block's default, paired with `(tall female:1.1)` | none |
+| `(long legs:1.5)` | with `(tall female:1.2)` | none worth correcting |
+| `(long legs:1.8)` | with `(tall female:1.2)` | the camera zooms out: cowboy and close-up rungs get their framing word at `1.4` and `full body, wide shot` in the negative |
+| `(long legs:2)` | with `(tall female:1.2)` | same as 1.8, and expect the odd cowboy frame to come out full-body anyway |
+
+The tag goes only on frames that show hips (cowboy and wider, the legs shot,
+the hip and ass close-ups); a portrait never carries it. It is a set-wide
+answer — every frame the same — because legs are judged across the board, not
+shot by shot the way the size brackets are. Boards rendered at different leg
+lengths can share a set: the shot label carries ` legs <n>`.
+
+## Build words the questions should offer
+
+Learned on the Mira white-variant board, 2026-09-10, with the user judging live:
+
+- **Breasts.** `(huge breasts:1.5)` and even `(huge breasts:1.8)` still read as
+  *large*; the rung that reads as huge is `(gigantic breasts:1.3)`. Ladders end
+  there, not at `(huge breasts:1.4)`.
+- **Hips.** The sheet-faithful rung for a curvy character is `(wide hips:2),
+  (thick thighs:2), (curvy:1.5)`, not 1.4 / 1.5. Offer it as the recommended
+  rung when the reference is drawn that way.
+- **Soft, not muscular.** `toned`, `athletic`, `abs` in the identity chunk make
+  her muscular, and a sheet-trained LoRA's captions may carry them too. For a
+  soft build leave them out and negate `(muscular:1.4), (muscular female:1.4),
+  abs, (toned:1.2), biceps, veins`.
+- **Glute depth.** "More depth on her glutes, longer glutes" is the rear ass
+  weight and the slider together: `(huge ass:1.8)` on rear frames with the
+  slider at 0.6. The ass tag alone flattens out past 1.6.
+- **Leg boost.** `(long legs:1.8)` slims every frame it touches and pulls the
+  camera out; when a leg boost is chosen, the body block above compensates, and
+  the tight rungs need their framing word at `1.4` (see *Leg length*).
