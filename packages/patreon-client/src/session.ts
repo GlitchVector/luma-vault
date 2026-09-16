@@ -16,7 +16,7 @@
 
 import { call } from './call.ts'
 import { SessionError } from './errors.ts'
-import { cookiesFrom, cookieTransport, pageTransport, type Transport } from './transport.ts'
+import { cookieTransport, identityFrom, pageTransport, type Transport } from './transport.ts'
 
 /**
  * The slice of Playwright's `Page` the fallback uses. Structural, so this
@@ -54,7 +54,7 @@ const DEFAULT_ORIGIN = 'https://www.patreon.com'
  * created a draft and uploaded four files.
  */
 export async function fromCookies(statePath: string, origin = DEFAULT_ORIGIN): Promise<Session> {
-  const session: Session = { transport: cookieTransport(await cookiesFrom(statePath), origin), origin }
+  const session: Session = { transport: cookieTransport(await identityFrom(statePath), origin), origin }
   await assertLoggedIn(session)
   return session
 }

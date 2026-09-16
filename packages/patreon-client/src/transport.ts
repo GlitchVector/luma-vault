@@ -54,6 +54,14 @@ export interface Transport {
 
 interface StorageState {
   cookies?: { name?: string; value?: string; domain?: string }[]
+  /** The browser's own, recorded at login. See `identityFrom` for why it matters. */
+  userAgent?: string
+}
+
+/** A cookie jar and the identity it was issued to. */
+export interface Identity {
+  readonly cookie: string
+  readonly userAgent: string | null
 }
 
 /**
@@ -62,7 +70,7 @@ interface StorageState {
  * Only patreon.com cookies: a storage state can carry others, and sending an
  * unrelated site's cookie to Patreon would be both pointless and rude.
  */
-export async function cookiesFrom(statePath: string): Promise<string> {
+export async function identityFrom(statePath: string): Promise<Identity> {
   let text: string
   try {
     text = await readFile(resolve(statePath), 'utf8')
@@ -76,23 +84,47 @@ export async function cookiesFrom(statePath: string): Promise<string> {
   if (jar.length === 0) {
     throw new SessionError(`${statePath} holds no patreon.com cookies — run \`pnpm patreon auth\` again.`)
   }
-  return jar.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
+  return {
+    cookie: jar.map((cookie) => `${cookie.name}=${cookie.value}`).join('; '),
+    userAgent: typeof state.userAgent === 'string' ? state.userAgent : null,
+  }
+}
+
+/** Cookies only, for callers that do not care about the identity. */
+export async function cookiesFrom(statePath: string): Promise<string> {
+  return (await identityFrom(statePath)).cookie
 }
 
 /**
  * Talk to Patreon from Node, with a saved cookie jar.
  *
- * No user-agent spoofing. The probe passed without pretending to be Chrome, and
- * a borrowed UA string would not change a TLS fingerprint anyway — it would only
- * make a future failure harder to read.
+ * The user-agent is the one the browser used when the session was created, and
+ * sending it is not a disguise. Cloudflare binds `__cf_bm` to the user-agent
+ * that obtained it: replay the cookie under a different one — or under none,
+ * which is what Node sends — and the cookie is void. `/api/*` tolerated that;
+ * page routes answered "Just a moment..." with a 403, which is how this was
+ * found.
+ *
+ * What is *not* done is inventing a user-agent for a session that never had
+ * one. If the login did not record it, none is sent, and the failure stays
+ * legible.
  */
-export function cookieTransport(cookie: string, origin = 'https://www.patreon.com'): Transport {
+export function cookieTransport(
+  identity: Identity | string,
+  origin = 'https://www.patreon.com',
+): Transport {
+  const { cookie, userAgent } =
+    typeof identity === 'string' ? { cookie: identity, userAgent: null } : identity
   return {
     origin,
     async send(request) {
       const response = await fetch(request.url, {
         method: request.method,
-        headers: { ...request.headers, cookie },
+        headers: {
+          ...request.headers,
+          cookie,
+          ...(userAgent === null ? {} : { 'user-agent': userAgent }),
+        },
         ...(request.bodyText === null ? {} : { body: request.bodyText }),
         ...(request.manualRedirect === true ? { redirect: 'manual' as const } : {}),
       })

@@ -42,10 +42,13 @@ fixtures that *are* the wire format, checked from both languages.
    through the same `protocol::serve` — keep it that way.
 5. **Per-item failures are rows, not exceptions.** One corrupt file must never
    abort a scan.
-6. **Nothing automated opens patreon.com.** The account is a live creator
-   account behind Cloudflare. Every capture is driven by a human through
-   `pnpm patreon capture`; endpoints are captured, never guessed; the tool
-   produces drafts and never publishes. See `packages/patreon-harness/README.md`.
+6. **Patreon: captured, never guessed; draft, never published.** The account is
+   a live creator account behind Cloudflare. Endpoints come from a capture or
+   they do not exist; the tool stops at a draft URL and has no publish path.
+   Running a post is fine — `/api/*` answers a plain Node request — but a
+   *capture* still needs a human to drive the editor, and page routes like
+   `/posts/new` are challenged and need a browser. Keep the volume low. See
+   `packages/patreon-harness/README.md`.
 
 ## Commands
 
