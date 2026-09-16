@@ -30,6 +30,8 @@ const sets = [
   set('photostory-mira-1', 'photostory', 'mira'),
 ]
 
+const onSets = vi.fn()
+
 function sidebar(listing: Listing, given: SetSummary[] = sets) {
   return (
     <FolderSidebar
@@ -40,8 +42,8 @@ function sidebar(listing: Listing, given: SetSummary[] = sets) {
       sets={given}
       listing={listing}
       onListing={vi.fn()}
-      selectedSet={null}
-      onSet={vi.fn()}
+      selectedSets={[]}
+      onSets={onSets}
       onHome={vi.fn()}
       tileSize={300}
       onTileSize={vi.fn()}
@@ -58,7 +60,10 @@ function sidebar(listing: Listing, given: SetSummary[] = sets) {
   )
 }
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  onSets.mockReset()
+})
 
 describe('FolderSidebar set lists', () => {
   it('lists only the training rounds under LoRA', () => {
@@ -88,6 +93,56 @@ describe('FolderSidebar set lists', () => {
     expect(screen.queryByRole('button', { name: 'LoRA' })).toBeNull()
   })
 
+  // Two shoots of one character are read — and posted — as one set. A plain
+  // click stays a plain click, so this list does not quietly accumulate; the
+  // modifier is what says "as well as", the same as in the grid.
+  it('adds a second set on a modified click and replaces on a plain one', () => {
+    render(sidebar('sets'))
+    const shotall = screen.getByRole('button', { name: /shotall/ })
+    const story = screen.getByRole('button', { name: /photostory/ })
+
+    shotall.click()
+    expect(onSets).toHaveBeenLastCalledWith(['shotall-mira-1'])
+
+    story.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    expect(onSets).toHaveBeenLastCalledWith(['photostory-mira-1'])
+  })
+
+  it('reports both when one is already showing and the other is ctrl-clicked', () => {
+    const { rerender } = render(sidebar('sets'))
+    rerender(
+      <FolderSidebar
+        folders={[]}
+        stats={null}
+        characters={[]}
+        onCharacter={vi.fn()}
+        sets={sets}
+        listing="sets"
+        onListing={vi.fn()}
+        selectedSets={['shotall-mira-1']}
+        onSets={onSets}
+        onHome={vi.fn()}
+        tileSize={300}
+        onTileSize={vi.fn()}
+        selectedFolderId={null}
+        onSelect={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onRescan={vi.fn()}
+        onRetryFailed={vi.fn()}
+        onImportRatings={vi.fn()}
+        exclusions={[]}
+        onInclude={vi.fn()}
+      />,
+    )
+    screen
+      .getByRole('button', { name: /photostory/ })
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }))
+    expect(onSets).toHaveBeenLastCalledWith(['shotall-mira-1', 'photostory-mira-1'])
+    // Selection order is what the merge tie-breaks on, so it must survive.
+    expect(screen.getByRole('button', { name: /shotall/ }).getAttribute('aria-pressed')).toBe('true')
+  })
+
   it('makes the wordmark a way back to everything', () => {
     // On a phone the sidebar is a drawer, and once a set is filtering the grid
     // there is no other obvious "show me everything" — a dead wordmark is a
@@ -102,8 +157,8 @@ describe('FolderSidebar set lists', () => {
         sets={sets}
         listing="sets"
         onListing={vi.fn()}
-        selectedSet={null}
-        onSet={vi.fn()}
+        selectedSets={[]}
+        onSets={vi.fn()}
         onHome={onHome}
         tileSize={300}
         onTileSize={vi.fn()}

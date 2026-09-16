@@ -6,6 +6,8 @@ import {
   retainVisible,
   toggleSelected,
   type MediaItem,
+  mergeSetOrder,
+  type SetMemberRow,
 } from '@luma/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FilterBar } from '#/components/FilterBar.tsx'
@@ -37,6 +39,7 @@ import {
   type ForgeStatus,
   type UpscaleProgress,
   type UpscaleSummary,
+  setMembers,
 } from '#/lib/native.ts'
 import { HostLogin } from '#/components/HostLogin.tsx'
 import { useLibrary } from '#/lib/useLibrary.ts'
@@ -323,7 +326,51 @@ export function App() {
   // every generated file would make the close button useless — one arrow key
   // and it would be back.
   const [showGeneration, setShowGeneration] = useState(true)
-  const { items, query, setQuery, actions, folders, progress } = library
+  const { items: pageItems, query, setQuery, actions, folders, progress } = library
+
+  /**
+   * The order a merged selection reads in.
+   *
+   * With one set showing, the backend's page order is the set's own; with
+   * several, appending them would run the dressed-to-undressed progression
+   * once per set. So the grid collates by stage and act across the selected
+   * runs — the rule lives in `@luma/core` — and the panel takes this order as
+   * the post's. Nothing here touches the manifests; a drag in the panel does.
+   */
+  const [members, setMembers_] = useState<SetMemberRow[]>([])
+  useEffect(() => {
+    if (query.sets.length < 2) {
+      setMembers_([])
+      return
+    }
+    let live = true
+    void setMembers(query.sets).then((rows) => {
+      if (live) setMembers_(rows)
+    })
+    return () => {
+      live = false
+    }
+  }, [query.sets])
+  const items = useMemo(() => {
+    if (query.sets.length < 2 || members.length === 0) return pageItems
+    const ordinal = new Map(query.sets.map((run, at) => [run, at] as const))
+    const byId = new Map(pageItems.map((item) => [item.id, item] as const))
+    const placed = new Set<number>()
+    const merged = mergeSetOrder(
+      members
+        .filter((row) => byId.has(row.mediaId))
+        .map((row) => ({
+          item: byId.get(row.mediaId) as MediaItem,
+          setOrdinal: ordinal.get(row.run) ?? 0,
+          position: row.position,
+          label: row.label,
+        })),
+    ).filter((item) => (placed.has(item.id) ? false : (placed.add(item.id), true)))
+    // A picture the page has but no selected run names — cannot happen with the
+    // `sets` filter on, but a stale members fetch must not make it vanish.
+    for (const item of pageItems) if (!placed.has(item.id)) merged.push(item)
+    return merged
+  }, [pageItems, members, query.sets])
 
   // Stepping through the lightbox walks the *currently filtered* list, which is
   // what "next" means to someone who just narrowed to videos.
@@ -885,9 +932,12 @@ export function App() {
       sets={library.sets}
       listing={listing}
       onListing={setListing}
-      selectedSet={library.query.set}
-      onSet={(run) => {
-        setQuery({ set: run })
+      selectedSets={library.query.sets}
+      onSets={(runs) => {
+        // `set` is kept in step for the deep link, which only knows one; the
+        // grid itself reads `sets`. A single pick fills both, so a link copied
+        // from a one-set view still opens that set.
+        setQuery({ sets: runs, set: runs.length === 1 ? (runs[0] ?? null) : null })
         setShowLibrary(false)
       }}
       // Home is the unified grid with nothing narrowing it: every folder, no
@@ -895,7 +945,7 @@ export function App() {
       // sidebar goes back to it too rather than leaving a set list with
       // nothing selected in it.
       onHome={() => {
-        setQuery({ folderId: null, set: null, search: '' })
+        setQuery({ folderId: null, set: null, sets: [], search: '' })
         setListing('characters')
         setShowLibrary(false)
       }}
