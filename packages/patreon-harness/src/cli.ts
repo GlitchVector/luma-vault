@@ -18,6 +18,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { captureLogin } from './auth.ts'
+import { profileNavigator } from './navigate.ts'
 import { probe } from './probe.ts'
 import { CLEANUP, FIXTURES, fixtureByName } from './capture/fixtures.ts'
 import { runCapture } from './capture/run.ts'
@@ -356,6 +357,8 @@ switch (command) {
       campaignId,
       onProgress: (line) => process.stdout.write(`  ${line}
 `),
+      // Only the create step uses it, and only when there is no draft to resume.
+      navigator: profileNavigator(PROFILE_DIR),
     })
 
     process.stdout.write(
