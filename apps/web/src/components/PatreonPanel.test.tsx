@@ -16,10 +16,28 @@ const patreonPost = vi.fn(async (..._args: unknown[]) => ({
   log: [],
 }))
 
+/** The index, as far as `mediaByPath` is concerned. Tests fill it. */
+const indexed = new Map<string, MediaItem>()
+const upscaleMedia = vi.fn(async (_ids: number[]) => ({
+  upscaled: 0,
+  skipped: 0,
+  alreadyLarge: 0,
+  failed: 0,
+  seconds: 0,
+  peakVramMb: 0,
+  model: '',
+  architecture: '',
+  outputs: [] as { source: string; destination: string; name: string }[],
+  errors: [] as string[],
+}))
+
 vi.mock('#/lib/native.ts', () => ({
   fileUrl: (path: string) => path,
   openExternal: vi.fn(),
   onPatreonProgress: async () => () => {},
+  onUpscaleProgress: async () => () => {},
+  mediaByPath: async (path: string) => indexed.get(path) ?? null,
+  upscaleMedia: (ids: number[]) => upscaleMedia(ids),
   patreonPost: (...args: unknown[]) => patreonPost(...args),
   reorderSet: (...args: unknown[]) => reorderSet(...args),
   reorderSets: (...args: unknown[]) => reorderSets(...args),
@@ -27,15 +45,16 @@ vi.mock('#/lib/native.ts', () => ({
 
 import { PatreonPanel } from './PatreonPanel.tsx'
 
-function item(id: number, name: string): MediaItem {
+function item(id: number, name: string, extra: Partial<MediaItem> = {}): MediaItem {
   return {
     id,
     folderId: 1,
     path: `/vault/${name}`,
     name,
     kind: 'image',
-    width: 832,
-    height: 1216,
+    // Already 4K, so the ordering and drag tests are not also 4K tests.
+    width: 3840,
+    height: 5616,
     sizeBytes: 1,
     modifiedAt: 1,
     addedAt: 1,
@@ -53,8 +72,13 @@ function item(id: number, name: string): MediaItem {
     ratingOverride: null,
     deviantArt: null,
     patreon: null,
+    ...extra,
   }
 }
+
+/** A picture at render size, with no 4K version anywhere. */
+const small = (id: number, name: string, extra: Partial<MediaItem> = {}) =>
+  item(id, name, { width: 832, height: 1216, ...extra })
 
 const items = [item(1, '01.png'), item(2, '02.png'), item(3, '03.png')]
 const members: SetMemberRow[] = [
@@ -64,10 +88,10 @@ const members: SetMemberRow[] = [
 ]
 
 function names(): string[] {
-  return screen
-    .getAllByTestId(/patreon-row-/)
-    .map((row) => row.textContent ?? '')
-    .map((text) => (/0\d\.png/.exec(text) ?? [''])[0])
+  // The name has its own element: reading it out of the row's text would have
+  // to skip the index that sits in front of it, which is how this once read
+  // "01.png" as "101.png".
+  return screen.getAllByTestId('patreon-name').map((element) => element.textContent?.trim() ?? '')
 }
 
 /** A drag from row `from` dropped onto row `onto`, with the events jsdom needs. */
@@ -82,7 +106,14 @@ beforeEach(() => {
   reorderSet.mockClear()
   reorderSets.mockClear()
   patreonPost.mockClear()
+  upscaleMedia.mockClear()
+  indexed.clear()
 })
+
+function stateAdultWithTitle() {
+  fireEvent.change(screen.getByPlaceholderText('what this post is called'), { target: { value: 'a title' } })
+  fireEvent.click(screen.getByLabelText('yes'))
+}
 afterEach(cleanup)
 
 describe('PatreonPanel', () => {
@@ -148,5 +179,126 @@ describe('PatreonPanel', () => {
     await vi.waitFor(() =>
       expect(patreonPost).toHaveBeenCalledWith({ ids: [1, 2, 3], title: 'a title', body: '', tiers: [], adult: true }),
     )
+  })
+
+  // Everything that goes up is 4K. The grid shows originals and hides their
+  // variants, so a selection is originals; these pin what the panel does about
+  // that, and that it is one question for the batch.
+  describe('the 4K check', () => {
+    it('asks once about the pictures with no 4K version, and will not post until answered', () => {
+      render(
+        <PatreonPanel
+          items={[item(1, '01.png'), small(2, '02.png'), small(3, '03.png')]}
+          sets={[]}
+          members={[]}
+          setTitle={null}
+          onClose={vi.fn()}
+          onReordered={vi.fn()}
+        />,
+      )
+      expect(screen.getByRole('group', { name: '4K check' }).textContent).toContain('2 of 3 have no 4K version')
+      stateAdultWithTitle()
+      expect((screen.getByRole('button', { name: 'Create draft' }) as HTMLButtonElement).disabled).toBe(true)
+    })
+
+    it('posts the originals when told to post as they are', async () => {
+      render(
+        <PatreonPanel items={[small(2, '02.png')]} sets={[]} members={[]} setTitle={null} onClose={vi.fn()} onReordered={vi.fn()} />,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Post as they are' }))
+      stateAdultWithTitle()
+      fireEvent.click(screen.getByRole('button', { name: 'Create draft' }))
+      await vi.waitFor(() => expect(patreonPost).toHaveBeenCalledWith(expect.objectContaining({ ids: [2] })))
+      expect(upscaleMedia).not.toHaveBeenCalled()
+    })
+
+    // The upscaler writes beside the original and the watcher indexes it a
+    // few seconds later; the index is what turns that file into a row the
+    // post can name. So the destination is looked up, and the 4K row stands
+    // in for the original — in the original's place.
+    it('upscales only the ones that need it, then posts the 4K rows in the same order', async () => {
+      const fourK = item(20, '02_upscaled_4k.png', { upscaledFrom: '/vault/02.png' })
+      upscaleMedia.mockResolvedValueOnce({
+        upscaled: 1, skipped: 0, alreadyLarge: 0, failed: 0, seconds: 1, peakVramMb: 0, model: '', architecture: '',
+        outputs: [{ source: '/vault/02.png', destination: '/vault/02_upscaled_4k.png', name: '02_upscaled_4k.png' }],
+        errors: [],
+      })
+      indexed.set('/vault/02_upscaled_4k.png', fourK)
+
+      render(
+        <PatreonPanel
+          items={[item(1, '01.png'), small(2, '02.png'), item(3, '03.png')]}
+          sets={[]}
+          members={[]}
+          setTitle={null}
+          onClose={vi.fn()}
+          onReordered={vi.fn()}
+        />,
+      )
+      fireEvent.click(screen.getByRole('button', { name: /Upscale the 1 first/ }))
+      // Behind the progress subscription, so a tick later.
+      await vi.waitFor(() => expect(upscaleMedia).toHaveBeenCalledWith([2]))
+
+      await vi.waitFor(() => expect(screen.queryByTestId('patreon-row-20')).toBeTruthy())
+      expect(names()).toEqual(['01.png', '02_upscaled_4k.png', '03.png'])
+
+      stateAdultWithTitle()
+      fireEvent.click(screen.getByRole('button', { name: 'Create draft' }))
+      await vi.waitFor(() => expect(patreonPost).toHaveBeenCalledWith(expect.objectContaining({ ids: [1, 20, 3] })))
+    })
+
+    // "Always 4K" means a picture whose variant already exists is swapped
+    // silently: nothing to ask, the file is there.
+    it('swaps a picture for its existing 4K version without asking', async () => {
+      const fourK = item(10, '01_upscaled_4k.png', { upscaledFrom: '/vault/01.png' })
+      indexed.set('/vault/01_upscaled_4k.png', fourK)
+      render(
+        <PatreonPanel
+          items={[small(1, '01.png', { upscaledTo: '/vault/01_upscaled_4k.png' })]}
+          sets={[]}
+          members={[]}
+          setTitle={null}
+          onClose={vi.fn()}
+          onReordered={vi.fn()}
+        />,
+      )
+      await vi.waitFor(() => expect(names()).toEqual(['01_upscaled_4k.png']))
+      expect(screen.queryByRole('group', { name: '4K check' })).toBeNull()
+      expect(upscaleMedia).not.toHaveBeenCalled()
+    })
+
+    it('leaves videos and pictures that are already 4K out of the question', () => {
+      render(
+        <PatreonPanel
+          items={[item(1, '01.png'), small(2, 'clip.mp4', { kind: 'video' })]}
+          sets={[]}
+          members={[]}
+          setTitle={null}
+          onClose={vi.fn()}
+          onReordered={vi.fn()}
+        />,
+      )
+      expect(screen.queryByRole('group', { name: '4K check' })).toBeNull()
+    })
+
+    // A drag writes the set's own names back — the originals' — even when a
+    // 4K variant is standing in for one here. The set never named the variant.
+    it('writes the originals back to the set even when a 4K row stands in', async () => {
+      const fourK = item(10, '01_upscaled_4k.png', { upscaledFrom: '/vault/01.png' })
+      indexed.set('/vault/01_upscaled_4k.png', fourK)
+      render(
+        <PatreonPanel
+          items={[small(1, '01.png', { upscaledTo: '/vault/01_upscaled_4k.png' }), item(2, '02.png')]}
+          sets={['run-a']}
+          members={[]}
+          setTitle={null}
+          onClose={vi.fn()}
+          onReordered={vi.fn()}
+        />,
+      )
+      await vi.waitFor(() => expect(names()).toEqual(['01_upscaled_4k.png', '02.png']))
+      drag(1, 0)
+      expect(reorderSet).toHaveBeenCalledWith('run-a', ['/vault/02.png', '/vault/01.png'])
+    })
   })
 })

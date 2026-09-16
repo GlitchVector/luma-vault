@@ -93,10 +93,10 @@ pub fn post(
     // Ids to paths, here and not in the webview. A row that has gone since the
     // panel opened is reported, not silently dropped: the post the person
     // reviewed is not the post that would go up.
-    let mut media: Vec<String> = Vec::with_capacity(request.ids.len());
+    let mut items: Vec<crate::types::MediaItem> = Vec::with_capacity(request.ids.len());
     for id in &request.ids {
         match db.media_by_id(*id)? {
-            Some(item) => media.push(item.path),
+            Some(item) => items.push(item),
             None => {
                 return Ok(PatreonSummary {
                     url: None,
@@ -109,6 +109,8 @@ pub fn post(
             }
         }
     }
+
+    let media: Vec<String> = items.iter().map(|item| item.path.clone()).collect();
 
     let dir = job_dir(data_dir);
     std::fs::create_dir_all(&dir).context("could not create the Patreon job directory")?;
@@ -214,7 +216,7 @@ pub fn post(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        let _ = db.record_patreon_post(&media, post_id, url, now);
+        let _ = db.record_patreon_post(&paths_to_record(&items), post_id, url, now);
     }
 
     let _ = app.emit(
@@ -231,6 +233,27 @@ pub fn post(
     );
 
     Ok(summary)
+}
+
+/// The paths a draft is recorded against: each posted file, and the original
+/// behind any 4K variant among them.
+///
+/// The grid shows originals and hides their 4K variants, and the panel swaps
+/// each original for its variant before posting — so the file that actually
+/// went up is the one the grid never draws. A badge on it alone would never be
+/// seen. Marking the original too is what makes "have I posted this one?"
+/// answerable on the tile a person is looking at.
+pub fn paths_to_record(items: &[crate::types::MediaItem]) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::with_capacity(items.len() * 2);
+    for item in items {
+        paths.push(item.path.clone());
+        if let Some(original) = &item.upscaled_from {
+            if !paths.contains(original) {
+                paths.push(original.clone());
+            }
+        }
+    }
+    paths
 }
 
 /// Which step a client line belongs to, for the panel's status word.
@@ -280,6 +303,43 @@ mod tests {
         assert_eq!(phase_of("draft  169663723"), "creating");
         assert_eq!(phase_of("configure 2 media, access public"), "configuring");
         assert_eq!(phase_of("DRAFT: https://www.patreon.com/posts/1/edit"), "done");
+    }
+
+    #[test]
+    fn a_draft_is_recorded_on_the_original_behind_a_posted_4k_variant() {
+        let item = |path: &str, from: Option<&str>| crate::types::MediaItem {
+            id: 1,
+            folder_id: 1,
+            path: path.to_string(),
+            name: String::new(),
+            kind: crate::types::MediaKind::Image,
+            width: 3840,
+            height: 5616,
+            size_bytes: 1,
+            modified_at: 1,
+            added_at: 1,
+            thumb_path: None,
+            thumb_width: None,
+            thumb_height: None,
+            duration_sec: None,
+            verdict: None,
+            classified_at: None,
+            stars: None,
+            generation: None,
+            dupe_group: None,
+            upscaled_from: from.map(str::to_string),
+            upscaled_to: None,
+            rating_override: None,
+            deviant_art: None,
+            patreon: None,
+        };
+        let paths = paths_to_record(&[
+            item("/v/a_upscaled_4k.png", Some("/v/a.png")),
+            item("/v/b.png", None),
+        ]);
+        // The variant that went up, its original for the grid's badge, and a
+        // plain original once — never twice.
+        assert_eq!(paths, vec!["/v/a_upscaled_4k.png", "/v/a.png", "/v/b.png"]);
     }
 
     #[test]
