@@ -181,6 +181,25 @@ pub struct MediaItem {
     /// anything answered per tile over the network would not be answered.
     #[serde(default)]
     pub deviant_art: Option<DeviantArtPost>,
+    /// Where this picture already is on Patreon, when it is — same reason as
+    /// `deviant_art`: asked while scrolling, so it has to ride on the row.
+    #[serde(default)]
+    pub patreon: Option<PatreonPost>,
+}
+
+/// A picture's existing Patreon draft.
+///
+/// No `published`, and that is not an omission: the tool stops at a draft and
+/// never learns whether a human went on to post it. What it can say is "this
+/// file has been sent", which is enough to stop it being sent twice.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PatreonPost {
+    pub post_id: String,
+    /// The editor page for the draft.
+    pub url: String,
+    /// Unix ms.
+    pub posted_at: i64,
 }
 
 /// A picture's existing DeviantArt submission.
@@ -348,6 +367,11 @@ pub struct MediaQuery {
     /// table — a run must never become hideable through `hide_tags`.
     #[serde(default)]
     pub set: Option<String>,
+    /// Several runs at once, for posting two shoots of one character as one
+    /// set. Wins over `set` when non-empty; `set` stays for the deep link and
+    /// for every caller that only ever wanted one.
+    #[serde(default)]
+    pub sets: Vec<String>,
     /// Show only rows rated at least this many stars. `Some(1)` is therefore
     /// "anything I have rated at all".
     #[serde(default)]
@@ -450,6 +474,21 @@ pub struct CharacterCount {
 /// see. The count is the *visible* one, not the manifest's: a set whose files
 /// were deleted or filtered out should say so rather than promise pictures that
 /// are not there.
+/// One picture's place in one run — what the merge order sorts on.
+///
+/// Separate from `MediaItem` rather than folded into it, because a picture can
+/// be in several runs and a row can only carry one; and because the grid does
+/// not need it, only the compose panel does.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SetMemberRow {
+    pub media_id: i64,
+    pub run: String,
+    /// What the run called this shot — `stage 3 — full body`, `act 7 — …`.
+    pub label: Option<String>,
+    pub position: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SetSummary {

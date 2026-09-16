@@ -69,6 +69,7 @@ function makeItem(id: number): MediaItem {
     upscaledFrom: null,
     upscaledTo: null,
     deviantArt: null,
+    patreon: null,
     ratingOverride: null,
   }
 }

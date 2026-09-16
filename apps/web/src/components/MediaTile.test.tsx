@@ -56,6 +56,7 @@ const item: MediaItem = {
   upscaledFrom: null,
   upscaledTo: null,
   deviantArt: null,
+  patreon: null,
   ratingOverride: null,
 }
 
