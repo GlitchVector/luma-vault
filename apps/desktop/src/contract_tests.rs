@@ -139,6 +139,34 @@ fn patreon_summaries_match_the_shared_fixture() {
 }
 
 #[test]
+fn comic_summaries_match_the_shared_fixture() {
+    round_trip::<Vec<crate::types::ComicSummary>>(include_str!(
+        "../../../contracts/comic-summary.json"
+    ));
+}
+
+#[test]
+fn comic_projects_match_the_shared_fixture() {
+    round_trip::<crate::types::ComicProject>(include_str!(
+        "../../../contracts/comic-project.json"
+    ));
+}
+
+#[test]
+fn comic_run_options_match_the_shared_fixture() {
+    round_trip::<Vec<crate::types::ComicRunOptions>>(include_str!(
+        "../../../contracts/comic-run-options.json"
+    ));
+}
+
+#[test]
+fn comic_statuses_match_the_shared_fixture() {
+    round_trip::<Vec<crate::types::ComicStatus>>(include_str!(
+        "../../../contracts/comic-status.json"
+    ));
+}
+
+#[test]
 fn deviantart_summary_matches_the_shared_fixture() {
     round_trip::<crate::types::DeviantArtSummary>(include_str!(
         "../../../contracts/deviantart-summary.json"

@@ -986,6 +986,63 @@ pub fn patreon_unmark(state: &AppState, ids: Vec<i64>) -> Result<usize, String> 
 }
 
 // ---------------------------------------------------------------------------
+// Comics
+// ---------------------------------------------------------------------------
+
+fn comics_root(state: &AppState) -> PathBuf {
+    crate::comic::comics_root(&state.data_dir)
+}
+
+pub fn comic_list(state: &AppState) -> Result<Vec<crate::types::ComicSummary>, String> {
+    crate::comic::list(&comics_root(state)).map_err(stringify)
+}
+
+pub fn comic_read(state: &AppState, name: String) -> Result<crate::types::ComicProject, String> {
+    crate::comic::read(&comics_root(state), &name).map_err(stringify)
+}
+
+pub fn comic_create(state: &AppState, name: String) -> Result<crate::types::ComicSummary, String> {
+    let root = comics_root(state);
+    std::fs::create_dir_all(&root).map_err(|error| format!("could not create {}: {error}", root.display()))?;
+    crate::comic::create(&root, &name).map_err(stringify)
+}
+
+pub fn comic_save(
+    state: &AppState,
+    name: String,
+    prose: Option<String>,
+    script: Option<Value>,
+) -> Result<(), String> {
+    crate::comic::save(&comics_root(state), &name, prose, script).map_err(stringify)
+}
+
+/// Start a stage. Returns as soon as the pipeline is running; the panel
+/// follows it through `comic_status`. Like the Patreon post, this runs where
+/// the library is — that machine has Forge, Chrome and the repo.
+pub fn comic_run(state: &AppState, name: String, options: crate::types::ComicRunOptions) -> Result<(), String> {
+    let Some(cli) = state.comic.as_deref() else {
+        return Err("the comic pipeline is not here: packages/comic/src/cli.ts was not found beside the app".to_string());
+    };
+    crate::comic::start(
+        crate::comic::runner(),
+        cli,
+        &state.repo_root,
+        &comics_root(state),
+        &name,
+        &options,
+    )
+    .map_err(stringify)
+}
+
+pub fn comic_status(_state: &AppState, since: i64) -> Result<crate::types::ComicStatus, String> {
+    Ok(crate::comic::runner().status(since))
+}
+
+pub fn comic_cancel(_state: &AppState) -> Result<bool, String> {
+    Ok(crate::comic::runner().cancel())
+}
+
+// ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
 
@@ -1290,6 +1347,20 @@ pub async fn dispatch(
         "patreon_post" => ok(patreon_post(app, state, arg(args, "request")?).await?),
         "patreon_tiers" => ok(patreon_tiers(state).await?),
         "patreon_unmark" => ok(patreon_unmark(state, arg(args, "ids")?)?),
+        // Comics run where the library is, for the same reason a Patreon post
+        // does: Forge, Chrome and the repo are on that machine.
+        "comic_list" => ok(comic_list(state)?),
+        "comic_read" => ok(comic_read(state, arg(args, "name")?)?),
+        "comic_create" => ok(comic_create(state, arg(args, "name")?)?),
+        "comic_save" => ok(comic_save(
+            state,
+            arg(args, "name")?,
+            arg(args, "prose")?,
+            arg(args, "script")?,
+        )?),
+        "comic_run" => ok(comic_run(state, arg(args, "name")?, arg(args, "options")?)?),
+        "comic_status" => ok(comic_status(state, arg(args, "since")?)?),
+        "comic_cancel" => ok(comic_cancel(state)?),
         "deviantart_send" => ok(deviantart_send(
             app,
             state,

@@ -2,7 +2,7 @@
   "name": "luma-vault",
   "private": true,
   "version": "0.1.0",
-  "description": "Local media vault — watches folders, scans images and videos, classifies them with NudeNet, and renders them in one very fast grid.",
+  "description": "Local media vault \u2014 watches folders, scans images and videos, classifies them with NudeNet, and renders them in one very fast grid.",
   "packageManager": "pnpm@10.7.1",
   "engines": {
     "node": ">=22.9"
@@ -28,6 +28,7 @@
     "open-in-forge": "node --env-file-if-exists=.env --experimental-strip-types scripts/open-in-forge.mjs",
     "queue": "node --env-file-if-exists=.env --experimental-strip-types scripts/render-queue.mjs",
     "patreon": "pnpm --filter @luma/patreon-harness patreon",
+    "comic": "pnpm --filter @luma/comic comic",
     "stress-watcher": "node scripts/stress-watcher.mjs"
   },
   "devDependencies": {

@@ -1,0 +1,41 @@
+{
+  "//": "How every comic renders unless its project folder carries its own comic.config.json. Characters merge by id; everything else overrides by top-level key.",
+  "renderer": "forge",
+  "forge": {
+    "url": "http://127.0.0.1:7860",
+    "checkpoint": "delburry75",
+    "sampler": "Euler a",
+    "scheduler": "Automatic",
+    "steps": 28,
+    "cfg": 5,
+    "save_to_forge": true,
+    "timeout_s": 900
+  },
+  "prompt": {
+    "quality": "masterpiece, best quality",
+    "style": "",
+    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, extra arms, extra legs, jpeg artifacts, signature, watermark, artist name, username, blurry, (censored:1.4), light censor",
+    "negative_lettering": "speech bubble, english text, multiple views"
+  },
+  "page": { "width": 2000, "height": 3000 },
+  "qa": {
+    "max_attempts": 3,
+    "python": "venv-classifier/Scripts/python.exe",
+    "tagger_dir": "models/anime-tagger",
+    "tag_threshold": 0.35,
+    "blank_std": 6,
+    "space_edge_ratio": 0.55,
+    "space_std": 18
+  },
+  "writer": { "backend": "claude-cli", "model": "claude-opus-5" },
+  "browser": "chrome",
+  "characters": {
+    "ari": {
+      "lora": "ari_adopt_v1:1.2",
+      "trigger": "ari",
+      "subject": "1girl",
+      "look": "white hair, aqua hair, colored tips, bob cut, blunt bangs, blue eyes, hairband, earrings, necklace, aqua shirt, off-shoulder shirt, black collar, white shorts, sneakers",
+      "seed_family": 8812
+    }
+  }
+}

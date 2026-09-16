@@ -728,3 +728,132 @@ pub struct ShareStatus {
     /// again. Never the passphrase itself.
     pub has_passphrase: bool,
 }
+
+// ---------------------------------------------------------------------------
+// Comics — see `comic.rs`. The script itself is the pipeline's document and
+// crosses as a JSON value; these are what the panel needs around it.
+// ---------------------------------------------------------------------------
+
+/// One row of the comics list.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicSummary {
+    /// The folder name, and the only handle a command takes.
+    pub name: String,
+    /// From `script.json`, once there is one.
+    pub title: Option<String>,
+    pub pages: i64,
+    pub panels: i64,
+    /// Panels with a PNG, and pages with one.
+    pub rendered: i64,
+    pub assembled: i64,
+    pub has_prose: bool,
+    pub has_script: bool,
+    pub updated_at: i64,
+}
+
+/// What QA said about a panel's latest attempt.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicVerdict {
+    pub ok: bool,
+    pub attempt: i64,
+    /// Hard failures only, in the pipeline's own words.
+    pub failures: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicPanel {
+    pub id: String,
+    /// 1-based.
+    pub page: i64,
+    /// The PNG, once rendered. Served through `luma://`.
+    pub path: Option<String>,
+    /// The file's mtime, so the same id at a new attempt is a new URL.
+    pub rendered_at: Option<i64>,
+    pub seed: Option<i64>,
+    pub attempt: Option<i64>,
+    /// The prompt as sent, from the sidecar — for the person who wants to see
+    /// what the words became.
+    pub prompt: Option<String>,
+    pub verdict: Option<ComicVerdict>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicPage {
+    pub number: i64,
+    pub path: String,
+    pub rendered_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicProject {
+    pub name: String,
+    pub dir: String,
+    pub prose: String,
+    /// `script.json` as is. Its shape belongs to the pipeline (`@luma/core`'s
+    /// `comicScriptSchema` is the reader), not to this wire type.
+    pub script: Option<serde_json::Value>,
+    pub panels: Vec<ComicPanel>,
+    pub pages: Vec<ComicPage>,
+    pub pdf: Option<String>,
+    pub cbz: Option<String>,
+}
+
+/// Which stage to run, and on what. Every field but `stage` is optional and
+/// maps one-to-one onto a CLI flag.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicRunOptions {
+    /// `script`, `panels`, `qa`, `assemble` or `all`.
+    pub stage: String,
+    pub page: Option<i64>,
+    pub panel: Option<String>,
+    pub seed: Option<i64>,
+    pub attempt: Option<i64>,
+    #[serde(default)]
+    pub force: bool,
+    #[serde(default)]
+    pub no_tagger: bool,
+}
+
+/// One line the pipeline printed with `--json`, numbered so a poll can ask
+/// for what it has not seen.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicEvent {
+    pub seq: i64,
+    /// `stage`, `panel`, `qa`, `page`, `output` or `note`.
+    pub event: String,
+    pub stage: Option<String>,
+    pub id: Option<String>,
+    pub status: Option<String>,
+    pub progress: Option<f64>,
+    pub eta: Option<f64>,
+    pub seed: Option<i64>,
+    pub attempt: Option<i64>,
+    pub page: Option<i64>,
+    pub path: Option<String>,
+    pub kind: Option<String>,
+    pub message: Option<String>,
+    pub failures: Option<Vec<String>>,
+}
+
+/// The run in progress, or the last one: what it is, what it has said since
+/// `since`, and how it ended.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicStatus {
+    pub running: bool,
+    /// A run happened and is over — the panel shows its outcome once.
+    pub finished: bool,
+    pub comic: Option<String>,
+    pub stage: Option<String>,
+    pub events: Vec<ComicEvent>,
+    /// The sequence number to poll with next.
+    pub next: i64,
+    pub error: Option<String>,
+}

@@ -1,0 +1,78 @@
+[
+  {
+    "running": true,
+    "finished": false,
+    "comic": "first-light",
+    "stage": "panels",
+    "events": [
+      {
+        "seq": 0,
+        "event": "stage",
+        "stage": "panels",
+        "id": null,
+        "status": "start",
+        "progress": null,
+        "eta": null,
+        "seed": null,
+        "attempt": null,
+        "page": null,
+        "path": null,
+        "kind": null,
+        "message": "forge, delburry75",
+        "failures": null
+      },
+      {
+        "seq": 1,
+        "event": "panel",
+        "stage": null,
+        "id": "p1-2",
+        "status": "rendering",
+        "progress": 0.5,
+        "eta": 12.5,
+        "seed": 8822,
+        "attempt": 1,
+        "page": null,
+        "path": null,
+        "kind": null,
+        "message": null,
+        "failures": null
+      },
+      {
+        "seq": 2,
+        "event": "qa",
+        "stage": null,
+        "id": "p1-3",
+        "status": "failed",
+        "progress": null,
+        "eta": null,
+        "seed": null,
+        "attempt": 2,
+        "page": null,
+        "path": null,
+        "kind": null,
+        "message": null,
+        "failures": ["blank: no picture"]
+      }
+    ],
+    "next": 3,
+    "error": null
+  },
+  {
+    "running": false,
+    "finished": true,
+    "comic": "first-light",
+    "stage": "assemble",
+    "events": [],
+    "next": 4,
+    "error": "could not start chrome for the assembler"
+  },
+  {
+    "running": false,
+    "finished": false,
+    "comic": null,
+    "stage": null,
+    "events": [],
+    "next": 0,
+    "error": null
+  }
+]

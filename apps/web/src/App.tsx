@@ -18,6 +18,7 @@ import { DEFAULT_TILE_SIZE, MAX_TILE_SIZE, MIN_TILE_SIZE } from '#/components/Me
 import { SearchBar } from '#/components/SearchBar.tsx'
 import { DeviantArtPanel } from '#/components/DeviantArtPanel.tsx'
 import { PatreonPanel } from '#/components/PatreonPanel.tsx'
+import { ComicsPanel } from '#/components/ComicsPanel.tsx'
 import { DialogHost } from '#/components/DialogHost.tsx'
 import { RemoteDialog } from '#/components/RemoteDialog.tsx'
 import { StatusBar } from '#/components/StatusBar.tsx'
@@ -306,6 +307,8 @@ export function App() {
   // The timeline strip under the filter bar. Open/closed is UI state; the
   // range it selects lives in the query like any other filter.
   const [showTimeline, setShowTimeline] = useState(false)
+  /** The comics workspace, over everything: a different job from browsing. */
+  const [showComics, setShowComics] = useState(false)
   // Lives here rather than in the Lightbox so it survives closing one. The
   // Lightbox is mounted per-item, so local state reset the toggle every time
   // you opened a file. Deliberately separate from `showBoxes` above, which is
@@ -1071,6 +1074,7 @@ export function App() {
             showBoxes={showBoxes}
             onToggleBoxes={() => setShowBoxes((previous) => !previous)}
             timeline={showTimeline}
+            onOpenComics={() => setShowComics(true)}
             onToggleTimeline={() => {
               setShowTimeline((previous) => {
                 // Closing the panel clears its narrowing. A range with no bars
@@ -1416,6 +1420,8 @@ export function App() {
           onReordered={() => library.reload()}
         />
       ) : null}
+
+      {showComics ? <ComicsPanel onClose={() => setShowComics(false)} /> : null}
 
       <DialogHost />
       <ToastHost />

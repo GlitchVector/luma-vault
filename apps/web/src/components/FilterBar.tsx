@@ -22,6 +22,8 @@ interface FilterBarProps {
   /** Whether the timeline strip is open under this bar. */
   timeline: boolean
   onToggleTimeline: () => void
+  /** Open the comics workspace: prose in, lettered pages out. */
+  onOpenComics: () => void
   /**
    * Open the library sidebar, on screens too narrow to keep it in view.
    *
@@ -114,6 +116,7 @@ export function FilterBar({
   onToggleSelecting,
   timeline,
   onToggleTimeline,
+  onOpenComics,
   onOpenLibrary,
   onChange,
 }: FilterBarProps) {
@@ -384,6 +387,10 @@ export function FilterBar({
         onClick={onToggleTimeline}
       >
         Timeline
+      </Pill>
+
+      <Pill onClick={onOpenComics} title="Write a story, have it scripted into panels, render them with Forge, and letter the pages">
+        Comics
       </Pill>
 
       <Pill

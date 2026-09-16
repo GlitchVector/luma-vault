@@ -35,6 +35,13 @@ import {
   scanProgressSchema,
   deviantArtAccountSchema,
   patreonAccessRuleSchema,
+  comicProjectSchema,
+  comicStatusSchema,
+  comicSummarySchema,
+  type ComicProject,
+  type ComicRunOptions,
+  type ComicStatus,
+  type ComicSummary,
   patreonSummarySchema,
   setMemberRowSchema,
   deviantArtGallerySchema,
@@ -1203,4 +1210,45 @@ export function onScanProgress(handler: (progress: ScanProgress) => void): () =>
     cancelled = true
     dispose?.()
   }
+}
+
+// ---------------------------------------------------------------------------
+// Comics
+
+/**
+ * The comics under the app's data directory, newest first. Like a Patreon
+ * post, everything here runs where the library is: that machine has Forge,
+ * Chrome, the tagger and the repo, and a browser on the iPad has none.
+ */
+export async function comicList(): Promise<ComicSummary[]> {
+  if (!(await hasBackend())) return []
+  return z.array(comicSummarySchema).parse(await invoke('comic_list'))
+}
+
+export async function comicRead(name: string): Promise<ComicProject> {
+  return comicProjectSchema.parse(await invoke('comic_read', { name }))
+}
+
+export async function comicCreate(name: string): Promise<ComicSummary> {
+  return comicSummarySchema.parse(await invoke('comic_create', { name }))
+}
+
+/** Write the prose and/or the script. Either may be left out. */
+export async function comicSave(name: string, patch: { prose?: string; script?: unknown }): Promise<void> {
+  await invoke('comic_save', { name, prose: patch.prose ?? null, script: patch.script ?? null })
+}
+
+/** Start a stage. Returns once the pipeline is running; poll `comicStatus`. */
+export async function comicRun(name: string, options: ComicRunOptions): Promise<void> {
+  await invoke('comic_run', { name, options })
+}
+
+/** The run in progress or the last one, with every event from `since` on. */
+export async function comicStatus(since: number): Promise<ComicStatus> {
+  return comicStatusSchema.parse(await invoke('comic_status', { since }))
+}
+
+/** Stop the running stage. Whatever it wrote stays; the cache picks it up. */
+export async function comicCancel(): Promise<boolean> {
+  return (await invoke('comic_cancel')) as boolean
 }

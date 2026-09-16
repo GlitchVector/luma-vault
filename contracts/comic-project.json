@@ -1,0 +1,73 @@
+{
+  "name": "first-light",
+  "dir": "C:\\Users\\me\\AppData\\Local\\net.glitchvector.luma-vault\\comics\\first-light",
+  "prose": "# First Light\n\nAri had never seen the city from this high.",
+  "script": {
+    "title": "First Light",
+    "characters": {
+      "ari": {
+        "lora": "ari_adopt_v1:1.2",
+        "trigger": "ari",
+        "look": "white hair, aqua hair",
+        "subject": "1girl",
+        "seed_family": 8812
+      }
+    },
+    "pages": [
+      {
+        "layout": "two-stack",
+        "panels": [
+          {
+            "id": "p1-1",
+            "camera": "wide shot",
+            "scene": "rooftop at dawn",
+            "characters": ["ari"],
+            "reserve_space": "top",
+            "dialogue": [{ "speaker": "narrator", "text": "She had never seen the city from this high.", "anchor": "top", "kind": "caption" }],
+            "sfx": []
+          },
+          {
+            "id": "p1-2",
+            "camera": "close-up",
+            "scene": "drone in hand",
+            "characters": ["ari"],
+            "reserve_space": "none",
+            "dialogue": [],
+            "sfx": [{ "text": "BZZT", "anchor": "bottom-right", "rotate": -8 }]
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": "p1-1",
+      "page": 1,
+      "path": "C:\\Users\\me\\AppData\\Local\\net.glitchvector.luma-vault\\comics\\first-light\\panels\\p1-1.png",
+      "renderedAt": 1789600000000,
+      "seed": 8812,
+      "attempt": 0,
+      "prompt": "masterpiece, best quality, 1girl, solo, <lora:ari_adopt_v1:1.2>, ari, white hair, aqua hair, wide shot, rooftop at dawn",
+      "verdict": { "ok": true, "attempt": 0, "failures": [] }
+    },
+    {
+      "id": "p1-2",
+      "page": 1,
+      "path": null,
+      "renderedAt": null,
+      "seed": null,
+      "attempt": null,
+      "prompt": null,
+      "verdict": null
+    }
+  ],
+  "pages": [
+    {
+      "number": 1,
+      "path": "C:\\Users\\me\\AppData\\Local\\net.glitchvector.luma-vault\\comics\\first-light\\out\\page-01.png",
+      "renderedAt": 1789600000000
+    }
+  ],
+  "pdf": "C:\\Users\\me\\AppData\\Local\\net.glitchvector.luma-vault\\comics\\first-light\\out\\book.pdf",
+  "cbz": null
+}

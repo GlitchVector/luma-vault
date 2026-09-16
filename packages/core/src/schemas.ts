@@ -849,3 +849,110 @@ export const shareStatusSchema = z.object({
   hasPassphrase: z.boolean(),
 })
 export type ShareStatus = z.infer<typeof shareStatusSchema>
+
+// ---------------------------------------------------------------------------
+// Comics — what the panel needs around a script. The script itself is
+// `comicScriptSchema` in `comic.ts` and crosses as an opaque value here.
+// ---------------------------------------------------------------------------
+
+export const comicSummarySchema = z.object({
+  /** The folder name, and the only handle a command takes. */
+  name: z.string(),
+  title: z.string().nullable(),
+  pages: z.number(),
+  panels: z.number(),
+  /** Panels with a PNG, and pages with one. */
+  rendered: z.number(),
+  assembled: z.number(),
+  hasProse: z.boolean(),
+  hasScript: z.boolean(),
+  updatedAt: z.number(),
+})
+export type ComicSummary = z.infer<typeof comicSummarySchema>
+
+export const comicVerdictSchema = z.object({
+  ok: z.boolean(),
+  attempt: z.number(),
+  /** Hard failures only, in the pipeline's own words. */
+  failures: z.array(z.string()),
+})
+export type ComicVerdict = z.infer<typeof comicVerdictSchema>
+
+export const comicPanelStateSchema = z.object({
+  id: z.string(),
+  page: z.number(),
+  /** The PNG, once rendered. Served through `luma://`. */
+  path: z.string().nullable(),
+  /** The file's mtime, so the same id at a new attempt is a new URL. */
+  renderedAt: z.number().nullable(),
+  seed: z.number().nullable(),
+  attempt: z.number().nullable(),
+  prompt: z.string().nullable(),
+  verdict: comicVerdictSchema.nullable(),
+})
+export type ComicPanelState = z.infer<typeof comicPanelStateSchema>
+
+export const comicPageStateSchema = z.object({
+  number: z.number(),
+  path: z.string(),
+  renderedAt: z.number(),
+})
+export type ComicPageState = z.infer<typeof comicPageStateSchema>
+
+export const comicProjectSchema = z.object({
+  name: z.string(),
+  dir: z.string(),
+  prose: z.string(),
+  /** `script.json` as is; parse it with `comicScriptSchema` to edit it. */
+  script: z.unknown().nullable(),
+  panels: z.array(comicPanelStateSchema),
+  pages: z.array(comicPageStateSchema),
+  pdf: z.string().nullable(),
+  cbz: z.string().nullable(),
+})
+export type ComicProject = z.infer<typeof comicProjectSchema>
+
+/** Which stage to run, and on what. Each field maps onto one CLI flag. */
+export const comicRunOptionsSchema = z.object({
+  stage: z.enum(['script', 'panels', 'qa', 'assemble', 'all']),
+  page: z.number().nullable().default(null),
+  panel: z.string().nullable().default(null),
+  seed: z.number().nullable().default(null),
+  attempt: z.number().nullable().default(null),
+  force: z.boolean().default(false),
+  noTagger: z.boolean().default(false),
+})
+export type ComicRunOptions = z.infer<typeof comicRunOptionsSchema>
+
+/** One line the pipeline printed, numbered so a poll can ask for the rest. */
+export const comicEventSchema = z.object({
+  seq: z.number(),
+  /** `stage`, `panel`, `qa`, `page`, `output` or `note`. */
+  event: z.string(),
+  stage: z.string().nullable(),
+  id: z.string().nullable(),
+  status: z.string().nullable(),
+  progress: z.number().nullable(),
+  eta: z.number().nullable(),
+  seed: z.number().nullable(),
+  attempt: z.number().nullable(),
+  page: z.number().nullable(),
+  path: z.string().nullable(),
+  kind: z.string().nullable(),
+  message: z.string().nullable(),
+  failures: z.array(z.string()).nullable(),
+})
+export type ComicEvent = z.infer<typeof comicEventSchema>
+
+export const comicStatusSchema = z.object({
+  running: z.boolean(),
+  /** A run happened and is over — the panel shows its outcome once. */
+  finished: z.boolean(),
+  comic: z.string().nullable(),
+  stage: z.string().nullable(),
+  events: z.array(comicEventSchema),
+  /** The sequence number to poll with next. */
+  next: z.number(),
+  error: z.string().nullable(),
+})
+export type ComicStatus = z.infer<typeof comicStatusSchema>

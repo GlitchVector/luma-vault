@@ -200,6 +200,48 @@ export type {
   RemoteStatus,
   ShareStatus,
   SourceOrigin,
+  ComicSummary,
+  ComicVerdict,
+  ComicPanelState,
+  ComicPageState,
+  ComicProject,
+  ComicRunOptions,
+  ComicEvent,
+  ComicStatus,
 } from './schemas.ts'
+export {
+  comicSummarySchema,
+  comicProjectSchema,
+  comicRunOptionsSchema,
+  comicStatusSchema,
+} from './schemas.ts'
+export {
+  COMIC_ANCHORS,
+  COMIC_BALLOON_KINDS,
+  COMIC_LAYOUTS,
+  comicAnchorSchema,
+  comicScriptSchema,
+  comicDraftScriptSchema,
+  comicPanelSchema,
+  comicPageSchema,
+  comicDialogueSchema,
+  comicSfxSchema,
+  comicCharacterSchema,
+} from './comic.ts'
+export type {
+  ComicAnchor,
+  ComicBalloonKind,
+  ComicPoint,
+  ComicDialogue,
+  ComicSfx,
+  ComicSpan,
+  ComicPanelSpec,
+  ComicGrid,
+  ComicPageSpec,
+  ComicCharacter,
+  ComicScript,
+  ComicDraftScript,
+  ComicLayout,
+} from './comic.ts'
 export { actKeyOf, actLabelOf, mergeSetOrder } from './setorder.ts'
 export type { ActKey, SetMember } from './setorder.ts'

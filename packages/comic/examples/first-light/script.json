@@ -1,0 +1,205 @@
+{
+  "title": "First Light",
+  "characters": {
+    "ari": {
+      "lora": "ari_adopt_v1:1.2",
+      "trigger": "ari",
+      "look": "white hair, aqua hair, colored tips, bob cut, blunt bangs, blue eyes, hairband, earrings, necklace, aqua shirt, off-shoulder shirt, black collar, white shorts, sneakers",
+      "subject": "1girl",
+      "seed_family": 8812
+    }
+  },
+  "pages": [
+    {
+      "layout": "hero-top",
+      "panels": [
+        {
+          "id": "p1-1",
+          "camera": "wide shot, from below",
+          "scene": "old radio building at dawn, rusted fire escape zigzagging up twelve floors, grey city sky, climbing figure small against iron rails, cold wind",
+          "characters": [
+            "ari"
+          ],
+          "reserve_space": "top",
+          "dialogue": [
+            {
+              "speaker": "narrator",
+              "text": "She had never seen the city from this high.",
+              "anchor": "top",
+              "kind": "caption"
+            }
+          ],
+          "sfx": []
+        },
+        {
+          "id": "p1-2",
+          "camera": "full body, from behind",
+          "scene": "gravel rooftop of the radio building, standing at the parapet, skyline spread grey and quiet below, hair and clothes pulled sideways by wind, empty sky waiting for light",
+          "characters": [
+            "ari"
+          ],
+          "reserve_space": "top-right",
+          "dialogue": [
+            {
+              "speaker": "narrator",
+              "text": "Twelve floors of rust and wind. Then the whole skyline.",
+              "anchor": "top-right",
+              "kind": "caption"
+            }
+          ],
+          "sfx": []
+        },
+        {
+          "id": "p1-3",
+          "camera": "close-up, from side",
+          "scene": "rooftop edge at dawn, head tilted listening, eyes half closed, faint smile, distant streets far below, first tram bell carrying up through cold air",
+          "characters": [
+            "ari"
+          ],
+          "reserve_space": "left",
+          "dialogue": [
+            {
+              "speaker": "narrator",
+              "text": "Somewhere down there, the first tram of the day.",
+              "anchor": "left",
+              "kind": "caption"
+            }
+          ],
+          "sfx": []
+        }
+      ]
+    },
+    {
+      "layout": "grid-2x2",
+      "panels": [
+        {
+          "id": "p2-1",
+          "camera": "upper body, looking away",
+          "scene": "rooftop between rows of air vents, head turning sharply toward a low buzzing sound, brows raised, grey pre-dawn light on metal ducts",
+          "characters": [
+            "ari"
+          ],
+          "reserve_space": "top-left",
+          "dialogue": [
+            {
+              "speaker": "ari",
+              "text": "...what is that?",
+              "anchor": "top-left",
+              "kind": "speech"
+            }
+          ],
+          "sfx": []
+        },
+        {
+          "id": "p2-2",
+          "camera": "close-up, from above",
+          "scene": "narrow gap between two rooftop air vents, small delivery drone lying on its side, one rotor bent, tiny green indicator blinking slow and tired, dust and grit",
+          "characters": [],
+          "figures": 0,
+          "reserve_space": "bottom-right",
+          "dialogue": [],
+          "sfx": [
+            {
+              "text": "BZZT",
+              "anchor": "bottom-right",
+              "rotate": -8
+            }
+          ]
+        },
+        {
+          "id": "p2-3",
+          "camera": "cowboy shot, from side",
+          "scene": "crouching low between the vents on the rooftop, hands lifting a small broken drone and turning it over carefully, gentle focused expression, grey morning light",
+          "characters": [
+            "ari"
+          ],
+          "reserve_space": "right",
+          "dialogue": [
+            {
+              "speaker": "ari",
+              "text": "Hey. Who lost you?",
+              "anchor": "right",
+              "kind": "speech"
+            }
+          ],
+          "sfx": []
+        },
+        {
+          "id": "p2-4",
+          "camera": "close-up",
+          "scene": "rooftop, cupped hands holding the drone's underside, a torn parcel tag still clipped to its belly with the address ripped away, flickering small light",
+          "characters": [
+            "ari"
+          ],
+          "reserve_space": "bottom",
+          "dialogue": [
+            {
+              "speaker": "narrator",
+              "text": "The address was torn off. The light flickered, like it was trying to answer.",
+              "anchor": "bottom",
+              "kind": "caption"
+            }
+          ],
+          "sfx": []
+        }
+      ]
+    },
+    {
+      "layout": "hero-bottom",
+      "panels": [
+        {
+          "id": "p3-1",
+          "camera": "wide shot",
+          "scene": "rooftop horizon, sun breaking over the towers, gold flooding across rooftops and air vents, long shadows stretching over gravel, sky burning warm",
+          "characters": [],
+          "figures": 0,
+          "reserve_space": "none",
+          "dialogue": [],
+          "sfx": []
+        },
+        {
+          "id": "p3-2",
+          "camera": "close-up",
+          "scene": "small drone tucked against a ribcage in the crook of an arm, its indicator burning steady green in warm sunrise light, quiet hum",
+          "characters": [
+            "ari"
+          ],
+          "reserve_space": "top-left",
+          "dialogue": [
+            {
+              "speaker": "narrator",
+              "text": "In the warmth, the light held steady.",
+              "anchor": "top-left",
+              "kind": "caption"
+            }
+          ],
+          "sfx": []
+        },
+        {
+          "id": "p3-3",
+          "camera": "full body, from below",
+          "scene": "rooftop parapet at sunrise, standing tall with a small drone tucked under one arm, wide grin, hair lit gold, one foot already swinging onto the fire escape rail, city waking up below",
+          "characters": [
+            "ari"
+          ],
+          "reserve_space": "top-right",
+          "dialogue": [
+            {
+              "speaker": "ari",
+              "text": "Alright. Let's find out where you belong.",
+              "anchor": "top-right",
+              "kind": "speech"
+            },
+            {
+              "speaker": "narrator",
+              "text": "And she started back down.",
+              "anchor": "bottom-right",
+              "kind": "caption"
+            }
+          ],
+          "sfx": []
+        }
+      ]
+    }
+  ]
+}

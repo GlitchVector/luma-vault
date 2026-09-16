@@ -18,6 +18,7 @@
 
 mod api;
 mod classifier;
+mod comic;
 mod db;
 mod deviantart;
 mod dupes;
@@ -82,6 +83,8 @@ pub struct AppState {
     /// the harness is not beside the app, which the command reports as a setup
     /// step rather than a failure.
     patreon: Option<PathBuf>,
+    /// The comic pipeline's entry point, resolved the same way.
+    comic: Option<PathBuf>,
     /// Where `.env` and the harness live in a dev tree. The Patreon client is
     /// spawned from here so it finds both.
     repo_root: PathBuf,
@@ -406,6 +409,50 @@ async fn reorder_set(
 #[tauri::command(async)]
 async fn patreon_unmark(state: State<'_, AppState>, ids: Vec<i64>) -> Result<usize, String> {
     api::patreon_unmark(&state, ids)
+}
+
+#[tauri::command(async)]
+async fn comic_list(state: State<'_, AppState>) -> Result<Vec<types::ComicSummary>, String> {
+    api::comic_list(&state)
+}
+
+#[tauri::command(async)]
+async fn comic_read(state: State<'_, AppState>, name: String) -> Result<types::ComicProject, String> {
+    api::comic_read(&state, name)
+}
+
+#[tauri::command(async)]
+async fn comic_create(state: State<'_, AppState>, name: String) -> Result<types::ComicSummary, String> {
+    api::comic_create(&state, name)
+}
+
+#[tauri::command(async)]
+async fn comic_save(
+    state: State<'_, AppState>,
+    name: String,
+    prose: Option<String>,
+    script: Option<serde_json::Value>,
+) -> Result<(), String> {
+    api::comic_save(&state, name, prose, script)
+}
+
+#[tauri::command(async)]
+async fn comic_run(
+    state: State<'_, AppState>,
+    name: String,
+    options: types::ComicRunOptions,
+) -> Result<(), String> {
+    api::comic_run(&state, name, options)
+}
+
+#[tauri::command(async)]
+async fn comic_status(state: State<'_, AppState>, since: i64) -> Result<types::ComicStatus, String> {
+    api::comic_status(&state, since)
+}
+
+#[tauri::command(async)]
+async fn comic_cancel(state: State<'_, AppState>) -> Result<bool, String> {
+    api::comic_cancel(&state)
 }
 
 #[tauri::command(async)]
@@ -795,12 +842,14 @@ pub fn run() {
                     db: Arc::clone(&db),
                     thumb_root,
                     frame_root,
+                    comic_root: comic::comics_root(&data_dir),
                 }),
                 db,
                 pipeline: Arc::clone(&pipeline),
                 watcher,
                 upscaler: upscaler::resolve(&repo_root, resource_dir.as_deref()),
                 patreon: patreon::resolve(&repo_root, resource_dir.as_deref()),
+                comic: comic::resolve(&repo_root, resource_dir.as_deref()),
                 repo_root: repo_root.clone(),
                 data_dir: data_dir.clone(),
                 remote: Arc::new(RemoteState::new(remote::DEFAULT_PORT)),
@@ -931,6 +980,13 @@ pub fn run() {
             patreon_post,
             patreon_tiers,
             patreon_unmark,
+            comic_list,
+            comic_read,
+            comic_create,
+            comic_save,
+            comic_run,
+            comic_status,
+            comic_cancel,
             deviantart_mark,
             set_rating_override,
             remote_status,

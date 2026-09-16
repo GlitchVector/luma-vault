@@ -1,0 +1,210 @@
+/*
+ * The look of the whole book. Restyling is an edit here and nowhere else:
+ * gutters, borders, bleed, balloon shapes, lettering, SFX. `page.ts` writes
+ * the structure, `balloons.js` sizes the balloons; neither knows a colour.
+ *
+ * Fonts are bundled beside this file (SIL Open Font License, see OFL-*.txt)
+ * so a page renders the same on any machine, offline.
+ */
+
+@font-face {
+  font-family: 'Comic Neue';
+  src: url('fonts/ComicNeue-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Comic Neue';
+  src: url('fonts/ComicNeue-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Comic Neue';
+  src: url('fonts/ComicNeue-Italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: 'Comic Neue';
+  src: url('fonts/ComicNeue-BoldItalic.ttf') format('truetype');
+  font-weight: 700;
+  font-style: italic;
+}
+@font-face {
+  font-family: 'Bangers';
+  src: url('fonts/Bangers-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+}
+
+:root {
+  /* Page geometry. --page-w/--page-h come from comic.config.json via page.ts. */
+  --margin: 60px;
+  --gutter: 28px;
+  --paper: #ffffff;
+  --ink: #111111;
+  --panel-border: 6px;
+
+  /* Lettering. */
+  --font-balloon: 'Comic Neue', 'Comic Sans MS', sans-serif;
+  --font-sfx: 'Bangers', Impact, sans-serif;
+  --balloon-size: 34px;
+  --balloon-line: 1.18;
+  --balloon-pad: 22px 30px;
+  --balloon-max: 46%; /* of the panel width */
+  --balloon-inset: 26px; /* distance from the panel edge */
+  --balloon-fill: #ffffff;
+  --balloon-stroke: #111111;
+  --balloon-stroke-w: 4px;
+  --balloon-radius: 34px;
+  --caption-fill: #fff6c2;
+  --sfx-size: 120px;
+  --sfx-fill: #ffdd33;
+  --sfx-stroke: #111111;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #444;
+}
+
+.page {
+  position: relative;
+  width: var(--page-w);
+  height: var(--page-h);
+  background: var(--paper);
+  color: var(--ink);
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: var(--margin);
+}
+
+.grid {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  gap: var(--gutter);
+}
+
+.panel {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
+  background: #222;
+  border: var(--panel-border) solid var(--ink);
+  box-sizing: border-box;
+}
+
+/* A panel that runs off the page. */
+.panel.bleed {
+  border: 0;
+}
+
+.panel > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+/* ---- Balloons -------------------------------------------------------- */
+
+.balloon {
+  position: absolute;
+  max-width: var(--balloon-max);
+  font-family: var(--font-balloon);
+  font-size: var(--balloon-size);
+  font-weight: 700;
+  line-height: var(--balloon-line);
+  text-align: center;
+  color: var(--ink);
+  visibility: hidden; /* balloons.js reveals once the shape is drawn */
+}
+
+.balloon .text {
+  position: relative;
+  display: block;
+  padding: var(--balloon-pad);
+  z-index: 1;
+  overflow-wrap: break-word;
+}
+
+.balloon svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  z-index: 0;
+}
+
+.balloon .shape {
+  fill: var(--balloon-fill);
+  stroke: var(--balloon-stroke);
+  stroke-width: var(--balloon-stroke-w);
+  stroke-linejoin: round;
+}
+
+.balloon.thought .shape {
+  stroke-dasharray: 18 10;
+}
+.balloon.thought .text {
+  font-style: italic;
+  font-weight: 400;
+}
+
+.balloon.shout .text {
+  font-size: calc(var(--balloon-size) * 1.15);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.balloon.caption {
+  text-align: left;
+  font-weight: 400;
+  font-style: italic;
+  max-width: 60%;
+}
+.balloon.caption .shape {
+  fill: var(--caption-fill);
+}
+
+/* ---- Sound effects --------------------------------------------------- */
+
+.sfx {
+  position: absolute;
+  font-family: var(--font-sfx);
+  font-size: var(--sfx-size);
+  line-height: 1;
+  color: var(--sfx-fill);
+  -webkit-text-stroke: 5px var(--sfx-stroke);
+  paint-order: stroke fill;
+  text-shadow: 6px 6px 0 var(--sfx-stroke);
+  transform: rotate(var(--rotate, -8deg));
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+/* Anchors for SFX (balloons are placed by balloons.js with the same idea). */
+.sfx[data-anchor='top-left'] { top: 4%; left: 4%; }
+.sfx[data-anchor='top'] { top: 4%; left: 50%; transform: translateX(-50%) rotate(var(--rotate, -8deg)); }
+.sfx[data-anchor='top-right'] { top: 4%; right: 4%; }
+.sfx[data-anchor='left'] { top: 45%; left: 4%; }
+.sfx[data-anchor='center'] { top: 42%; left: 50%; transform: translateX(-50%) rotate(var(--rotate, -8deg)); }
+.sfx[data-anchor='right'] { top: 45%; right: 4%; }
+.sfx[data-anchor='bottom-left'] { bottom: 6%; left: 4%; }
+.sfx[data-anchor='bottom'] { bottom: 6%; left: 50%; transform: translateX(-50%) rotate(var(--rotate, -8deg)); }
+.sfx[data-anchor='bottom-right'] { bottom: 6%; right: 4%; }
+
+/* ---- Page furniture -------------------------------------------------- */
+
+.folio {
+  position: absolute;
+  bottom: calc(var(--margin) * 0.3);
+  right: var(--margin);
+  font-family: var(--font-balloon);
+  font-size: 26px;
+  color: var(--ink);
+}

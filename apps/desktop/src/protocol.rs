@@ -41,6 +41,8 @@ pub struct ProtocolRoots {
     pub db: Arc<Db>,
     pub thumb_root: PathBuf,
     pub frame_root: PathBuf,
+    /// Comic projects: rendered panels and assembled pages, under app data.
+    pub comic_root: PathBuf,
 }
 
 /// Extract the `path` query parameter and percent-decode it as UTF-8.
@@ -252,6 +254,7 @@ pub fn serve(roots: &ProtocolRoots, path_str: &str, range: Option<&str>) -> File
     let mut allowed: Vec<PathBuf> = roots.db.folder_paths().unwrap_or_default();
     allowed.push(roots.thumb_root.clone());
     allowed.push(roots.frame_root.clone());
+    allowed.push(roots.comic_root.clone());
 
     if !is_allowed(&path, &allowed) {
         // Deliberately terse: a 403 that echoes the path back would make this
@@ -434,6 +437,7 @@ mod tests {
             db,
             thumb_root: dir.path().join("thumbs"),
             frame_root: dir.path().join("frames"),
+            comic_root: dir.path().join("comics"),
         };
 
         let whole = serve(&roots, &inside.to_string_lossy(), None);

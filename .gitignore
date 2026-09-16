@@ -36,3 +36,11 @@ packages/patreon-harness/captures/
 
 # Throwaway set for the first real Patreon draft.
 scratch-patreon-test/
+
+# Comic projects: the worked example keeps its prose, script and finished pages;
+# the per-panel renders, verdicts and page HTML are regenerable from those.
+packages/comic/examples/*/panels/
+packages/comic/examples/*/qa/
+packages/comic/examples/*/build/
+# `out/` too until the pages are rendered by Forge; the mock pages are not the example.
+packages/comic/examples/*/out/

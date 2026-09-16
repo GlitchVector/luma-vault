@@ -1260,6 +1260,7 @@ mod tests {
             db,
             thumb_root: dir.path().join("thumbs"),
             frame_root: dir.path().join("frames"),
+            comic_root: dir.path().join("comics"),
         });
 
         let sharing = Sharing::new(port);

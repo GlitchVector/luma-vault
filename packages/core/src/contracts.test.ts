@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
   characterCountSchema,
+  comicProjectSchema,
+  comicRunOptionsSchema,
+  comicStatusSchema,
+  comicSummarySchema,
   deviantArtAccountSchema,
   deviantArtDraftSchema,
   deviantArtGallerySchema,
@@ -56,6 +60,10 @@ const CASES: Array<[file: string, schema: z.ZodType]> = [
   ['deviantart-summary.json', deviantArtSummarySchema],
   ['remote-status.json', z.array(remoteStatusSchema)],
   ['share-status.json', z.array(shareStatusSchema)],
+  ['comic-summary.json', z.array(comicSummarySchema)],
+  ['comic-project.json', comicProjectSchema],
+  ['comic-run-options.json', z.array(comicRunOptionsSchema)],
+  ['comic-status.json', z.array(comicStatusSchema)],
   ['source-origin.json', z.array(sourceOriginSchema)],
 ]
 

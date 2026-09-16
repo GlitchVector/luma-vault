@@ -1,0 +1,24 @@
+[
+  {
+    "name": "first-light",
+    "title": "First Light",
+    "pages": 3,
+    "panels": 10,
+    "rendered": 10,
+    "assembled": 3,
+    "hasProse": true,
+    "hasScript": true,
+    "updatedAt": 1789600000000
+  },
+  {
+    "name": "untitled-2",
+    "title": null,
+    "pages": 0,
+    "panels": 0,
+    "rendered": 0,
+    "assembled": 0,
+    "hasProse": true,
+    "hasScript": false,
+    "updatedAt": 0
+  }
+]

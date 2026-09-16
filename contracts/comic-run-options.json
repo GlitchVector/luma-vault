@@ -1,0 +1,20 @@
+[
+  {
+    "stage": "all",
+    "page": null,
+    "panel": null,
+    "seed": null,
+    "attempt": null,
+    "force": false,
+    "noTagger": false
+  },
+  {
+    "stage": "panels",
+    "page": 2,
+    "panel": "p2-3",
+    "seed": 8812,
+    "attempt": 1,
+    "force": true,
+    "noTagger": true
+  }
+]
