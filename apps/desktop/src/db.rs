@@ -2515,6 +2515,36 @@ impl Db {
 
     /// Mark or unmark rows by hand.
     ///
+    /// Forget that a selection went to a Patreon draft.
+    ///
+    /// Only forgetting, never marking: a draft recorded by hand would have no
+    /// URL, and unlike DeviantArt nothing here is ever published, so a badge
+    /// with no draft behind it would say nothing true. The record covers the
+    /// original and its 4K variant together (see `patreon::paths_to_record`),
+    /// so forgetting one forgets the pair — whichever of the two was selected.
+    pub fn forget_patreon_posts(&self, ids: &[i64]) -> Result<usize> {
+        let mut conn = self.connection();
+        let transaction = conn.transaction()?;
+        let mut changed = 0;
+        for id in ids {
+            let path: Option<String> = transaction
+                .query_row("SELECT path FROM media WHERE id = ?1", params![id], |row| {
+                    row.get(0)
+                })
+                .optional()?;
+            let Some(path) = path else { continue };
+            changed += transaction.execute(
+                "DELETE FROM patreon_posts
+                 WHERE path = ?1
+                    OR path IN (SELECT v.path FROM media v WHERE v.upscaled_from = ?1)
+                    OR path = (SELECT o.upscaled_from FROM media o WHERE o.path = ?1)",
+                params![path],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(changed)
+    }
+
     /// The escape hatch for everything this app did not do itself: pictures
     /// posted before it could record them, posted from the website, or recorded
     /// wrongly. Marking by hand knows the picture is up but not where, so the
@@ -6071,6 +6101,27 @@ mod tests {
         let first = posted[0].patreon.as_ref().expect("post");
         assert_eq!(first.url, "https://www.patreon.com/posts/169663723/edit");
         assert_eq!(first.posted_at, 1_789_572_000_000);
+    }
+
+    /// The draft that was deleted on the site should not keep a badge here.
+    #[test]
+    fn forgetting_a_patreon_draft_clears_the_badge() {
+        let (db, _) = seeded();
+        let paths = vec!["/media/a.jpg".to_string(), "/media/b.mp4".to_string()];
+        db.record_patreon_post(&paths, "169663723", "https://www.patreon.com/posts/169663723/edit", 1)
+            .expect("record");
+        let a = db.media_by_path("/media/a.jpg").expect("query").expect("row").id;
+
+        assert_eq!(db.forget_patreon_posts(&[a]).expect("forget"), 1);
+
+        let page = db.query_media(&query()).expect("query");
+        let still: Vec<&str> = page
+            .items
+            .iter()
+            .filter(|item| item.patreon.is_some())
+            .map(|item| item.path.as_str())
+            .collect();
+        assert_eq!(still, vec!["/media/b.mp4"]);
     }
 
     /// The compose panel sorts on these; a picture in two runs appears twice

@@ -32,6 +32,7 @@ import {
   deleteMedia,
   deviantArtMark,
   forgeStatus,
+  patreonUnmark,
   isTauri,
   onUpscaleProgress,
   setStarsMany,
@@ -538,6 +539,18 @@ export function App() {
   const allSelectedPosted =
     selected.size > 0 &&
     !items.some((item) => selected.has(item.id) && item.deviantArt === null)
+
+  /** Any of the selection carries a Patreon badge — the only case the unmark button has a job. */
+  const anySelectedOnPatreon = items.some((item) => selected.has(item.id) && item.patreon !== null)
+
+  const unmarkPatreon = useCallback(() => {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    void patreonUnmark(ids).then(
+      () => library.reload(),
+      (error: unknown) => void showMessage(String(error), { title: 'Could not unmark' }),
+    )
+  }, [selected, library])
 
   const markDeviantArt = useCallback(() => {
     const ids = [...selected]
@@ -1194,6 +1207,21 @@ export function App() {
               >
                 {allSelectedPosted ? 'Unmark d' : 'Mark as posted'}
               </button>
+
+              {/* Only ever un-marks, and only shows when there is a mark to
+                  clear: a Patreon record without a draft behind it would say
+                  nothing true, so there is no "mark by hand" twin. */}
+              {anySelectedOnPatreon ? (
+                <button
+                  type="button"
+                  disabled={upscaling !== null}
+                  onClick={unmarkPatreon}
+                  title="Forget that these went to a Patreon draft — only the record here; the draft itself is untouched"
+                  className="mr-2 rounded-full bg-orange-500/15 px-3 py-1 text-[11px] font-medium text-orange-300 hover:bg-orange-500/25 hover:text-orange-200 disabled:cursor-default disabled:bg-orange-500/5 disabled:text-orange-300/30"
+                >
+                  Unmark p
+                </button>
+              ) : null}
 
               <button
                 type="button"

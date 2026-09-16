@@ -31,6 +31,17 @@ const upscaleMedia = vi.fn(async (_ids: number[]) => ({
   errors: [] as string[],
 }))
 
+/** The campaign's rules, as `tiers --json` reports them for this page. */
+const bare = { title: null, amountCents: null, currency: null }
+const RULES = [
+  { id: '68432072', type: 'public', ...bare },
+  { id: '68432073', type: 'patrons', ...bare },
+  { id: '68432074', type: 'tier', title: 'Free', amountCents: 0, currency: 'USD' },
+  { id: '68475609', type: 'tier', title: 'Tip Jar', amountCents: 300, currency: 'USD' },
+  { id: '68475917', type: 'tier', title: 'Supporter', amountCents: 1000, currency: 'USD' },
+]
+const patreonTiers = vi.fn(async () => RULES)
+
 vi.mock('#/lib/native.ts', () => ({
   fileUrl: (path: string) => path,
   openExternal: vi.fn(),
@@ -39,6 +50,7 @@ vi.mock('#/lib/native.ts', () => ({
   mediaByPath: async (path: string) => indexed.get(path) ?? null,
   upscaleMedia: (ids: number[]) => upscaleMedia(ids),
   patreonPost: (...args: unknown[]) => patreonPost(...args),
+  patreonTiers: () => patreonTiers(),
   reorderSet: (...args: unknown[]) => reorderSet(...args),
   reorderSets: (...args: unknown[]) => reorderSets(...args),
 }))
@@ -107,12 +119,15 @@ beforeEach(() => {
   reorderSets.mockClear()
   patreonPost.mockClear()
   upscaleMedia.mockClear()
+  patreonTiers.mockClear()
   indexed.clear()
 })
 
+/** Everything the button needs besides the 4K decision: a title, the adult flag, an audience. */
 function stateAdultWithTitle() {
   fireEvent.change(screen.getByPlaceholderText('what this post is called'), { target: { value: 'a title' } })
   fireEvent.click(screen.getByLabelText('yes'))
+  fireEvent.click(screen.getByLabelText('Everyone'))
 }
 afterEach(cleanup)
 
@@ -163,7 +178,7 @@ describe('PatreonPanel', () => {
 
   // The adult flag is stated, never defaulted: the client checks it against
   // the campaign, and a ticked box is a fact where a default would be a guess.
-  it('will not post until the adult flag has been stated and there is a title', async () => {
+  it('will not post until the adult flag, the audience and a title have all been given', async () => {
     render(<PatreonPanel items={items} sets={['run-a']} members={members} setTitle={null} onClose={vi.fn()} onReordered={vi.fn()} />)
     const button = screen.getByRole('button', { name: 'Create draft' }) as HTMLButtonElement
     expect(button.disabled).toBe(true)
@@ -172,6 +187,9 @@ describe('PatreonPanel', () => {
     expect(button.disabled).toBe(true)
 
     fireEvent.click(screen.getByLabelText('yes'))
+    expect(button.disabled).toBe(true)
+
+    fireEvent.click(screen.getByLabelText('Everyone'))
     expect(button.disabled).toBe(false)
 
     fireEvent.click(button)
@@ -299,6 +317,57 @@ describe('PatreonPanel', () => {
       await vi.waitFor(() => expect(names()).toEqual(['01_upscaled_4k.png', '02.png']))
       drag(1, 0)
       expect(reorderSet).toHaveBeenCalledWith('run-a', ['/vault/02.png', '/vault/01.png'])
+    })
+  })
+
+  // The first draft this panel ever made went up free, because the audience
+  // was a text field for ids. These pin the editor's three choices, by name.
+  describe('who can see it', () => {
+    it('offers the campaign tiers by name and price, once read', async () => {
+      render(<PatreonPanel items={items} sets={[]} members={[]} setTitle={null} onClose={vi.fn()} onReordered={vi.fn()} />)
+      await vi.waitFor(() => expect(patreonTiers).toHaveBeenCalledOnce())
+      fireEvent.click(screen.getByLabelText('Some tiers'))
+      expect(screen.getByLabelText(/Supporter/).closest('label')?.textContent).toContain('$10.00')
+      expect(screen.getByLabelText(/Tip Jar/)).toBeTruthy()
+    })
+
+    it('locks to every paid member with the campaign own patrons rule', async () => {
+      render(<PatreonPanel items={items} sets={[]} members={[]} setTitle={null} onClose={vi.fn()} onReordered={vi.fn()} />)
+      await vi.waitFor(() => expect(patreonTiers).toHaveBeenCalledOnce())
+      fireEvent.change(screen.getByPlaceholderText('what this post is called'), { target: { value: 'a title' } })
+      fireEvent.click(screen.getByLabelText('yes'))
+      fireEvent.click(screen.getByLabelText('Paid members'))
+      fireEvent.click(screen.getByRole('button', { name: 'Create draft' }))
+      await vi.waitFor(() =>
+        expect(patreonPost).toHaveBeenCalledWith(expect.objectContaining({ tiers: ['68432073'] })),
+      )
+    })
+
+    it('locks to the picked tiers, and to nobody until one is picked', async () => {
+      render(<PatreonPanel items={items} sets={[]} members={[]} setTitle={null} onClose={vi.fn()} onReordered={vi.fn()} />)
+      await vi.waitFor(() => expect(patreonTiers).toHaveBeenCalledOnce())
+      fireEvent.change(screen.getByPlaceholderText('what this post is called'), { target: { value: 'a title' } })
+      fireEvent.click(screen.getByLabelText('yes'))
+      fireEvent.click(screen.getByLabelText('Some tiers'))
+      const button = screen.getByRole('button', { name: 'Create draft' }) as HTMLButtonElement
+      // "Some tiers" with none ticked would lock the post to nobody.
+      expect(button.disabled).toBe(true)
+
+      fireEvent.click(screen.getByLabelText(/Supporter/))
+      fireEvent.click(screen.getByLabelText(/Tip Jar/))
+      expect(button.disabled).toBe(false)
+      fireEvent.click(button)
+      await vi.waitFor(() =>
+        expect(patreonPost).toHaveBeenCalledWith(expect.objectContaining({ tiers: ['68475609', '68475917'] })),
+      )
+    })
+
+    it('says so when the campaign could not be read, and still allows a public post', async () => {
+      patreonTiers.mockRejectedValueOnce(new Error('the Patreon client is not here'))
+      render(<PatreonPanel items={items} sets={[]} members={[]} setTitle={null} onClose={vi.fn()} onReordered={vi.fn()} />)
+      await vi.waitFor(() => expect(screen.getByText(/could not read the campaign/).textContent).toContain('not here'))
+      stateAdultWithTitle()
+      expect((screen.getByRole('button', { name: 'Create draft' }) as HTMLButtonElement).disabled).toBe(false)
     })
   })
 })

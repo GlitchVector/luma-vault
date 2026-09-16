@@ -644,6 +644,23 @@ pub struct PatreonRequest {
     pub adult: bool,
 }
 
+/// One row of the campaign's access control, as the client reads it.
+///
+/// The same JSON the client prints for `tiers --json`, so this is parsed
+/// straight off its stdout and handed to the panel unchanged. `kind` is
+/// `public`, `patrons`, `non_member` or `tier`; only a tier has a title and a
+/// price, taken from the reward the rule points at.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PatreonAccessRule {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub title: Option<String>,
+    pub amount_cents: Option<i64>,
+    pub currency: Option<String>,
+}
+
 /// One line of the client's own progress, plus enough to draw a bar.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

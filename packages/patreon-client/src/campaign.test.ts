@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accessRulesFor, assertAdultMatchesCampaign, type Campaign } from './campaign.ts'
+import { accessRulesFor, accessRulesFrom, assertAdultMatchesCampaign, type Campaign } from './campaign.ts'
 import type { ResolvedPost } from './manifest.ts'
 
 const post = (adult: boolean): ResolvedPost => ({
@@ -21,10 +21,42 @@ const campaign = (isNsfw: boolean, accessRules: Campaign['accessRules'] = []): C
   accessRules,
 })
 
+const bare = { title: null, amountCents: null, currency: null }
 const RULES = [
-  { id: '68432072', type: 'public' as const },
-  { id: '68475917', type: 'tier' as const },
+  { id: '68432072', type: 'public' as const, ...bare },
+  { id: '68475917', type: 'tier' as const, title: 'Supporter', amountCents: 1000, currency: 'USD' },
 ]
+
+describe('accessRulesFrom', () => {
+  // The shape of the captured campaign read: rules point at rewards through a
+  // relationship, and the rewards ride along in the same `included`, in
+  // whatever order the server felt like.
+  it('names each tier rule after the reward it points at', () => {
+    const rules = accessRulesFrom({
+      data: { id: '16736888' },
+      included: [
+        { type: 'access-rule', id: '68475917', attributes: { access_rule_type: 'tier' }, relationships: { tier: { data: { id: '29538147', type: 'reward' } } } },
+        { type: 'access-rule', id: '68432072', attributes: { access_rule_type: 'public' }, relationships: { tier: { data: null } } },
+        { type: 'reward', id: '29538147', attributes: { title: 'Supporter', amount_cents: 1000, currency: 'USD' } },
+        { type: 'reward', id: '-1', attributes: {} },
+      ],
+    })
+    expect(rules).toEqual([
+      { id: '68475917', type: 'tier', title: 'Supporter', amountCents: 1000, currency: 'USD' },
+      { id: '68432072', type: 'public', ...bare },
+    ])
+  })
+
+  // The id is what a post carries; a missing reward costs the label, not the rule.
+  it('keeps a tier rule whose reward did not come along', () => {
+    const rules = accessRulesFrom({
+      included: [
+        { type: 'access-rule', id: '1', attributes: { access_rule_type: 'tier' }, relationships: { tier: { data: { id: '9', type: 'reward' } } } },
+      ],
+    })
+    expect(rules).toEqual([{ id: '1', type: 'tier', ...bare }])
+  })
+})
 
 describe('accessRulesFor', () => {
   // Public is a rule with an id, not the absence of one, and the id is

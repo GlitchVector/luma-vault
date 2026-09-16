@@ -34,6 +34,7 @@ import {
   shareStatusSchema,
   scanProgressSchema,
   deviantArtAccountSchema,
+  patreonAccessRuleSchema,
   patreonSummarySchema,
   setMemberRowSchema,
   deviantArtGallerySchema,
@@ -63,6 +64,7 @@ import {
   type ShareStatus,
   type SourceOrigin,
   type ThrottleLevel,
+  type PatreonAccessRule,
   type PatreonRequest,
   type PatreonSummary,
   type SetMemberRow,
@@ -906,6 +908,23 @@ export interface PatreonProgress {
  */
 export async function patreonPost(request: PatreonRequest): Promise<PatreonSummary> {
   return patreonSummarySchema.parse(await invoke('patreon_post', { request }))
+}
+
+/**
+ * The campaign's access rules — public, paid members, each tier by name —
+ * for the panel's picker. Read through the client, on the host; a few seconds.
+ */
+export async function patreonTiers(): Promise<PatreonAccessRule[]> {
+  return z.array(patreonAccessRuleSchema).parse(await invoke('patreon_tiers'))
+}
+
+/**
+ * Forget that a selection went to a Patreon draft. The record only — the
+ * draft is the site's and stays. For a draft deleted there, or made wrong.
+ */
+export async function patreonUnmark(ids: number[]): Promise<number> {
+  if (!(await hasBackend())) return 0
+  return (await invoke('patreon_unmark', { ids })) as number
 }
 
 /** Per-line progress while a post runs. Returns an unsubscribe. */
