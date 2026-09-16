@@ -42,6 +42,7 @@ function sidebar(listing: Listing, given: SetSummary[] = sets) {
       onListing={vi.fn()}
       selectedSet={null}
       onSet={vi.fn()}
+      onHome={vi.fn()}
       tileSize={300}
       onTileSize={vi.fn()}
       selectedFolderId={null}
@@ -85,5 +86,39 @@ describe('FolderSidebar set lists', () => {
     render(sidebar('characters', sets.slice(2)))
     expect(screen.getByRole('button', { name: 'Sets' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'LoRA' })).toBeNull()
+  })
+
+  it('makes the wordmark a way back to everything', () => {
+    // On a phone the sidebar is a drawer, and once a set is filtering the grid
+    // there is no other obvious "show me everything" — a dead wordmark is a
+    // dead end there.
+    const onHome = vi.fn()
+    render(
+      <FolderSidebar
+        folders={[]}
+        stats={null}
+        characters={[]}
+        onCharacter={vi.fn()}
+        sets={sets}
+        listing="sets"
+        onListing={vi.fn()}
+        selectedSet={null}
+        onSet={vi.fn()}
+        onHome={onHome}
+        tileSize={300}
+        onTileSize={vi.fn()}
+        selectedFolderId={null}
+        onSelect={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onRescan={vi.fn()}
+        onRetryFailed={vi.fn()}
+        onImportRatings={vi.fn()}
+        exclusions={[]}
+        onInclude={vi.fn()}
+      />,
+    )
+    screen.getByRole('button', { name: 'Luma Vault' }).click()
+    expect(onHome).toHaveBeenCalledOnce()
   })
 })

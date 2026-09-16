@@ -42,6 +42,14 @@ interface FolderSidebarProps {
   selectedSet: string | null
   /** A set was clicked — or the same one again, which clears it. */
   onSet: (run: string | null) => void
+  /**
+   * The title was clicked: go home — every folder, no set, no search.
+   *
+   * A wordmark that does nothing is a dead end on a phone, where the sidebar is
+   * a drawer and there is no other obvious way back to "show me everything"
+   * once a set is filtering the grid.
+   */
+  onHome: () => void
   /** Longest edge of a grid tile, in CSS pixels. */
   tileSize: number
   onTileSize: (size: number) => void
@@ -66,6 +74,7 @@ export function FolderSidebar({
   onListing,
   selectedSet,
   onSet,
+  onHome,
   tileSize,
   onTileSize,
   selectedFolderId,
@@ -90,7 +99,16 @@ export function FolderSidebar({
   return (
     <aside className="flex w-60 shrink-0 flex-col gap-3 border-r border-white/5 bg-zinc-950/60 p-3">
       <div className="flex items-center justify-between">
-        <h1 className="text-sm font-semibold tracking-tight text-zinc-200">Luma Vault</h1>
+        <h1 className="text-sm font-semibold tracking-tight">
+          <button
+            type="button"
+            onClick={onHome}
+            title="Show everything again"
+            className="rounded text-zinc-200 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-indigo-400"
+          >
+            Luma Vault
+          </button>
+        </h1>
         <Button size="sm" variant="primary" onClick={onAdd} title="Watch another folder">
           Add
         </Button>
