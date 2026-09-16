@@ -303,6 +303,27 @@ impl Db {
             Self::backfill_upscaled_from(&conn)?;
         }
 
+        // Post records written before `pair_paths` existed sit on one half of
+        // an original/4K pair — usually the hidden variant. Copy each to the
+        // other half. `OR IGNORE` makes this a no-op once done, and the
+        // tables hold dozens of rows, so it simply runs on every open.
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO deviantart_posts (path, item_id, deviation_id, url, published, posted_at)
+                 SELECT m.upscaled_from, p.item_id, p.deviation_id, p.url, p.published, p.posted_at
+                 FROM deviantart_posts p JOIN media m ON m.path = p.path
+                 WHERE m.upscaled_from IS NOT NULL;
+             INSERT OR IGNORE INTO deviantart_posts (path, item_id, deviation_id, url, published, posted_at)
+                 SELECT v.path, p.item_id, p.deviation_id, p.url, p.published, p.posted_at
+                 FROM deviantart_posts p JOIN media v ON v.upscaled_from = p.path;
+             INSERT OR IGNORE INTO patreon_posts (path, post_id, url, posted_at)
+                 SELECT m.upscaled_from, q.post_id, q.url, q.posted_at
+                 FROM patreon_posts q JOIN media m ON m.path = q.path
+                 WHERE m.upscaled_from IS NOT NULL;
+             INSERT OR IGNORE INTO patreon_posts (path, post_id, url, posted_at)
+                 SELECT v.path, q.post_id, q.url, q.posted_at
+                 FROM patreon_posts q JOIN media v ON v.upscaled_from = q.path;",
+        )?;
+
         // Partial index over exactly the rows the thumbnail queue scans.
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS media_thumb_queue
@@ -2445,7 +2466,9 @@ impl Db {
             )?;
             let mut written = 0;
             for path in paths {
-                written += insert.execute(params![path, post_id, url, now])?;
+                for each in Self::pair_paths(&tx, path)? {
+                    written += insert.execute(params![each, post_id, url, now])?;
+                }
             }
             written
         };
@@ -2489,28 +2512,54 @@ impl Db {
         url: Option<&str>,
         published: bool,
     ) -> Result<()> {
-        let conn = self.connection();
-        conn.execute(
-            "INSERT INTO deviantart_posts (path, item_id, deviation_id, url, published, posted_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(path) DO UPDATE SET
-                 item_id      = COALESCE(excluded.item_id, item_id),
-                 deviation_id = COALESCE(excluded.deviation_id, deviation_id),
-                 url          = COALESCE(excluded.url, url),
-                 -- Never demote. A row that is public stays public even if a
-                 -- later staging of the same file reports otherwise.
-                 published    = MAX(published, excluded.published),
-                 posted_at    = excluded.posted_at",
-            params![
-                path,
-                item_id,
-                deviation_id,
-                url,
-                i64::from(published),
-                now_ms()
-            ],
-        )?;
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        let now = now_ms();
+        for each in Self::pair_paths(&tx, path)? {
+            tx.execute(
+                "INSERT INTO deviantart_posts (path, item_id, deviation_id, url, published, posted_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(path) DO UPDATE SET
+                     item_id      = COALESCE(excluded.item_id, item_id),
+                     deviation_id = COALESCE(excluded.deviation_id, deviation_id),
+                     url          = COALESCE(excluded.url, url),
+                     -- Never demote. A row that is public stays public even if a
+                     -- later staging of the same file reports otherwise.
+                     published    = MAX(published, excluded.published),
+                     posted_at    = excluded.posted_at",
+                params![each, item_id, deviation_id, url, i64::from(published), now],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
+    }
+
+    /// A path and the other half of its original/4K pair, when the index has one.
+    ///
+    /// Every post record is written for both halves. The grid shows originals
+    /// and hides their variants, and both upload paths swap the variant in
+    /// before sending — so a record on the uploaded file alone sat on a row
+    /// nobody could see. For three weeks that was the DeviantArt state of this
+    /// library: three pictures public since August showed no badge, and were
+    /// picked for a Patreon test as if they were new.
+    fn pair_paths(conn: &Connection, path: &str) -> Result<Vec<String>> {
+        let mut paths = vec![path.to_string()];
+        let other: Option<String> = conn
+            .query_row(
+                "SELECT COALESCE(
+                     (SELECT o.upscaled_from FROM media o WHERE o.path = ?1),
+                     (SELECT v.path FROM media v WHERE v.upscaled_from = ?1 LIMIT 1))",
+                params![path],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        if let Some(other) = other {
+            if other != path {
+                paths.push(other);
+            }
+        }
+        Ok(paths)
     }
 
     /// Mark or unmark rows by hand.
@@ -2561,15 +2610,25 @@ impl Db {
                 .optional()?;
             let Some(path) = path else { continue };
             changed += if posted {
-                transaction.execute(
-                    "INSERT INTO deviantart_posts (path, published, posted_at)
-                     VALUES (?1, 1, ?2)
-                     ON CONFLICT(path) DO UPDATE SET published = 1",
-                    params![path, now_ms()],
-                )?
+                let mut written = 0;
+                for each in Self::pair_paths(&transaction, &path)? {
+                    written += transaction.execute(
+                        "INSERT INTO deviantart_posts (path, published, posted_at)
+                         VALUES (?1, 1, ?2)
+                         ON CONFLICT(path) DO UPDATE SET published = 1",
+                        params![each, now_ms()],
+                    )?;
+                }
+                written
             } else {
+                // The pair, not the row: the record may sit on the 4K variant
+                // the grid hides, and clearing the visible half alone would
+                // leave the badge exactly where it was.
                 transaction.execute(
-                    "DELETE FROM deviantart_posts WHERE path = ?1",
+                    "DELETE FROM deviantart_posts
+                     WHERE path = ?1
+                        OR path IN (SELECT v.path FROM media v WHERE v.upscaled_from = ?1)
+                        OR path = (SELECT o.upscaled_from FROM media o WHERE o.path = ?1)",
                     params![path],
                 )?
             };
@@ -3255,6 +3314,10 @@ const CERTAINLY_ANIMATED: [&str; 1] = [".gif"];
 /// that opens 155,000 images to answer is not a filter.
 const MAYBE_ANIMATED: [&str; 3] = [".gif", ".webp", ".avif"];
 
+/// The badge columns read the row's own record only. The pair — original and
+/// 4K variant — is kept in step at write time (`pair_paths`), not here: SQLite
+/// drops the outer `media` reference the moment a subselect names `media`
+/// again, so a read-time pair lookup cannot be written in this column list.
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
                              duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to, \n                             (SELECT p.url FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_url, \n                             (SELECT p.published FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_published, \n                             (SELECT p.posted_at FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_posted_at, \n                             rating_override, \n                             (SELECT q.url FROM patreon_posts q WHERE q.path = media.path) \n                             AS patreon_url, \n                             (SELECT q.posted_at FROM patreon_posts q WHERE q.path = media.path) \n                             AS patreon_posted_at";
@@ -6101,6 +6164,68 @@ mod tests {
         let first = posted[0].patreon.as_ref().expect("post");
         assert_eq!(first.url, "https://www.patreon.com/posts/169663723/edit");
         assert_eq!(first.posted_at, 1_789_572_000_000);
+    }
+
+    /// The upload swaps in the 4K variant and records that path; the grid
+    /// shows the original. For three weeks that meant no badge on anything
+    /// visible — and three posted pictures picked for a test as if unposted.
+    /// So a record is written for both halves of the pair, and cleared for both.
+    #[test]
+    fn a_post_recorded_on_the_4k_variant_shows_on_the_original_and_back() {
+        let (db, folder) = seeded();
+        db.insert_media_batch(
+            folder,
+            &[file("/media/a_upscaled_4k.jpg", MediaKind::Image, 300)],
+            2,
+        )
+        .unwrap();
+        db.record_deviantart_post("/media/a_upscaled_4k.jpg", Some(1), None, Some("https://d/1"), true)
+            .expect("record");
+        db.record_patreon_post(&["/media/a.jpg".to_string()], "1", "https://p/1", 5)
+            .expect("record");
+
+        let original = db.media_by_path("/media/a.jpg").unwrap().expect("original");
+        assert_eq!(original.deviant_art.as_ref().map(|post| post.url.as_deref()), Some(Some("https://d/1")));
+        let variant = db.media_by_path("/media/a_upscaled_4k.jpg").unwrap().expect("variant");
+        assert_eq!(variant.patreon.as_ref().map(|post| post.url.as_str()), Some("https://p/1"));
+
+        // Unmarking the visible half clears the record on the hidden one.
+        assert_eq!(db.set_deviantart_posted(&[original.id], false).unwrap(), 2);
+        assert!(db.media_by_path("/media/a.jpg").unwrap().unwrap().deviant_art.is_none());
+        assert!(db.media_by_path("/media/a_upscaled_4k.jpg").unwrap().unwrap().deviant_art.is_none());
+    }
+
+    /// The 55 records this library already had were all on the variant. A
+    /// reopen copies each across, once; a second reopen changes nothing.
+    #[test]
+    fn records_from_before_the_pair_rule_are_copied_to_the_other_half_on_open() {
+        let (db, folder) = seeded();
+        db.insert_media_batch(
+            folder,
+            &[file("/media/a_upscaled_4k.jpg", MediaKind::Image, 300)],
+            2,
+        )
+        .unwrap();
+        // Written the old way: one row, on the variant, no pairing.
+        db.connection()
+            .execute(
+                "INSERT INTO deviantart_posts (path, url, published, posted_at) VALUES (?1, ?2, 1, 7)",
+                params!["/media/a_upscaled_4k.jpg", "https://d/old"],
+            )
+            .unwrap();
+        assert!(db.media_by_path("/media/a.jpg").unwrap().unwrap().deviant_art.is_none());
+
+        db.migrate().expect("reopen");
+        let copied = db.media_by_path("/media/a.jpg").unwrap().unwrap().deviant_art.expect("badge");
+        assert_eq!(copied.url.as_deref(), Some("https://d/old"));
+        assert_eq!(copied.posted_at, 7);
+
+        db.migrate().expect("reopen again");
+        let rows: i64 = db
+            .connection()
+            .query_row("SELECT count(*) FROM deviantart_posts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 2);
     }
 
     /// The draft that was deleted on the site should not keep a badge here.
