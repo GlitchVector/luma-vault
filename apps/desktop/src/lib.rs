@@ -388,12 +388,24 @@ async fn patreon_post(
 }
 
 #[tauri::command(async)]
+async fn patreon_tiers(
+    state: State<'_, AppState>,
+) -> Result<Vec<types::PatreonAccessRule>, String> {
+    api::patreon_tiers(&state).await
+}
+
+#[tauri::command(async)]
 async fn reorder_set(
     state: State<'_, AppState>,
     run: String,
     paths: Vec<String>,
 ) -> Result<usize, String> {
     api::reorder_set(&state, run, paths)
+}
+
+#[tauri::command(async)]
+async fn patreon_unmark(state: State<'_, AppState>, ids: Vec<i64>) -> Result<usize, String> {
+    api::patreon_unmark(&state, ids)
 }
 
 #[tauri::command(async)]
@@ -917,6 +929,8 @@ pub fn run() {
             reorder_sets,
             set_members,
             patreon_post,
+            patreon_tiers,
+            patreon_unmark,
             deviantart_mark,
             set_rating_override,
             remote_status,

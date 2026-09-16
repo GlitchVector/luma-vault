@@ -307,6 +307,24 @@ pub async fn patreon_post(
     .map_err(|error| format!("the Patreon run was interrupted: {error}"))?
 }
 
+/// The campaign's access rules, for the panel's picker.
+///
+/// Through the client, like the post itself: the cookie jar and the captured
+/// endpoint are its, and reading a campaign twice — once here in Rust — would
+/// be a second copy of the protocol to keep right.
+pub async fn patreon_tiers(state: &AppState) -> Result<Vec<crate::types::PatreonAccessRule>, String> {
+    let Some(cli) = state.patreon.clone() else {
+        return Err(
+            "the Patreon client is not here: packages/patreon-harness/src/cli.ts was not found beside the app"
+                .to_string(),
+        );
+    };
+    let repo_root = state.repo_root.clone();
+    tauri::async_runtime::spawn_blocking(move || crate::patreon::tiers(&cli, &repo_root).map_err(stringify))
+        .await
+        .map_err(|error| format!("reading the Patreon tiers was interrupted: {error}"))?
+}
+
 /// What an img2img was made from, found perceptually and walked back to the
 /// picture that started the lineage.
 ///
@@ -958,6 +976,15 @@ pub fn deviantart_mark(state: &AppState, ids: Vec<i64>, posted: bool) -> Result<
         .map_err(|error| format!("{error:#}"))
 }
 
+/// Forget that a selection went to a Patreon draft — the record only; the
+/// draft itself is the site's, and this never touches it.
+pub fn patreon_unmark(state: &AppState, ids: Vec<i64>) -> Result<usize, String> {
+    if ids.is_empty() {
+        return Err("nothing selected".to_string());
+    }
+    state.db.forget_patreon_posts(&ids).map_err(|error| format!("{error:#}"))
+}
+
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
@@ -1261,6 +1288,8 @@ pub async fn dispatch(
         // the repo with the Node client, and the cookie jar. A browser on the
         // iPad has none of those, and neither would a desktop peer.
         "patreon_post" => ok(patreon_post(app, state, arg(args, "request")?).await?),
+        "patreon_tiers" => ok(patreon_tiers(state).await?),
+        "patreon_unmark" => ok(patreon_unmark(state, arg(args, "ids")?)?),
         "deviantart_send" => ok(deviantart_send(
             app,
             state,

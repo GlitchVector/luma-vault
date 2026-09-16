@@ -125,6 +125,13 @@ fn patreon_requests_match_the_shared_fixture() {
 }
 
 #[test]
+fn patreon_access_rules_match_the_shared_fixture() {
+    round_trip::<Vec<crate::types::PatreonAccessRule>>(include_str!(
+        "../../../contracts/patreon-access-rule.json"
+    ));
+}
+
+#[test]
 fn patreon_summaries_match_the_shared_fixture() {
     round_trip::<Vec<crate::types::PatreonSummary>>(include_str!(
         "../../../contracts/patreon-summary.json"

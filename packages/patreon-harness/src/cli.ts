@@ -91,7 +91,7 @@ const usage = [
   '  diff <a.har> <b.har>           what one changed dimension did to the protocol',
   '  generate --har <har> --map <m> rewrite endpoints.generated.ts from a capture',
   '  scrub <har>                    take the credentials out of a HAR',
-  '  tiers                          list the campaign access rules a manifest can name',
+  '  tiers [--json]                 list the campaign access rules a manifest can name',
   '  probe                          does a plain Node request work, or is Chrome really needed?',
   '  post <set> [--dry-run]         the plan, then the draft (never published)',
   '  post --job <file>              the same, from a job the desktop app assembled',
@@ -110,7 +110,7 @@ const ACCEPTS: Record<string, readonly string[]> = {
   generate: ['har', 'map', 'out', 'host'],
   scrub: ['out'],
   post: ['dry-run', 'job'],
-  tiers: [],
+  tiers: ['json'],
   probe: ['url'],
 }
 
@@ -305,9 +305,15 @@ switch (command) {
     const campaignId = requireCampaignId()
     const session = await fromCookies(resolve(CAPTURE_DIR, 'storageState.json'))
     const campaign = await readCampaign(session, campaignId)
+    // One line of JSON for the app's tier picker; the human form otherwise.
+    if (flag('json')) {
+      process.stdout.write(`${JSON.stringify(campaign)}\n`)
+      break
+    }
     process.stdout.write(`${campaign.name} (${campaign.id})${campaign.isNsfw ? ' — adult' : ''}\n\n`)
     for (const rule of campaign.accessRules) {
-      process.stdout.write(`  ${rule.id.padEnd(12)} ${rule.type}\n`)
+      const price = rule.amountCents === null ? '' : ` ${(rule.amountCents / 100).toFixed(2)} ${rule.currency ?? ''}`
+      process.stdout.write(`  ${rule.id.padEnd(12)} ${rule.type.padEnd(11)}${rule.title ?? ''}${price}\n`)
     }
     process.stdout.write(
       '\nPut the tier ids into a manifest\'s "tiers". "public" is implied by access: "public".\n',

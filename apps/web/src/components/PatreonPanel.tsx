@@ -3,6 +3,7 @@ import {
   actLabelOf,
   isFourK,
   type MediaItem,
+  type PatreonAccessRule,
   type PatreonSummary,
   type SetMemberRow,
 } from '@luma/core'
@@ -14,6 +15,7 @@ import {
   onUpscaleProgress,
   openExternal,
   patreonPost,
+  patreonTiers,
   reorderSet,
   reorderSets,
   upscaleMedia,
@@ -56,6 +58,27 @@ export function needsFourK(item: MediaItem): boolean {
 /** What has been decided about the pictures that have no 4K version. */
 type FourKDecision = 'pending' | 'upscale' | 'as-is'
 
+/**
+ * Who a post is for, as the editor's own three choices: everyone, every paid
+ * member, or the tiers picked by hand. Each is an access rule on the campaign
+ * — public and "paid members" are rules with ids of their own, not the absence
+ * of one, which is why the request carries ids for all three.
+ */
+type Audience = 'public' | 'patrons' | 'tiers'
+
+/** "Supporter · $10.00", or the id when the reward gave no name. */
+function ruleLabel(rule: PatreonAccessRule): string {
+  const name = rule.title ?? rule.id
+  if (rule.amountCents === null) return name
+  const amount =
+    rule.currency === null
+      ? (rule.amountCents / 100).toFixed(2)
+      : // Pinned to en-US: it is what the editor shows for a USD campaign, and a
+        // label that reads differently per machine would be a test that cannot pin it.
+        new Intl.NumberFormat('en-US', { style: 'currency', currency: rule.currency }).format(rule.amountCents / 100)
+  return `${name} · ${amount}`
+}
+
 /** How long to wait for the watcher to index a fresh 4K file. */
 const INDEX_WAIT_MS = 45_000
 const INDEX_POLL_MS = 1_000
@@ -88,7 +111,11 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
   const [rows, setRows] = useState<MediaItem[]>(items)
   const [title, setTitle_] = useState(setTitle ?? '')
   const [body, setBody] = useState('')
-  const [tierText, setTierText] = useState('')
+  /** The campaign's rules, once read. `null` while reading; an error is shown in their place. */
+  const [rules, setRules] = useState<PatreonAccessRule[] | null>(null)
+  const [rulesError, setRulesError] = useState<string | null>(null)
+  const [audience, setAudience] = useState<Audience | null>(null)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
   const [adult, setAdult] = useState<boolean | null>(null)
   const [progress, setProgress] = useState<PatreonProgress | null>(null)
   const [summary, setSummary] = useState<PatreonSummary | null>(null)
@@ -151,6 +178,20 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
 
   const needing = useMemo(() => rows.filter(needsFourK), [rows])
 
+  // The rules are the campaign's, read once per panel: a few seconds through
+  // the client, on the cookie jar. Nothing here is guessed — the first draft
+  // from this panel went up free because the field asked for ids nobody had.
+  useEffect(() => {
+    void patreonTiers().then(
+      (found) => {
+        if (live.current) setRules(found)
+      },
+      (reason: unknown) => {
+        if (live.current) setRulesError(String(reason))
+      },
+    )
+  }, [])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && progress === null && upscaling === null) onClose()
@@ -159,10 +200,17 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose, progress, upscaling])
 
-  const tiers = tierText
-    .split(/[,\s]+/)
-    .map((each) => each.trim())
-    .filter((each) => each.length > 0)
+  const patronsRule = rules?.find((rule) => rule.type === 'patrons') ?? null
+  const tierRules = useMemo(() => (rules ?? []).filter((rule) => rule.type === 'tier'), [rules])
+  /** The access-rule ids the post carries. Empty means public — the client resolves that rule itself. */
+  const tiers =
+    audience === 'patrons' && patronsRule !== null
+      ? [patronsRule.id]
+      : audience === 'tiers'
+        ? tierRules.filter((rule) => picked.has(rule.id)).map((rule) => rule.id)
+        : []
+  /** Somebody has been chosen, and for the two locked choices the choice resolved to at least one rule. */
+  const audienceChosen = audience === 'public' || tiers.length > 0
 
   /**
    * Make the missing 4K versions, then stand them in for their originals.
@@ -284,7 +332,8 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
 
   const busy = progress !== null || upscaling !== null || resolving > 0
   const undecided = needing.length > 0 && decision === 'pending'
-  const canSend = !busy && !undecided && summary === null && title.trim().length > 0 && adult !== null
+  const canSend =
+    !busy && !undecided && summary === null && title.trim().length > 0 && adult !== null && audienceChosen
   const fourKCount = rows.filter((row) => !needsFourK(row)).length
 
   return (
@@ -373,16 +422,6 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
                 className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-zinc-200 outline-none focus:border-indigo-400/60"
               />
             </label>
-            <label className="flex min-w-48 items-center gap-2">
-              <span className="shrink-0 text-zinc-500">Tiers</span>
-              <input
-                value={tierText}
-                onChange={(event) => setTierText(event.target.value)}
-                placeholder="empty = public"
-                title="Access-rule ids, comma separated. `pnpm patreon tiers` lists them. Empty makes the post public."
-                className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/30 px-2 py-1 font-mono text-xs text-zinc-200 outline-none focus:border-indigo-400/60"
-              />
-            </label>
             {/* Three states on purpose. Unset is what stops the button; there is
                 no default because the client checks this against the campaign
                 and a ticked box is a fact where a default would be a guess. */}
@@ -407,13 +446,78 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
                   ? 'Decide about the pictures with no 4K version first'
                   : adult === null
                     ? 'Say whether this is adult content first'
-                    : title.trim().length === 0
-                      ? 'Give the post a title first'
-                      : 'Upload everything and stop at a draft. Nothing is published.'
+                    : !audienceChosen
+                      ? 'Say who can see it first'
+                      : title.trim().length === 0
+                        ? 'Give the post a title first'
+                        : 'Upload everything and stop at a draft. Nothing is published.'
               }
             >
               Create draft
             </Button>
+          </div>
+
+          {/* Chosen, never defaulted, for the same reason as the adult box:
+              the one draft this panel made before it existed went up free. */}
+          <div
+            role="group"
+            aria-label="Who can see it"
+            className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-white/5 px-4 py-2 text-sm"
+          >
+            <span className="text-zinc-500">Who can see it</span>
+            <label className="flex items-center gap-1">
+              <input type="radio" name="audience" checked={audience === 'public'} onChange={() => setAudience('public')} />
+              <span className={audience === 'public' ? 'text-zinc-200' : 'text-zinc-500'}>Everyone</span>
+            </label>
+            <label className="flex items-center gap-1" title={rules !== null && patronsRule === null ? 'This campaign has no paid-members rule' : undefined}>
+              <input
+                type="radio"
+                name="audience"
+                checked={audience === 'patrons'}
+                disabled={rules !== null && patronsRule === null}
+                onChange={() => setAudience('patrons')}
+              />
+              <span className={audience === 'patrons' ? 'text-zinc-200' : 'text-zinc-500'}>Paid members</span>
+            </label>
+            <label className="flex items-center gap-1" title={rules !== null && tierRules.length === 0 ? 'This campaign has no tiers' : undefined}>
+              <input
+                type="radio"
+                name="audience"
+                checked={audience === 'tiers'}
+                disabled={rules !== null && tierRules.length === 0}
+                onChange={() => setAudience('tiers')}
+              />
+              <span className={audience === 'tiers' ? 'text-zinc-200' : 'text-zinc-500'}>Some tiers</span>
+            </label>
+            {rules === null && rulesError === null ? (
+              <span className="flex items-center gap-2 text-zinc-500">
+                <Spinner /> reading the campaign…
+              </span>
+            ) : null}
+            {rulesError !== null ? (
+              <span className="text-rose-300" title={rulesError}>
+                could not read the campaign's tiers — {rulesError.split('\n')[0]}
+              </span>
+            ) : null}
+            {audience === 'tiers'
+              ? tierRules.map((rule) => (
+                  <label key={rule.id} className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={picked.has(rule.id)}
+                      onChange={() =>
+                        setPicked((current) => {
+                          const next = new Set(current)
+                          if (next.has(rule.id)) next.delete(rule.id)
+                          else next.add(rule.id)
+                          return next
+                        })
+                      }
+                    />
+                    <span className={picked.has(rule.id) ? 'text-zinc-200' : 'text-zinc-500'}>{ruleLabel(rule)}</span>
+                  </label>
+                ))
+              : null}
           </div>
 
           <label className="flex shrink-0 flex-col gap-1 border-b border-white/5 px-4 py-2 text-sm">

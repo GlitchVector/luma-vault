@@ -26,7 +26,7 @@ use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter};
 
 use crate::db::Db;
-use crate::types::{PatreonProgress, PatreonRequest, PatreonSummary};
+use crate::types::{PatreonAccessRule, PatreonProgress, PatreonRequest, PatreonSummary};
 
 pub const PROGRESS_EVENT: &str = "luma://patreon";
 
@@ -52,6 +52,67 @@ pub fn resolve(repo_root: &Path, resource_dir: Option<&Path>) -> Option<PathBuf>
 /// Where jobs and their resume state live. Under app data, never beside media.
 pub fn job_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("patreon")
+}
+
+/// The command line every call into the client starts from.
+///
+/// `.env` at the repo root carries PATREON_CAMPAIGN_ID; the harness's own
+/// script does the same relative to its package. INIT_CWD is what the CLI
+/// resolves relative paths against; every path handed over here is absolute,
+/// but the harness also opens its own cookie jar relative to itself, so its
+/// working directory has to be its package.
+fn client(cli: &Path, repo_root: &Path) -> Command {
+    let mut command = Command::new("node");
+    command
+        .arg(format!(
+            "--env-file-if-exists={}",
+            repo_root.join(".env").to_string_lossy()
+        ))
+        .arg("--experimental-strip-types")
+        .arg(cli)
+        .current_dir(cli.parent().and_then(Path::parent).unwrap_or(repo_root))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+/// The campaign's access rules — public, paid members, each tier — read
+/// through the client so the panel can offer names rather than ids.
+///
+/// Blocking, for a few seconds: one campaign read on the cookie jar. Nothing
+/// is written to the campaign; a failure is the client's own sentence.
+pub fn tiers(cli: &Path, repo_root: &Path) -> Result<Vec<PatreonAccessRule>> {
+    let output = client(cli, repo_root)
+        .arg("tiers")
+        .arg("--json")
+        .output()
+        .context("could not start node — is it on PATH?")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let tail: Vec<&str> = stderr.lines().filter(|line| !line.trim().is_empty()).collect();
+        let keep = tail.len().saturating_sub(6);
+        anyhow::bail!("{}", tail[keep..].join("\n"));
+    }
+    rules_from_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// The rules in what `tiers --json` printed: its last line is the campaign.
+///
+/// Only the last line, because Node itself may print warnings first —
+/// `--experimental-strip-types` did, on the version that introduced it.
+pub fn rules_from_output(stdout: &str) -> Result<Vec<PatreonAccessRule>> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Campaign {
+        access_rules: Vec<PatreonAccessRule>,
+    }
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|line| line.trim_start().starts_with('{'))
+        .context("the Patreon client printed no campaign")?;
+    let campaign: Campaign = serde_json::from_str(line).context("the campaign the client printed did not parse")?;
+    Ok(campaign.access_rules)
 }
 
 /// What the client is told. Written as JSON; the client's `loadJob` validates
@@ -131,24 +192,10 @@ pub fn post(
     std::fs::write(&job_path, serde_json::to_vec_pretty(&job)?)
         .with_context(|| format!("could not write {}", job_path.display()))?;
 
-    let mut child = Command::new("node")
-        // `.env` at the repo root carries PATREON_CAMPAIGN_ID; the harness's own
-        // script does the same relative to its package.
-        .arg(format!(
-            "--env-file-if-exists={}",
-            repo_root.join(".env").to_string_lossy()
-        ))
-        .arg("--experimental-strip-types")
-        .arg(cli)
+    let mut child = client(cli, repo_root)
         .arg("post")
         .arg("--job")
         .arg(&job_path)
-        // INIT_CWD is what the CLI resolves relative paths against; the job
-        // path above is absolute, but the harness also opens its own profile
-        // relative to itself, so its working directory has to be its package.
-        .current_dir(cli.parent().and_then(Path::parent).unwrap_or(repo_root))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
         .spawn()
         .context("could not start node — is it on PATH?")?;
 
@@ -303,6 +350,26 @@ mod tests {
         assert_eq!(phase_of("draft  169663723"), "creating");
         assert_eq!(phase_of("configure 2 media, access public"), "configuring");
         assert_eq!(phase_of("DRAFT: https://www.patreon.com/posts/1/edit"), "done");
+    }
+
+    #[test]
+    fn the_rules_are_read_off_the_last_line_the_client_printed() {
+        let stdout = "(node:1) ExperimentalWarning: Type Stripping is an experimental feature\n\
+            {\"id\":\"16736888\",\"name\":\"jebaz\",\"isNsfw\":true,\"accessRules\":[\
+            {\"id\":\"68432072\",\"type\":\"public\",\"title\":null,\"amountCents\":null,\"currency\":null},\
+            {\"id\":\"68475917\",\"type\":\"tier\",\"title\":\"Supporter\",\"amountCents\":1000,\"currency\":\"USD\"}]}\n";
+        let rules = rules_from_output(stdout).expect("parses");
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].kind, "public");
+        assert_eq!(rules[1].title.as_deref(), Some("Supporter"));
+        assert_eq!(rules[1].amount_cents, Some(1000));
+    }
+
+    #[test]
+    fn no_campaign_line_is_an_error_not_an_empty_list() {
+        // An empty list would render as "this page has no tiers", which is a
+        // different and wrong statement.
+        assert!(rules_from_output("warning only\n").is_err());
     }
 
     #[test]

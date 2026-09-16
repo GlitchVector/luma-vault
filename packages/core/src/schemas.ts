@@ -795,6 +795,20 @@ export const patreonRequestSchema = z.object({
 })
 export type PatreonRequest = z.infer<typeof patreonRequestSchema>
 
+/**
+ * One row of the campaign's access control: public, paid members, or a tier.
+ * Only a tier has a title and a price — the reward it points at.
+ */
+export const patreonAccessRuleSchema = z.object({
+  id: z.string(),
+  /** `public`, `patrons`, `non_member` or `tier`. */
+  type: z.string(),
+  title: z.string().nullable(),
+  amountCents: z.number().nullable(),
+  currency: z.string().nullable(),
+})
+export type PatreonAccessRule = z.infer<typeof patreonAccessRuleSchema>
+
 /** What a Patreon run did. A failed run is a summary with `error`, not a throw. */
 export const patreonSummarySchema = z.object({
   /** The draft's editor page, once the run reached it. */

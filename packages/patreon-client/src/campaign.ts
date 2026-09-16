@@ -29,6 +29,14 @@ import type { Session } from './session.ts'
 export interface AccessRule {
   readonly id: string
   readonly type: 'public' | 'patrons' | 'non_member' | 'tier' | (string & {})
+  /**
+   * The tier's own name and price, for a `tier` rule. The rule carries neither
+   * — it points at a `reward`, and the reward is what a person recognises as
+   * "Supporter, $10". `null` on the rules that are not a tier.
+   */
+  readonly title: string | null
+  readonly amountCents: number | null
+  readonly currency: string | null
 }
 
 export interface Campaign {
@@ -40,9 +48,14 @@ export interface Campaign {
   readonly accessRules: readonly AccessRule[]
 }
 
-interface CampaignResponse {
+export interface CampaignResponse {
   data?: { id?: string; attributes?: { name?: string; is_nsfw?: boolean } }
-  included?: { type?: string; id?: string; attributes?: { access_rule_type?: string } }[]
+  included?: {
+    type?: string
+    id?: string
+    attributes?: { access_rule_type?: string; title?: string; amount_cents?: number; currency?: string }
+    relationships?: { tier?: { data?: { id?: string; type?: string } | null } }
+  }[]
 }
 
 export async function readCampaign(session: Session, campaignId: string): Promise<Campaign> {
@@ -56,6 +69,10 @@ export async function readCampaign(session: Session, campaignId: string): Promis
     // fifteen relationships; these two are the ones this needs.
     query: {
       'fields[accessRule]': 'access_rule_type,amount_cents,post_count',
+      // The rewards ride along on the same include; without a field list the
+      // API returns them bare. These four are what a picker needs to say
+      // "Supporter, $10" instead of an id.
+      'fields[reward]': 'title,amount_cents,currency,published',
       include: 'access_rules.tier.null',
       'json-api-version': '1.0',
       'json-api-use-default-includes': 'false',
@@ -68,11 +85,6 @@ export async function readCampaign(session: Session, campaignId: string): Promis
     )
   }
   const attributes = result.json.data.attributes ?? {}
-  const accessRules: AccessRule[] = []
-  for (const entry of result.json.included ?? []) {
-    if (entry.type !== 'access-rule' || entry.id === undefined) continue
-    accessRules.push({ id: entry.id, type: entry.attributes?.access_rule_type ?? 'unknown' })
-  }
 
   return {
     id: result.json.data.id ?? campaignId,
@@ -80,8 +92,43 @@ export async function readCampaign(session: Session, campaignId: string): Promis
     // Absent is not false. A response shape that changed under us must not read
     // as "this page is safe for work" — that is the direction that does damage.
     isNsfw: attributes.is_nsfw === true,
-    accessRules,
+    accessRules: accessRulesFrom(result.json),
   }
+}
+
+/**
+ * The access rules in a campaign response, each `tier` rule named after the
+ * reward it points at.
+ *
+ * Two passes over `included` because the order is the server's: a rule can
+ * arrive before its reward. A tier rule whose reward is missing keeps a null
+ * title rather than being dropped — it is still a rule a post can carry, and
+ * the id is what the post needs.
+ */
+export function accessRulesFrom(json: CampaignResponse): AccessRule[] {
+  const rewards = new Map<string, { title: string | null; amountCents: number | null; currency: string | null }>()
+  for (const entry of json.included ?? []) {
+    if (entry.type !== 'reward' || entry.id === undefined) continue
+    rewards.set(entry.id, {
+      title: entry.attributes?.title ?? null,
+      amountCents: entry.attributes?.amount_cents ?? null,
+      currency: entry.attributes?.currency ?? null,
+    })
+  }
+  const rules: AccessRule[] = []
+  for (const entry of json.included ?? []) {
+    if (entry.type !== 'access-rule' || entry.id === undefined) continue
+    const tierId = entry.relationships?.tier?.data?.id
+    const reward = tierId === undefined ? undefined : rewards.get(tierId)
+    rules.push({
+      id: entry.id,
+      type: entry.attributes?.access_rule_type ?? 'unknown',
+      title: reward?.title ?? null,
+      amountCents: reward?.amountCents ?? null,
+      currency: reward?.currency ?? null,
+    })
+  }
+  return rules
 }
 
 /**
