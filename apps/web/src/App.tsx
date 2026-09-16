@@ -17,6 +17,7 @@ import { MediaGrid } from '#/components/MediaGrid.tsx'
 import { DEFAULT_TILE_SIZE, MAX_TILE_SIZE, MIN_TILE_SIZE } from '#/components/MediaTile.tsx'
 import { SearchBar } from '#/components/SearchBar.tsx'
 import { DeviantArtPanel } from '#/components/DeviantArtPanel.tsx'
+import { PatreonPanel } from '#/components/PatreonPanel.tsx'
 import { DialogHost } from '#/components/DialogHost.tsx'
 import { RemoteDialog } from '#/components/RemoteDialog.tsx'
 import { StatusBar } from '#/components/StatusBar.tsx'
@@ -297,6 +298,8 @@ export function App() {
   // and a filter change underneath it must not silently drop a row someone has
   // already written a title for.
   const [publishing, setPublishing] = useState<MediaItem[] | null>(null)
+  /** The pictures a Patreon draft is being composed from, in post order. */
+  const [posting, setPosting] = useState<MediaItem[] | null>(null)
   const [forge, setForge] = useState<ForgeStatus | null>(null)
   const [showBoxes, setShowBoxes] = useState(false)
   // The timeline strip under the filter bar. Open/closed is UI state; the
@@ -506,6 +509,23 @@ export function App() {
       )
     }
     setPublishing(picked)
+  }, [items, selected])
+
+  /**
+   * Open the Patreon panel on the selection, in the order the grid shows.
+   *
+   * `items` here is already the collated order when several sets are showing,
+   * so filtering it keeps that order — the panel starts from what the grid
+   * displays rather than from selection order, which is whatever order the
+   * clicks happened in.
+   */
+  const reviewForPatreon = useCallback(() => {
+    const picked = items.filter((item) => selected.has(item.id))
+    if (picked.length === 0) {
+      void showMessage('Nothing is selected.', { title: 'Nothing to post' })
+      return
+    }
+    setPosting(picked)
   }, [items, selected])
 
   /**
@@ -1148,6 +1168,16 @@ export function App() {
                 DeviantArt…
               </button>
 
+              <button
+                type="button"
+                disabled={selected.size === 0 || upscaling !== null}
+                onClick={reviewForPatreon}
+                title="Compose a Patreon draft from these, in the order shown. Reorder by dragging. Nothing is published."
+                className="mr-2 rounded-full bg-white/5 px-3 py-1 text-[11px] font-medium text-zinc-300 hover:bg-white/10 hover:text-zinc-100 disabled:cursor-default disabled:bg-white/5 disabled:text-zinc-600"
+              >
+                Patreon…
+              </button>
+
               {/* Marking by hand, for what this app did not upload itself.
                   Deliberately next to the upload button and deliberately not
                   looking like it: one posts, the other only records. */}
@@ -1338,6 +1368,25 @@ export function App() {
 
       {publishing ? (
         <DeviantArtPanel items={publishing} onClose={() => setPublishing(null)} />
+      ) : null}
+      {posting ? (
+        <PatreonPanel
+          items={posting}
+          sets={query.sets.length > 0 ? query.sets : query.set ? [query.set] : []}
+          members={members}
+          // The first selected set's own title, so a shoot that named itself
+          // starts the post with that name rather than an empty field.
+          setTitle={
+            library.sets.find((set) => set.run === (query.sets[0] ?? query.set))?.title ?? null
+          }
+          onClose={() => {
+            setPosting(null)
+            // The badge is a column on the row; the page has to be re-read
+            // for it to appear.
+            library.reload()
+          }}
+          onReordered={() => library.reload()}
+        />
       ) : null}
 
       <DialogHost />

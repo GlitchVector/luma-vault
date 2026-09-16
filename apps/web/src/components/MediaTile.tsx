@@ -291,7 +291,8 @@ export const MediaTile = memo(function MediaTile({
           fourK ||
           item.generation?.needsSourceImage ||
           item.generation?.postprocessed ||
-          item.deviantArt ? (
+          item.deviantArt ||
+          item.patreon ? (
             <span className="pointer-events-none absolute left-1.5 top-1.5 flex gap-1">
               {isVideo ? (
                 <span className="rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-zinc-100">
@@ -340,6 +341,16 @@ export const MediaTile = memo(function MediaTile({
                   }
                 >
                   d
+                </span>
+              ) : null}
+              {/* Sent to a Patreon draft. No published state to show, because
+                  the tool never learns whether a person went on to post it. */}
+              {item.patreon ? (
+                <span
+                  className="rounded bg-black/70 px-1 py-0.5 text-[10px] font-semibold tracking-wide text-orange-300 ring-1 ring-inset ring-orange-400/60"
+                  title={`Sent to a Patreon draft on ${formatPostedAt(item.patreon.postedAt)}`}
+                >
+                  p
                 </span>
               ) : null}
             </span>
