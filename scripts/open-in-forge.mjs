@@ -54,6 +54,7 @@ function parseArgs(argv) {
     else if (flag === '--prompt') args.prompt = unescape(argv[++at])
     else if (flag === '--negative') args.negative = unescape(argv[++at])
     else if (flag === '--no-adetailer') args.noAdetailer = true
+    else if (flag === '--keep-facing') args.keepFacing = true
     else if (flag === '--no-hires') args.noHires = true
     // The hires pass and the face pass each have one denoise and the hires pass one upscaler; the defaults
     // (0.4 / 0.4 / 4xUltraSharp) are the booru tuning, overridable for a face that a repaint keeps smoothing.
@@ -121,6 +122,8 @@ if (!args.prompt) {
     '',
     '  --model defaults to ' + DEFAULT_MODEL + `; the canvas is ${PORTRAIT} unless overridden,`,
     '  whatever shape the source image was — it is not read off the attachment.',
+    '  --keep-facing leaves `topless`/`nipples` in a from-behind prompt: for a LoRA whose',
+    '  undressed states are trained, the state word is the caption, and without it the back is dressed.',
     '  --dry-run prints the parameter block without touching Forge.',
     '  --refiner <substring> [--refiner-switch 0.5] hands the sampling to a second checkpoint',
     '  part-way: the base model composes, the refiner paints the finish.',
@@ -135,7 +138,7 @@ if (!Number.isFinite(args.width) || !Number.isFinite(args.height)) {
 // topless` does not produce a back view missing those details, it produces a
 // front view — the framing is outvoted, silently, and a row of tabs meant to be
 // different angles comes back as one angle repeated. See FACING_CONFLICTS.
-const framed = enforceFraming(args.prompt)
+const framed = enforceFraming(args.prompt, { keepFrontOnly: Boolean(args.keepFacing) })
 args.prompt = framed.text
 
 // Garments the prompt's own state of undress rules out. `/swap` is where this

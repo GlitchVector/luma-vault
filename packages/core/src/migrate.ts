@@ -510,15 +510,25 @@ const FACING_WEIGHT = '1.5'
  * it changed, because silently deleting or reweighting a tag someone chose is
  * its own kind of wrong.
  */
-export function enforceFraming(prompt: string): {
+export function enforceFraming(
+  prompt: string,
+  options: { keepFrontOnly?: boolean } = {},
+): {
   text: string
   removed: string[]
   weighted: string[]
 } {
   const hidden = new Set<string>()
-  for (const { framing, hides } of FACING_CONFLICTS) {
-    if (!framing.some((tag) => hasTag(prompt, tag))) continue
-    for (const term of hides) hidden.add(term)
+  // A character LoRA whose undressed states were trained knows `topless` as a
+  // caption, not as a claim about which side faces the camera: without the word
+  // the rear frame comes back DRESSED, because the only back view in its data
+  // wore the outfit. The caller says so and keeps the state words; the framing
+  // still gets its weight below, and the gaze rule still applies.
+  if (!options.keepFrontOnly) {
+    for (const { framing, hides } of FACING_CONFLICTS) {
+      if (!framing.some((tag) => hasTag(prompt, tag))) continue
+      for (const term of hides) hidden.add(term)
+    }
   }
   // `looking at viewer` is only a contradiction when nothing says she is looking
   // over her shoulder. `from behind, looking back, looking at viewer` is one of

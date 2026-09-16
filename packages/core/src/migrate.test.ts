@@ -911,6 +911,18 @@ describe('enforceFraming', () => {
     expect(text).toContain('wide hips')
   })
 
+  // A trained undressed state is a caption the LoRA needs, not a front-only
+  // claim; the caller can keep it and still get the framing weighted.
+  it('keeps the state words when asked, and still weights the framing', () => {
+    const { text, removed, weighted } = enforceFraming(
+      'cowboy shot, from behind, looking back\nBREAK\n1girl, topless, breasts out, nipples, white shorts',
+      { keepFrontOnly: true },
+    )
+    for (const kept of ['topless', 'breasts out', 'nipples', 'white shorts']) expect(text).toContain(kept)
+    expect(removed).toEqual([])
+    expect(weighted).toContain('from behind')
+  })
+
   it('leaves a front-facing prompt entirely alone', () => {
     const prompt = '1girl, cowboy shot, looking at viewer, huge nipples, cleavage, navel, topless'
     expect(enforceFraming(prompt)).toEqual({ text: prompt, removed: [], weighted: [] })
