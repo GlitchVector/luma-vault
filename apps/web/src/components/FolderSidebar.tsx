@@ -39,9 +39,15 @@ interface FolderSidebarProps {
   listing: Listing
   onListing: (listing: Listing) => void
   /** The run currently filtering the grid, if any. */
-  selectedSet: string | null
+  /**
+   * Every run the grid is showing. One entry is the ordinary case; more than
+   * one is two shoots of the same character being read — and posted — as one
+   * set. Order is selection order, which is what the merge tie-breaks on.
+   */
+  selectedSets: string[]
   /** A set was clicked — or the same one again, which clears it. */
-  onSet: (run: string | null) => void
+  /** The new selection, whole. Empty clears it. */
+  onSets: (runs: string[]) => void
   /**
    * The title was clicked: go home — every folder, no set, no search.
    *
@@ -72,8 +78,8 @@ export function FolderSidebar({
   sets,
   listing,
   onListing,
-  selectedSet,
-  onSet,
+  selectedSets,
+  onSets,
   onHome,
   tileSize,
   onTileSize,
@@ -249,8 +255,8 @@ export function FolderSidebar({
           ) : (
             <SetList
               sets={listing === 'lora' ? loraSets : shootSets}
-              selected={selectedSet}
-              onSet={onSet}
+              selected={selectedSets}
+              onSets={onSets}
             />
           )}
         </div>
@@ -416,12 +422,28 @@ function SidebarTab({
 function SetList({
   sets,
   selected,
-  onSet,
+  onSets,
 }: {
   sets: SetSummary[]
-  selected: string | null
-  onSet: (run: string | null) => void
+  selected: string[]
+  onSets: (runs: string[]) => void
 }) {
+  /**
+   * A plain click picks one set, or clears the one that is open. A click with
+   * ctrl, cmd or shift adds to — or removes from — what is already showing.
+   *
+   * Additive on a modifier and not on a plain click, because the plain click
+   * is what every other list in this sidebar does and a set list that quietly
+   * accumulated would be the odd one out. The modifier is the same one the
+   * grid uses for the same idea.
+   */
+  const pick = (run: string, additive: boolean) => {
+    if (!additive) {
+      onSets(selected.length === 1 && selected[0] === run ? [] : [run])
+      return
+    }
+    onSets(selected.includes(run) ? selected.filter((each) => each !== run) : [...selected, run])
+  }
   const groups: Array<[string, SetSummary[]]> = []
   for (const set of sets) {
     const name = set.character ?? 'Other'
@@ -443,14 +465,16 @@ function SetList({
                   // Clicking the open set closes it. The alternative is a
                   // separate "show everything again" control, and the thing you
                   // want to un-press is the thing you pressed.
-                  onClick={() => onSet(selected === set.run ? null : set.run)}
-                  aria-pressed={selected === set.run}
+                  onClick={(event) =>
+                    pick(set.run, event.ctrlKey || event.metaKey || event.shiftKey)
+                  }
+                  aria-pressed={selected.includes(set.run)}
                   title={`${set.command} · ${new Date(set.createdAt).toLocaleString()} · ${
                     set.count
                   } pictures`}
                   className={cn(
                     'flex w-full items-baseline gap-2 rounded px-1 py-0.5 pl-3 text-left text-[11px]',
-                    selected === set.run
+                    selected.includes(set.run)
                       ? 'bg-indigo-500/20 text-indigo-200'
                       : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200',
                   )}

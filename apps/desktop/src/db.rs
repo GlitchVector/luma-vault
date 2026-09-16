@@ -23,7 +23,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use crate::generated::Generation;
 use crate::pipeline::now_ms;
 use crate::types::{
-    DeviantArtPost, Folder, LibraryStats, MediaFrame, MediaItem, MediaKind, MediaPage, MediaQuery,
+    DeviantArtPost, PatreonPost, Folder, LibraryStats, MediaFrame, MediaItem, MediaKind, MediaPage, MediaQuery,
     MediaVerdict, Rating, SortOrder,
 };
 
@@ -227,6 +227,16 @@ impl Db {
                  * the badge has to distinguish — it means "go finish this". */
                 published    INTEGER NOT NULL DEFAULT 0,
                 posted_at    INTEGER NOT NULL
+            );
+
+            -- Where a picture already is on Patreon. Same shape and reason as
+            -- `deviantart_posts`, keyed by path so a rescan that reissues ids
+            -- does not lose it. No `published`: the tool stops at a draft.
+            CREATE TABLE IF NOT EXISTS patreon_posts (
+                path      TEXT PRIMARY KEY,
+                post_id   TEXT NOT NULL,
+                url       TEXT NOT NULL,
+                posted_at INTEGER NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS tags_by_tag       ON media_tags(tag, media_id);
@@ -2413,6 +2423,64 @@ impl Db {
     /// people do — a better crop, a retitle — and the second attempt's result
     /// is the one worth keeping. Publishing a previously-staged item therefore
     /// upgrades the row rather than colliding with it.
+    /// Remember that these files went to a Patreon draft.
+    ///
+    /// Every path in one transaction, because a post is one thing: a run that
+    /// recorded half its files would show a set as half-posted, which is a
+    /// state the badge cannot mean.
+    pub fn record_patreon_post(
+        &self,
+        paths: &[String],
+        post_id: &str,
+        url: &str,
+        now: i64,
+    ) -> Result<usize> {
+        let mut conn = self.connection();
+        let tx = conn.transaction()?;
+        let written = {
+            let mut insert = tx.prepare(
+                "INSERT INTO patreon_posts (path, post_id, url, posted_at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(path) DO UPDATE SET
+                     post_id = excluded.post_id, url = excluded.url, posted_at = excluded.posted_at",
+            )?;
+            let mut written = 0;
+            for path in paths {
+                written += insert.execute(params![path, post_id, url, now])?;
+            }
+            written
+        };
+        tx.commit()?;
+        Ok(written)
+    }
+
+    /// Every member of these runs, with its label and position.
+    ///
+    /// What the compose panel sorts on. Flat rather than grouped, so a picture
+    /// in two of the runs appears twice and the merge decides.
+    pub fn set_members(&self, runs: &[String]) -> Result<Vec<crate::types::SetMemberRow>> {
+        if runs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: Vec<String> = (1..=runs.len()).map(|at| format!("?{at}")).collect();
+        let conn = self.connection();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT media_id, run, label, position FROM media_sets
+              WHERE run IN ({}) ORDER BY run, position ASC, media_id ASC",
+            placeholders.join(", ")
+        ))?;
+        let refs: Vec<&dyn rusqlite::ToSql> =
+            runs.iter().map(|run| run as &dyn rusqlite::ToSql).collect();
+        let rows = stmt.query_map(refs.as_slice(), |row| {
+            Ok(crate::types::SetMemberRow {
+                media_id: row.get(0)?,
+                run: row.get(1)?,
+                label: row.get(2)?,
+                position: row.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn record_deviantart_post(
         &self,
         path: &str,
@@ -2677,7 +2745,20 @@ impl Db {
         if query.duplicates_only {
             where_parts.push("dupe_group IS NOT NULL".to_string());
         }
-        if let Some(run) = query.set.as_deref().filter(|run| !run.is_empty()) {
+        if !query.sets.is_empty() {
+            // Several runs at once. One placeholder per run rather than a
+            // joined string, for the same reason as every other bind here.
+            let placeholders: Vec<String> = (0..query.sets.len())
+                .map(|at| format!("?{}", binds.len() + at + 1))
+                .collect();
+            where_parts.push(format!(
+                "EXISTS (SELECT 1 FROM media_sets s WHERE s.media_id = media.id AND s.run IN ({}))",
+                placeholders.join(", ")
+            ));
+            for run in &query.sets {
+                binds.push(Box::new(run.clone()));
+            }
+        } else if let Some(run) = query.set.as_deref().filter(|run| !run.is_empty()) {
             where_parts.push(format!(
                 "EXISTS (SELECT 1 FROM media_sets s WHERE s.media_id = media.id AND s.run = ?{})",
                 binds.len() + 1
@@ -3146,7 +3227,7 @@ const MAYBE_ANIMATED: [&str; 3] = [".gif", ".webp", ".avif"];
 
 const MEDIA_COLUMNS: &str = "id, folder_id, path, name, kind, width, height, size_bytes, \
                              modified_at, added_at, thumb_path, thumb_width, thumb_height, \
-                             duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to, \n                             (SELECT p.url FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_url, \n                             (SELECT p.published FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_published, \n                             (SELECT p.posted_at FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_posted_at, \n                             rating_override";
+                             duration_sec, verdict_json, classified_at, stars, generation_json, dupe_group, \n                             upscaled_from, \n                             (SELECT v.path FROM media v WHERE v.upscaled_from = media.path LIMIT 1) \n                             AS upscaled_to, \n                             (SELECT p.url FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_url, \n                             (SELECT p.published FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_published, \n                             (SELECT p.posted_at FROM deviantart_posts p WHERE p.path = media.path) \n                             AS deviantart_posted_at, \n                             rating_override, \n                             (SELECT q.url FROM patreon_posts q WHERE q.path = media.path) \n                             AS patreon_url, \n                             (SELECT q.posted_at FROM patreon_posts q WHERE q.path = media.path) \n                             AS patreon_posted_at";
 
 fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
     let kind: String = row.get(4)?;
@@ -3201,6 +3282,14 @@ fn map_media_row(row: &Row<'_>) -> rusqlite::Result<MediaItem> {
             .get::<_, Option<String>>(24)?
             .map(|value| Rating::parse(&value))
             .filter(|rating| *rating != Rating::Unrated),
+        // Present only when `patreon_posts` has the path; `posted_at` carries
+        // the presence, as it does for DeviantArt. The id is not on the row
+        // because nothing in the grid needs it — the URL is the link.
+        patreon: row.get::<_, Option<i64>>(26)?.map(|posted_at| PatreonPost {
+            post_id: String::new(),
+            url: row.get::<_, Option<String>>(25).unwrap_or(None).unwrap_or_default(),
+            posted_at,
+        }),
     })
 }
 
@@ -3348,6 +3437,7 @@ mod tests {
             kind: None,
             rating: None,
             set: None,
+            sets: Vec::new(),
             sexy_only: false,
             search: String::new(),
             search_paths: false,
@@ -5962,5 +6052,80 @@ mod tests {
             .collect::<std::result::Result<Vec<_>, _>>()
             .expect("rows");
         assert_eq!(order, vec!["/media/b.mp4", "/media/a.jpg"]);
+    }
+
+    /// A Patreon draft is one thing, so recording it is one transaction and
+    /// the badge reads the same on every file it covered.
+    #[test]
+    fn a_patreon_draft_is_recorded_on_every_file_at_once() {
+        let (db, _) = seeded();
+        let paths = vec!["/media/a.jpg".to_string(), "/media/b.mp4".to_string()];
+        let written = db
+            .record_patreon_post(&paths, "169663723", "https://www.patreon.com/posts/169663723/edit", 1_789_572_000_000)
+            .expect("record");
+        assert_eq!(written, 2);
+
+        let page = db.query_media(&query()).expect("query");
+        let posted: Vec<&MediaItem> = page.items.iter().filter(|item| item.patreon.is_some()).collect();
+        assert_eq!(posted.len(), 2);
+        let first = posted[0].patreon.as_ref().expect("post");
+        assert_eq!(first.url, "https://www.patreon.com/posts/169663723/edit");
+        assert_eq!(first.posted_at, 1_789_572_000_000);
+    }
+
+    /// The compose panel sorts on these; a picture in two runs appears twice
+    /// and the merge decides, so nothing here may dedupe.
+    #[test]
+    fn set_members_lists_every_run_named_with_labels_and_positions() {
+        let (db, _) = seeded();
+        let manifest = |run: &str| crate::sets::SetManifest {
+            run: run.to_string(),
+            command: "photostory".to_string(),
+            character: Some("mira".to_string()),
+            title: None,
+            created_at: 1,
+            members: Vec::new(),
+        };
+        let member = |file: &str, label: &str| {
+            (
+                std::path::PathBuf::from(file),
+                crate::sets::SetMember { file: file.to_string(), label: Some(label.to_string()) },
+            )
+        };
+        db.record_set(&manifest("run-a"), "/media", &[member("/media/a.jpg", "stage 1 — a")]).expect("a");
+        db.record_set(&manifest("run-b"), "/media", &[member("/media/a.jpg", "act 2 — a"), member("/media/b.mp4", "stage 1 — b")]).expect("b");
+
+        let rows = db.set_members(&["run-a".to_string(), "run-b".to_string()]).expect("members");
+        assert_eq!(rows.len(), 3, "a.jpg is in both runs and must appear twice");
+        assert!(rows.iter().any(|row| row.run == "run-b" && row.label.as_deref() == Some("stage 1 — b") && row.position == 1));
+        assert!(db.set_members(&[]).expect("none").is_empty());
+    }
+
+    /// `sets` wins over `set`, and one placeholder per run keeps the bind
+    /// count honest.
+    #[test]
+    fn a_query_naming_several_sets_shows_all_of_them() {
+        let (db, _) = seeded();
+        let manifest = |run: &str| crate::sets::SetManifest {
+            run: run.to_string(),
+            command: "photostory".to_string(),
+            character: None,
+            title: None,
+            created_at: 1,
+            members: Vec::new(),
+        };
+        let member = |file: &str| (std::path::PathBuf::from(file), crate::sets::SetMember { file: file.to_string(), label: None });
+        db.record_set(&manifest("run-a"), "/media", &[member("/media/a.jpg")]).expect("a");
+        db.record_set(&manifest("run-b"), "/media", &[member("/media/b.mp4")]).expect("b");
+
+        let mut both = query();
+        both.sets = vec!["run-a".to_string(), "run-b".to_string()];
+        assert_eq!(db.query_media(&both).expect("both").total, 2);
+
+        let mut one = query();
+        one.set = Some("run-a".to_string());
+        one.sets = vec!["run-b".to_string()];
+        assert_eq!(db.query_media(&one).expect("sets wins").total, 1);
+        assert_eq!(db.query_media(&one).expect("sets wins").items[0].path, "/media/b.mp4");
     }
 }

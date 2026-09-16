@@ -17,7 +17,7 @@
 import { assertAdultMatchesCampaign, readCampaign, type Campaign } from './campaign.ts'
 import type { ResolvedPost } from './manifest.ts'
 import { createMedia, uploadBytes, waitUntilReady, type PollOptions } from './media.ts'
-import { createDraft, updateDraft, type Draft } from './post.ts'
+import { createDraft, updateDraft, type Draft, type Navigator } from './post.ts'
 import type { Session } from './session.ts'
 import { isCurrent, loadState, pruneState, saveState, type RunState } from './state.ts'
 
@@ -28,6 +28,11 @@ export interface RunOptions {
   readonly campaignId: string
   readonly onProgress?: (line: string) => void
   readonly poll?: PollOptions
+  /**
+   * A browser for the create step, which is the only one Node cannot do:
+   * `/posts/new` is a page route and page routes are Cloudflare-challenged.
+   */
+  readonly navigator?: Navigator
 }
 
 export interface RunResult {
@@ -50,7 +55,7 @@ export async function runPost(options: RunOptions): Promise<RunResult> {
 
   let state = pruneState(await loadState(post), post)
 
-  const draft = await resumeOrCreateDraft(session, state, say)
+  const draft = await resumeOrCreateDraft(session, state, say, options.navigator)
   if (state.postId !== draft.id) {
     state = { ...state, postId: draft.id }
     await saveState(post, state)
@@ -126,12 +131,13 @@ async function resumeOrCreateDraft(
   session: Session,
   state: RunState,
   say: (line: string) => void,
+  navigator: Navigator | undefined,
 ): Promise<Draft> {
   if (state.postId !== undefined) {
     say(`resume draft ${state.postId}`)
     return { id: state.postId, url: `${session.origin}/posts/${state.postId}/edit` }
   }
-  const draft = await createDraft(session)
+  const draft = await createDraft(session, navigator)
   say(`draft  ${draft.id}`)
   return draft
 }

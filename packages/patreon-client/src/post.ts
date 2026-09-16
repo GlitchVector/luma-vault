@@ -101,25 +101,58 @@ const POST_QUERY = {
  * `/<page>/posts/<id>/edit`, which is the first place the new post id exists.
  * Everything after that is `PATCH /api/posts/{id}`.
  *
- * So this drives the page rather than calling anything, and reads the id back
- * out of the URL. Note the side effect: opening the editor creates a draft
- * whether or not anything after it succeeds. That is what `.state.json` is for,
- * and what `patreon capture cleanup` sweeps up.
+ * This is the one step a plain Node request cannot do: page routes are
+ * Cloudflare-challenged while `/api/*` is not. So a caller may hand in a
+ * `Navigator` backed by a real browser; without one it still tries, because the
+ * attempt is cheap and the rules are not ours to predict.
+ *
+ * Note the side effect: asking for `/posts/new` creates a draft whether or not
+ * anything after it succeeds. That is what `.state.json` is for, and what
+ * `patreon capture cleanup` sweeps up.
  */
-export async function createDraft(session: Session): Promise<Draft> {
-  const endpoint = required(POST_CREATE, 'the create step', 'text-only')
-  const target = new URL(endpoint.path, session.origin).toString()
-  await session.page.goto(target, { waitUntil: 'domcontentloaded' })
+export interface Navigator {
+  /** Open a path on the origin and answer where it landed. */
+  navigate(path: string): Promise<string>
+}
 
-  const landed = session.page.url()
-  const id = /\/posts\/(\d+)(?:\/|$)/.exec(landed)?.[1]
-  if (id === undefined) {
-    throw new Error(
-      `opening ${target} did not land on a post editor — ended up at ${landed}.\n` +
-        'If that is the login wall, the session has expired: sign in again in that Chrome window.',
-    )
+export async function createDraft(session: Session, navigator?: Navigator): Promise<Draft> {
+  const endpoint = required(POST_CREATE, 'the create step', 'text-only')
+
+  // A browser first when one is offered, because this is the one step Node
+  // cannot do. Tested 2026-09-16: `/posts/new` from Node answers a Cloudflare
+  // "Just a moment..." 403 — with the session's real user-agent as well as
+  // without — while every `/api/*` call sails through. The divide is route
+  // type, not client identity.
+  if (navigator !== undefined) {
+    const landed = await navigator.navigate(endpoint.path)
+    return { id: idFrom(landed, endpoint.path, 0, landed), url: new URL(landed, session.origin).toString() }
   }
-  return { id, url: landed }
+
+  // Without one, try anyway rather than refuse: this is cheap, it is the only
+  // thing standing between a caller and a draft, and Cloudflare's rules are not
+  // ours to predict. The 302's `Location` is the answer; following it would mean
+  // fetching the editor and hunting the id in a megabyte of HTML.
+  const result = await call(session, {
+    method: 'GET',
+    path: endpoint.path,
+    headers: { accept: 'text/html' },
+    manualRedirect: true,
+  })
+  const landed = result.headers['location'] ?? ''
+  return {
+    id: idFrom(landed, endpoint.path, result.status, landed),
+    url: new URL(landed, session.origin).toString(),
+  }
+}
+
+function idFrom(landed: string, path: string, status: number, detail: string): string {
+  const id = /\/posts\/(\d+)(?:\/|$|\?)/.exec(landed)?.[1]
+  if (id !== undefined) return id
+  throw new Error(
+    `${path} did not lead to a post editor (${status || 'no status'}, landed: ${detail || '(nowhere)'}).\n` +
+      'A Cloudflare challenge here is expected without a browser — pass a navigator.\n' +
+      'If the session has expired instead, run `pnpm patreon auth`.',
+  )
 }
 
 /**

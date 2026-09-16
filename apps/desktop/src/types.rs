@@ -181,6 +181,25 @@ pub struct MediaItem {
     /// anything answered per tile over the network would not be answered.
     #[serde(default)]
     pub deviant_art: Option<DeviantArtPost>,
+    /// Where this picture already is on Patreon, when it is — same reason as
+    /// `deviant_art`: asked while scrolling, so it has to ride on the row.
+    #[serde(default)]
+    pub patreon: Option<PatreonPost>,
+}
+
+/// A picture's existing Patreon draft.
+///
+/// No `published`, and that is not an omission: the tool stops at a draft and
+/// never learns whether a human went on to post it. What it can say is "this
+/// file has been sent", which is enough to stop it being sent twice.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PatreonPost {
+    pub post_id: String,
+    /// The editor page for the draft.
+    pub url: String,
+    /// Unix ms.
+    pub posted_at: i64,
 }
 
 /// A picture's existing DeviantArt submission.
@@ -348,6 +367,11 @@ pub struct MediaQuery {
     /// table — a run must never become hideable through `hide_tags`.
     #[serde(default)]
     pub set: Option<String>,
+    /// Several runs at once, for posting two shoots of one character as one
+    /// set. Wins over `set` when non-empty; `set` stays for the deep link and
+    /// for every caller that only ever wanted one.
+    #[serde(default)]
+    pub sets: Vec<String>,
     /// Show only rows rated at least this many stars. `Some(1)` is therefore
     /// "anything I have rated at all".
     #[serde(default)]
@@ -450,6 +474,21 @@ pub struct CharacterCount {
 /// see. The count is the *visible* one, not the manifest's: a set whose files
 /// were deleted or filtered out should say so rather than promise pictures that
 /// are not there.
+/// One picture's place in one run — what the merge order sorts on.
+///
+/// Separate from `MediaItem` rather than folded into it, because a picture can
+/// be in several runs and a row can only carry one; and because the grid does
+/// not need it, only the compose panel does.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SetMemberRow {
+    pub media_id: i64,
+    pub run: String,
+    /// What the run called this shot — `stage 3 — full body`, `act 7 — …`.
+    pub label: Option<String>,
+    pub position: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SetSummary {
@@ -583,6 +622,54 @@ pub struct DeviantArtSummary {
     pub published: i64,
     pub failed: i64,
     pub results: Vec<DeviantArtResult>,
+}
+
+// ---------------------------------------------------------------------------
+// Patreon
+// ---------------------------------------------------------------------------
+
+/// What the panel asks for. Ids, never paths: the webview does not name a file
+/// for the backend to read, and the order of `ids` is the order of the post.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PatreonRequest {
+    pub ids: Vec<i64>,
+    pub title: String,
+    /// Markdown: paragraphs, bold, links. See the client's `body.ts`.
+    pub body: String,
+    /// Access-rule ids for a tier-locked post. Empty means public.
+    #[serde(default)]
+    pub tiers: Vec<String>,
+    /// Stated, never defaulted — the client checks it against the campaign.
+    pub adult: bool,
+}
+
+/// One line of the client's own progress, plus enough to draw a bar.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PatreonProgress {
+    /// `checking`, `creating`, `uploading`, `configuring`, `running`, `done`.
+    pub phase: String,
+    pub done: i64,
+    pub total: i64,
+    /// The client's line, verbatim — "upload 03.png (2.1 MB)".
+    pub line: String,
+}
+
+/// What a run did. A failed run is a summary with `error`, not an `Err`, so
+/// the panel can show the client's own sentence for it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PatreonSummary {
+    /// The draft's editor page, once the run reached it.
+    pub url: Option<String>,
+    pub post_id: Option<String>,
+    pub uploaded: i64,
+    pub reused: i64,
+    pub error: Option<String>,
+    /// Every line the client printed, for the panel's log.
+    #[serde(default)]
+    pub log: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

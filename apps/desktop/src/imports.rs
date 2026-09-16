@@ -383,6 +383,7 @@ mod tests {
             kind: None,
             rating: None,
             set: None,
+            sets: Vec::new(),
             sexy_only: false,
             search: String::new(),
             search_paths: false,

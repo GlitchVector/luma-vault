@@ -1,0 +1,23 @@
+[
+  {
+    "url": "https://www.patreon.com/posts/169663723/edit",
+    "postId": "169663723",
+    "uploaded": 2,
+    "reused": 0,
+    "error": null,
+    "log": [
+      "campaign jebaz (16736888), adult",
+      "draft  169663723",
+      "upload 01-red.png (0.0 MB)",
+      "DRAFT: https://www.patreon.com/posts/169663723/edit"
+    ]
+  },
+  {
+    "url": null,
+    "postId": null,
+    "uploaded": 0,
+    "reused": 0,
+    "error": "post.json says adult: true, but the campaign \"jebaz\" is not marked as adult.",
+    "log": []
+  }
+]

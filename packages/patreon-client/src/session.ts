@@ -1,27 +1,27 @@
 /**
- * Attaching to a browser that is already logged in.
+ * A session is a way to reach Patreon as the logged-in creator, and nothing more.
  *
- * There is deliberately no auth module here. No token flow, no login
- * automation, no refresh logic — automating the login form is the highest
- * bot-detection surface on the site. Both modes inherit a session somebody
- * else established:
+ * There is deliberately no auth module. No token flow, no login automation, no
+ * refresh logic — automating the login form is the highest bot-detection
+ * surface on the site. A human signs in once, headed, and what comes out is a
+ * cookie jar this reuses.
  *
- *   - the harness loads a `storageState.json` an operator produced by hand;
- *   - the desktop app attaches over CDP to the operator's own Chrome:
+ * Two ways to carry those cookies:
  *
- *       chrome --remote-debugging-port=9222 --user-data-dir=%LOCALAPPDATA%\patreon-automation
- *
- * Either way this file only ever *checks* that the session is good and fails
- * loudly when it is not.
+ *   `fromCookies` — a plain Node client. The default, since the probe showed
+ *     Cloudflare lets it through. Needs nothing running.
+ *   `attach` — inside a page of a browser somebody else connected. The fallback
+ *     for the day that stops being true.
  */
 
+import { call } from './call.ts'
 import { SessionError } from './errors.ts'
+import { cookieTransport, identityFrom, pageTransport, type Transport } from './transport.ts'
 
 /**
- * The slice of Playwright's `Page` this library uses. Structural, so the client
- * has no Playwright dependency and the desktop app can hand in whatever it has.
- *
- * The generic order on `evaluate` is `<Result, Arg>` to match Playwright's own
+ * The slice of Playwright's `Page` the fallback uses. Structural, so this
+ * library has no Playwright dependency and the desktop app can hand in whatever
+ * it has. The generic order is `<Result, Arg>` to match Playwright's own
  * `<R, Arg>`; flipping it breaks assignability of the real Page to this type.
  */
 export interface PageLike {
@@ -39,78 +39,72 @@ export interface BrowserLike {
   contexts(): ContextLike[]
 }
 
-/** How we decide the browser is logged in. See `assertLoggedIn`. */
-export interface LoginProbe {
-  /** A page that only a signed-in account can open. */
-  readonly url: string
-  /** If the browser ends up somewhere matching this, we were bounced to a login wall. */
-  readonly bouncedTo: RegExp
-}
-
-/**
- * Deliberately *not* an internal API call.
- *
- * A settings page redirecting to the login wall is observable behaviour anyone
- * can confirm by hand in ten seconds, and it survives an API reshuffle. An
- * identity endpoint would be a guessed path — the one thing constraint 4
- * forbids — and would be the first thing to break.
- */
-export const DEFAULT_LOGIN_PROBE: LoginProbe = {
-  url: 'https://www.patreon.com/settings/profile',
-  bouncedTo: /patreon\.com\/(login|signup)|\/oauth2\/authorize/i,
-}
-
 export interface Session {
-  readonly page: PageLike
+  readonly transport: Transport
   readonly origin: string
 }
 
-export interface AttachOptions {
-  /** Which already-open page to use. Defaults to the first one, or a new one. */
-  readonly page?: PageLike
-  readonly probe?: LoginProbe
-  readonly origin?: string
-}
+const DEFAULT_ORIGIN = 'https://www.patreon.com'
 
 /**
- * Take a browser handle that somebody else connected, find a page on it and
- * prove the session is live.
+ * A session from a saved cookie jar. No browser involved.
  *
- * `connectOverCDP` itself is not here: it is Playwright's, and Playwright
- * belongs to the harness. The caller connects; this takes the result.
+ * `assertLoggedIn` is worth the one extra request: the alternative is
+ * discovering the session expired halfway through a post that has already
+ * created a draft and uploaded four files.
  */
-export async function attach(browser: BrowserLike, options: AttachOptions = {}): Promise<Session> {
-  const origin = options.origin ?? 'https://www.patreon.com'
+export async function fromCookies(statePath: string, origin = DEFAULT_ORIGIN): Promise<Session> {
+  const session: Session = { transport: cookieTransport(await identityFrom(statePath), origin), origin }
+  await assertLoggedIn(session)
+  return session
+}
+
+/** A session inside a browser somebody else connected. The fallback path. */
+export async function attach(
+  browser: BrowserLike,
+  options: { page?: PageLike; origin?: string } = {},
+): Promise<Session> {
+  const origin = options.origin ?? DEFAULT_ORIGIN
   const page = options.page ?? (await firstPage(browser))
-  await assertLoggedIn(page, options.probe ?? DEFAULT_LOGIN_PROBE)
-  return { page, origin }
+  const session: Session = { transport: pageTransport(page, origin), origin }
+  await assertLoggedIn(session)
+  return session
 }
 
 async function firstPage(browser: BrowserLike): Promise<PageLike> {
-  const contexts = browser.contexts()
-  const context = contexts[0]
+  const context = browser.contexts()[0]
   if (context === undefined) {
     throw new SessionError(
-      'the browser has no contexts — is this a real Chrome started with --remote-debugging-port, or a bare launch?',
+      'the browser has no contexts — is this a real Chrome started with --remote-debugging-port?',
     )
   }
   return context.pages()[0] ?? (await context.newPage())
 }
 
+interface CurrentUser {
+  data?: { id?: string; attributes?: { full_name?: string } }
+}
+
 /**
- * Navigate to a page only a logged-in account can see and refuse to continue if
- * we get bounced.
+ * Prove the session is live before anything with a side effect runs.
  *
- * Failing here is the cheap failure. The expensive one is a half-finished draft
- * with three of five videos uploaded because the session quietly expired.
+ * `/api/current_user` rather than a page load: it answers JSON for a live
+ * session and something that is not JSON for a dead one, which is a cheaper and
+ * less ambiguous signal than following a redirect to a login wall. It is also
+ * exactly the call the probe used, so a failure here and a failing probe mean
+ * the same thing.
  */
-export async function assertLoggedIn(page: PageLike, probe: LoginProbe = DEFAULT_LOGIN_PROBE): Promise<void> {
-  await page.goto(probe.url, { waitUntil: 'domcontentloaded' })
-  const landed = page.url()
-  if (probe.bouncedTo.test(landed)) {
+export async function assertLoggedIn(session: Session): Promise<string> {
+  const result = await call<CurrentUser>(session, { method: 'GET', path: '/api/current_user' })
+  const id = result.json?.data?.id
+  if (!result.ok || id === undefined) {
     throw new SessionError(
-      `not logged in: ${probe.url} bounced to ${landed}.\n` +
-        'Sign in to Patreon in that Chrome window by hand, then run this again.',
+      `not signed in to Patreon (${result.status}).\n` +
+        (result.json === null
+          ? 'The response was not JSON, which usually means a Cloudflare challenge rather than an expired login.\n'
+          : 'The saved session has expired.\n') +
+        'Run `pnpm patreon auth` to sign in again.',
     )
   }
+  return id
 }

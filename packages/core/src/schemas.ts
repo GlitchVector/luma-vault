@@ -156,6 +156,22 @@ export const deviantArtPostSchema = z.object({
 })
 export type DeviantArtPost = z.infer<typeof deviantArtPostSchema>
 
+/**
+ * A picture's existing Patreon draft.
+ *
+ * No `published`, and that is not an omission: the tool stops at a draft and
+ * never learns whether a human went on to post it. "This file has been sent" is
+ * what it can say, and that is enough to stop it being sent twice.
+ */
+export const patreonPostSchema = z.object({
+  postId: z.string(),
+  /** The editor page for the draft. */
+  url: z.string(),
+  /** Unix ms. */
+  postedAt: z.number(),
+})
+export type PatreonPost = z.infer<typeof patreonPostSchema>
+
 export const mediaItemSchema = z.object({
   id: z.number(),
   folderId: z.number(),
@@ -218,6 +234,8 @@ export const mediaItemSchema = z.object({
    * hundred tiles — a per-tile network answer would not be an answer.
    */
   deviantArt: deviantArtPostSchema.nullable().default(null),
+  /** Where this picture already is on Patreon — same reason as `deviantArt`. */
+  patreon: patreonPostSchema.nullable().default(null),
   /**
    * A person's correction of the model's rating, or `null` to trust the model.
    *
@@ -455,6 +473,11 @@ export const mediaQuerySchema = z.object({
    * table: `hideTags` must never be able to hide a set.
    */
   set: z.string().nullable().default(null),
+  /**
+   * Several runs at once, for posting two shoots of one character as one set.
+   * Wins over `set` when non-empty; `set` stays for the deep link.
+   */
+  sets: z.array(z.string()).default([]),
   /** Show only items rated at least this many stars. `1` means "rated at all". */
   minStars: z.number().nullable().default(null),
   /**
@@ -623,6 +646,21 @@ export const setSummarySchema = z.object({
 })
 export type SetSummary = z.infer<typeof setSummarySchema>
 
+/**
+ * One picture's place in one run — what the merge order sorts on.
+ *
+ * Not folded into `MediaItem`: a picture can be in several runs and a row can
+ * carry only one, and the grid does not need it — the compose panel does.
+ */
+export const setMemberRowSchema = z.object({
+  mediaId: z.number(),
+  run: z.string(),
+  /** What the run called this shot — `stage 3 — full body`, `act 7 — …`. */
+  label: z.string().nullable().default(null),
+  position: z.number(),
+})
+export type SetMemberRow = z.infer<typeof setMemberRowSchema>
+
 export const mediaPageSchema = z.object({
   items: z.array(mediaItemSchema),
   total: z.number(),
@@ -739,6 +777,36 @@ export const deviantArtSummarySchema = z.object({
   results: z.array(deviantArtResultSchema),
 })
 export type DeviantArtSummary = z.infer<typeof deviantArtSummarySchema>
+
+/**
+ * What the Patreon panel asks for. Ids, never paths — the webview does not name
+ * a file for the backend to read — and the order of `ids` is the order of the
+ * post.
+ */
+export const patreonRequestSchema = z.object({
+  ids: z.array(z.number()),
+  title: z.string(),
+  /** Markdown: paragraphs, bold, links. */
+  body: z.string(),
+  /** Access-rule ids for a tier-locked post. Empty means public. */
+  tiers: z.array(z.string()).default([]),
+  /** Stated, never defaulted — the client checks it against the campaign. */
+  adult: z.boolean(),
+})
+export type PatreonRequest = z.infer<typeof patreonRequestSchema>
+
+/** What a Patreon run did. A failed run is a summary with `error`, not a throw. */
+export const patreonSummarySchema = z.object({
+  /** The draft's editor page, once the run reached it. */
+  url: z.string().nullable(),
+  postId: z.string().nullable(),
+  uploaded: z.number(),
+  reused: z.number(),
+  error: z.string().nullable(),
+  /** Every line the client printed. */
+  log: z.array(z.string()).default([]),
+})
+export type PatreonSummary = z.infer<typeof patreonSummarySchema>
 
 // ---------------------------------------------------------------------------
 // Remote

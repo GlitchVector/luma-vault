@@ -52,6 +52,7 @@ function item(overrides: Partial<MediaItem> = {}): MediaItem {
     upscaledFrom: null,
     upscaledTo: null,
     deviantArt: null,
+    patreon: null,
     ratingOverride: null,
     ...overrides,
   }

@@ -6,6 +6,8 @@ import {
   retainVisible,
   toggleSelected,
   type MediaItem,
+  mergeSetOrder,
+  type SetMemberRow,
 } from '@luma/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FilterBar } from '#/components/FilterBar.tsx'
@@ -15,6 +17,7 @@ import { MediaGrid } from '#/components/MediaGrid.tsx'
 import { DEFAULT_TILE_SIZE, MAX_TILE_SIZE, MIN_TILE_SIZE } from '#/components/MediaTile.tsx'
 import { SearchBar } from '#/components/SearchBar.tsx'
 import { DeviantArtPanel } from '#/components/DeviantArtPanel.tsx'
+import { PatreonPanel } from '#/components/PatreonPanel.tsx'
 import { DialogHost } from '#/components/DialogHost.tsx'
 import { RemoteDialog } from '#/components/RemoteDialog.tsx'
 import { StatusBar } from '#/components/StatusBar.tsx'
@@ -37,6 +40,7 @@ import {
   type ForgeStatus,
   type UpscaleProgress,
   type UpscaleSummary,
+  setMembers,
 } from '#/lib/native.ts'
 import { HostLogin } from '#/components/HostLogin.tsx'
 import { useLibrary } from '#/lib/useLibrary.ts'
@@ -294,6 +298,8 @@ export function App() {
   // and a filter change underneath it must not silently drop a row someone has
   // already written a title for.
   const [publishing, setPublishing] = useState<MediaItem[] | null>(null)
+  /** The pictures a Patreon draft is being composed from, in post order. */
+  const [posting, setPosting] = useState<MediaItem[] | null>(null)
   const [forge, setForge] = useState<ForgeStatus | null>(null)
   const [showBoxes, setShowBoxes] = useState(false)
   // The timeline strip under the filter bar. Open/closed is UI state; the
@@ -323,7 +329,51 @@ export function App() {
   // every generated file would make the close button useless — one arrow key
   // and it would be back.
   const [showGeneration, setShowGeneration] = useState(true)
-  const { items, query, setQuery, actions, folders, progress } = library
+  const { items: pageItems, query, setQuery, actions, folders, progress } = library
+
+  /**
+   * The order a merged selection reads in.
+   *
+   * With one set showing, the backend's page order is the set's own; with
+   * several, appending them would run the dressed-to-undressed progression
+   * once per set. So the grid collates by stage and act across the selected
+   * runs — the rule lives in `@luma/core` — and the panel takes this order as
+   * the post's. Nothing here touches the manifests; a drag in the panel does.
+   */
+  const [members, setMembers_] = useState<SetMemberRow[]>([])
+  useEffect(() => {
+    if (query.sets.length < 2) {
+      setMembers_([])
+      return
+    }
+    let live = true
+    void setMembers(query.sets).then((rows) => {
+      if (live) setMembers_(rows)
+    })
+    return () => {
+      live = false
+    }
+  }, [query.sets])
+  const items = useMemo(() => {
+    if (query.sets.length < 2 || members.length === 0) return pageItems
+    const ordinal = new Map(query.sets.map((run, at) => [run, at] as const))
+    const byId = new Map(pageItems.map((item) => [item.id, item] as const))
+    const placed = new Set<number>()
+    const merged = mergeSetOrder(
+      members
+        .filter((row) => byId.has(row.mediaId))
+        .map((row) => ({
+          item: byId.get(row.mediaId) as MediaItem,
+          setOrdinal: ordinal.get(row.run) ?? 0,
+          position: row.position,
+          label: row.label,
+        })),
+    ).filter((item) => (placed.has(item.id) ? false : (placed.add(item.id), true)))
+    // A picture the page has but no selected run names — cannot happen with the
+    // `sets` filter on, but a stale members fetch must not make it vanish.
+    for (const item of pageItems) if (!placed.has(item.id)) merged.push(item)
+    return merged
+  }, [pageItems, members, query.sets])
 
   // Stepping through the lightbox walks the *currently filtered* list, which is
   // what "next" means to someone who just narrowed to videos.
@@ -459,6 +509,23 @@ export function App() {
       )
     }
     setPublishing(picked)
+  }, [items, selected])
+
+  /**
+   * Open the Patreon panel on the selection, in the order the grid shows.
+   *
+   * `items` here is already the collated order when several sets are showing,
+   * so filtering it keeps that order — the panel starts from what the grid
+   * displays rather than from selection order, which is whatever order the
+   * clicks happened in.
+   */
+  const reviewForPatreon = useCallback(() => {
+    const picked = items.filter((item) => selected.has(item.id))
+    if (picked.length === 0) {
+      void showMessage('Nothing is selected.', { title: 'Nothing to post' })
+      return
+    }
+    setPosting(picked)
   }, [items, selected])
 
   /**
@@ -885,9 +952,12 @@ export function App() {
       sets={library.sets}
       listing={listing}
       onListing={setListing}
-      selectedSet={library.query.set}
-      onSet={(run) => {
-        setQuery({ set: run })
+      selectedSets={library.query.sets}
+      onSets={(runs) => {
+        // `set` is kept in step for the deep link, which only knows one; the
+        // grid itself reads `sets`. A single pick fills both, so a link copied
+        // from a one-set view still opens that set.
+        setQuery({ sets: runs, set: runs.length === 1 ? (runs[0] ?? null) : null })
         setShowLibrary(false)
       }}
       // Home is the unified grid with nothing narrowing it: every folder, no
@@ -895,7 +965,7 @@ export function App() {
       // sidebar goes back to it too rather than leaving a set list with
       // nothing selected in it.
       onHome={() => {
-        setQuery({ folderId: null, set: null, search: '' })
+        setQuery({ folderId: null, set: null, sets: [], search: '' })
         setListing('characters')
         setShowLibrary(false)
       }}
@@ -1098,6 +1168,16 @@ export function App() {
                 DeviantArt…
               </button>
 
+              <button
+                type="button"
+                disabled={selected.size === 0 || upscaling !== null}
+                onClick={reviewForPatreon}
+                title="Compose a Patreon draft from these, in the order shown. Reorder by dragging. Nothing is published."
+                className="mr-2 rounded-full bg-white/5 px-3 py-1 text-[11px] font-medium text-zinc-300 hover:bg-white/10 hover:text-zinc-100 disabled:cursor-default disabled:bg-white/5 disabled:text-zinc-600"
+              >
+                Patreon…
+              </button>
+
               {/* Marking by hand, for what this app did not upload itself.
                   Deliberately next to the upload button and deliberately not
                   looking like it: one posts, the other only records. */}
@@ -1288,6 +1368,25 @@ export function App() {
 
       {publishing ? (
         <DeviantArtPanel items={publishing} onClose={() => setPublishing(null)} />
+      ) : null}
+      {posting ? (
+        <PatreonPanel
+          items={posting}
+          sets={query.sets.length > 0 ? query.sets : query.set ? [query.set] : []}
+          members={members}
+          // The first selected set's own title, so a shoot that named itself
+          // starts the post with that name rather than an empty field.
+          setTitle={
+            library.sets.find((set) => set.run === (query.sets[0] ?? query.set))?.title ?? null
+          }
+          onClose={() => {
+            setPosting(null)
+            // The badge is a column on the row; the page has to be re-read
+            // for it to appear.
+            library.reload()
+          }}
+          onReordered={() => library.reload()}
+        />
       ) : null}
 
       <DialogHost />

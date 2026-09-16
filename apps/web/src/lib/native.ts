@@ -34,6 +34,8 @@ import {
   shareStatusSchema,
   scanProgressSchema,
   deviantArtAccountSchema,
+  patreonSummarySchema,
+  setMemberRowSchema,
   deviantArtGallerySchema,
   deviantArtSummarySchema,
   timelineBucketSchema,
@@ -61,6 +63,9 @@ import {
   type ShareStatus,
   type SourceOrigin,
   type ThrottleLevel,
+  type PatreonRequest,
+  type PatreonSummary,
+  type SetMemberRow,
 } from '@luma/core'
 import { z } from 'zod'
 
@@ -117,6 +122,8 @@ const LOCAL_ONLY = new Set([
   'reveal_item',
   'forge_url',
   'set_forge_url',
+  // Spawns the Node client on this machine, with this machine's cookie jar.
+  'patreon_post',
 ])
 
 // ---------------------------------------------------------------------------
@@ -843,6 +850,69 @@ export async function deviantArtConnect(): Promise<DeviantArtAccount> {
 
 export async function deviantArtDisconnect(): Promise<void> {
   await invoke('deviantart_disconnect')
+}
+
+// ---------------------------------------------------------------------------
+// Sets, and their order
+
+/** Every member of these runs with its label and position — what a merged post sorts on. */
+export async function setMembers(runs: string[]): Promise<SetMemberRow[]> {
+  if (runs.length === 0 || !(await hasBackend())) return []
+  return z.array(setMemberRowSchema).parse(await invoke('set_members', { runs }))
+}
+
+/**
+ * Put one set's pictures in a new order, everywhere — index and manifest.
+ *
+ * Paths rather than ids, because the manifest names files and the index names
+ * paths, and the backend needs the one that reaches both.
+ */
+export async function reorderSet(run: string, paths: string[]): Promise<number> {
+  if (!(await hasBackend())) return 0
+  return (await invoke('reorder_set', { run, paths })) as number
+}
+
+/**
+ * The same for a merged drag across several sets: each set gets its own
+ * members' new relative order, and the interleaving stays with the post.
+ */
+export async function reorderSets(runs: string[], paths: string[]): Promise<number> {
+  if (!(await hasBackend())) return 0
+  return (await invoke('reorder_sets', { runs, paths })) as number
+}
+
+// ---------------------------------------------------------------------------
+// Patreon
+
+export interface PatreonProgress {
+  /** `checking`, `creating`, `uploading`, `configuring`, `running` or `done`. */
+  phase: string
+  done: number
+  total: number
+  /** The client's own line, verbatim. */
+  line: string
+}
+
+/**
+ * Create a Patreon draft from a selection, in this order.
+ *
+ * Ids, never paths: the file is resolved in Rust from the id, so the webview
+ * never names a path for the backend to read. Everything ends as a draft — the
+ * client has no publish path, and the URL it returns is the editor.
+ */
+export async function patreonPost(request: PatreonRequest): Promise<PatreonSummary> {
+  return patreonSummarySchema.parse(await invoke('patreon_post', { request }))
+}
+
+/** Per-line progress while a post runs. Returns an unsubscribe. */
+export async function onPatreonProgress(
+  handler: (progress: PatreonProgress) => void,
+): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  const { listen } = await import('@tauri-apps/api/event')
+  return listen<PatreonProgress>('luma://patreon', (event) => {
+    handler(event.payload)
+  })
 }
 
 export interface DeviantArtProgress {

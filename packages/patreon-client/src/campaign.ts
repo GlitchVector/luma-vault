@@ -50,6 +50,16 @@ export async function readCampaign(session: Session, campaignId: string): Promis
   const result = await call<CampaignResponse>(session, {
     method: endpoint.method,
     path: endpointPath(endpoint, { id: campaignId }),
+    // JSON:API returns no `included` unless asked, and the first run of this
+    // against a real campaign failed on exactly that: the rules were absent, so
+    // a public post "could not be expressed". The editor's own query asks for
+    // fifteen relationships; these two are the ones this needs.
+    query: {
+      'fields[accessRule]': 'access_rule_type,amount_cents,post_count',
+      include: 'access_rules.tier.null',
+      'json-api-version': '1.0',
+      'json-api-use-default-includes': 'false',
+    },
   })
   if (!result.ok || result.json?.data === undefined) {
     throw new Error(

@@ -111,6 +111,27 @@ fn deviantart_account_matches_the_shared_fixture() {
 }
 
 #[test]
+fn set_member_rows_match_the_shared_fixture() {
+    round_trip::<Vec<crate::types::SetMemberRow>>(include_str!(
+        "../../../contracts/set-member.json"
+    ));
+}
+
+#[test]
+fn patreon_requests_match_the_shared_fixture() {
+    round_trip::<Vec<crate::types::PatreonRequest>>(include_str!(
+        "../../../contracts/patreon-request.json"
+    ));
+}
+
+#[test]
+fn patreon_summaries_match_the_shared_fixture() {
+    round_trip::<Vec<crate::types::PatreonSummary>>(include_str!(
+        "../../../contracts/patreon-summary.json"
+    ));
+}
+
+#[test]
 fn deviantart_summary_matches_the_shared_fixture() {
     round_trip::<crate::types::DeviantArtSummary>(include_str!(
         "../../../contracts/deviantart-summary.json"

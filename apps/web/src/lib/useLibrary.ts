@@ -41,6 +41,7 @@ export const DEFAULT_QUERY: MediaQuery = {
   searchPaths: false,
   tag: null,
   set: null,
+  sets: [],
   minStars: null,
   maxStars: null,
   unstarred: false,

@@ -25,6 +25,7 @@ mod generated;
 pub mod imports;
 mod origin;
 mod paths;
+mod patreon;
 mod pipeline;
 mod protocol;
 mod rating;
@@ -77,6 +78,16 @@ pub struct AppState {
     /// Holds the access-token cache, so a batch of twenty uploads refreshes
     /// once rather than per file.
     deviantart: Arc<DeviantArt>,
+    /// The Patreon client's entry point, resolved once at startup. `None` when
+    /// the harness is not beside the app, which the command reports as a setup
+    /// step rather than a failure.
+    patreon: Option<PathBuf>,
+    /// Where `.env` and the harness live in a dev tree. The Patreon client is
+    /// spawned from here so it finds both.
+    repo_root: PathBuf,
+    /// App-local data. Patreon jobs and their resume state live under it, away
+    /// from any watched folder.
+    data_dir: PathBuf,
     /// Whether this window is showing another machine's library, and whether it
     /// is answering for others.
     remote: Arc<RemoteState>,
@@ -348,6 +359,32 @@ async fn deviantart_send(
     stack: Option<String>,
 ) -> Result<DeviantArtSummary, String> {
     api::deviantart_send(&app, &state, drafts, publish, stack).await
+}
+
+#[tauri::command(async)]
+async fn reorder_sets(
+    state: State<'_, AppState>,
+    runs: Vec<String>,
+    paths: Vec<String>,
+) -> Result<usize, String> {
+    api::reorder_sets(&state, runs, paths)
+}
+
+#[tauri::command(async)]
+async fn set_members(
+    state: State<'_, AppState>,
+    runs: Vec<String>,
+) -> Result<Vec<types::SetMemberRow>, String> {
+    api::set_members(&state, runs)
+}
+
+#[tauri::command(async)]
+async fn patreon_post(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    request: types::PatreonRequest,
+) -> Result<types::PatreonSummary, String> {
+    api::patreon_post(&app, &state, request).await
 }
 
 #[tauri::command(async)]
@@ -751,6 +788,9 @@ pub fn run() {
                 pipeline: Arc::clone(&pipeline),
                 watcher,
                 upscaler: upscaler::resolve(&repo_root, resource_dir.as_deref()),
+                patreon: patreon::resolve(&repo_root, resource_dir.as_deref()),
+                repo_root: repo_root.clone(),
+                data_dir: data_dir.clone(),
                 remote: Arc::new(RemoteState::new(remote::DEFAULT_PORT)),
             });
 
@@ -874,6 +914,9 @@ pub fn run() {
             deviantart_galleries,
             deviantart_send,
             reorder_set,
+            reorder_sets,
+            set_members,
+            patreon_post,
             deviantart_mark,
             set_rating_override,
             remote_status,

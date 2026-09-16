@@ -24,45 +24,12 @@
  * changes nothing.
  */
 
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
-
-interface StorageState {
-  cookies?: { name?: string; value?: string; domain?: string }[]
-}
-
 export interface ProbeResult {
   readonly status: number
   readonly looksLikeJson: boolean
   readonly challenged: boolean
   readonly server: string | null
   readonly bodyHead: string
-}
-
-/** Rebuild a Cookie header from what the headed login dumped. */
-export async function cookieHeader(statePath: string): Promise<string> {
-  let text: string
-  try {
-    text = await readFile(resolve(statePath), 'utf8')
-  } catch {
-    // Named so the CLI prints it as a sentence rather than a stack trace.
-    const missing = new Error(
-      `no saved session at ${statePath}.
-Run \`pnpm patreon auth\` first — it opens a browser for you to sign in once.`,
-    )
-    missing.name = 'SessionError'
-    throw missing
-  }
-  const state = JSON.parse(text) as StorageState
-  const jar = (state.cookies ?? []).filter((cookie) =>
-    (cookie.domain ?? '').includes('patreon.com'),
-  )
-  if (jar.length === 0) {
-    const empty = new Error(`${statePath} holds no patreon.com cookies — run: pnpm patreon auth`)
-    empty.name = 'SessionError'
-    throw empty
-  }
-  return jar.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ')
 }
 
 /**
@@ -85,15 +52,17 @@ export function readProbe(status: number, server: string | null, body: string): 
 }
 
 export async function probe(statePath: string, url: string): Promise<ProbeResult> {
-  const response = await fetch(url, {
-    headers: {
-      cookie: await cookieHeader(statePath),
-      accept: 'application/vnd.api+json',
-      // A plain, honest Node request. Spoofing a Chrome user-agent would make
-      // the answer meaningless: the question is whether the *fingerprint*
-      // matters, and a borrowed UA string does not change one.
-      'user-agent': 'luma-vault-probe',
-    },
+  // Through the real transport, with the real identity. An earlier version sent
+  // its own `luma-vault-probe` user-agent, which made it a test of something the
+  // client never does — and it reported a challenge the client would not have
+  // hit, and would have hidden one it did.
+  const { identityFrom, cookieTransport } = await import('@luma/patreon-client')
+  const transport = cookieTransport(await identityFrom(statePath))
+  const response = await transport.send({
+    url,
+    method: 'GET',
+    headers: { accept: url.includes('/api/') ? 'application/vnd.api+json' : 'text/html' },
+    bodyText: null,
   })
-  return readProbe(response.status, response.headers.get('server'), await response.text())
+  return readProbe(response.status, response.headers['server'] ?? null, response.text)
 }

@@ -356,6 +356,7 @@ mod tests {
             upscaled_from: Some("/out/00021.png".to_string()),
             upscaled_to: None,
             deviant_art: None,
+            patreon: None,
             rating_override: None,
         }
     }

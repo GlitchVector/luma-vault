@@ -233,6 +233,80 @@ pub fn reorder_set(state: &AppState, run: String, paths: Vec<String>) -> Result<
     Ok(moved)
 }
 
+/// Every member of these runs, with label and position, for the merge order.
+pub fn set_members(state: &AppState, runs: Vec<String>) -> Result<Vec<crate::types::SetMemberRow>, String> {
+    state.db.set_members(&runs).map_err(stringify)
+}
+
+/// Reorder several sets from one merged drag.
+///
+/// A merged order is cross-set, and neither manifest can express "A's frame 3
+/// sits after B's frame 7" — each only orders its own members. So the drag is
+/// split: each set gets its own members' new *relative* order, in the index and
+/// in its manifest, and the interleaving stays with the post. Every set is
+/// still written, because a drag that moved only one set's frames is the
+/// common case and must not be lost.
+pub fn reorder_sets(state: &AppState, runs: Vec<String>, paths: Vec<String>) -> Result<usize, String> {
+    let members = state.db.set_members(&runs).map_err(stringify)?;
+    let mut moved = 0;
+    for run in &runs {
+        let ids: std::collections::HashSet<i64> = members
+            .iter()
+            .filter(|row| &row.run == run)
+            .map(|row| row.media_id)
+            .collect();
+        // The paths that belong to this run, in the merged order they were
+        // dragged into. Resolved by id through the index so a path string the
+        // webview happened to hold is never trusted as membership.
+        let mut own: Vec<String> = Vec::new();
+        for path in &paths {
+            if let Ok(Some(item)) = state.db.media_by_path(path) {
+                if ids.contains(&item.id) {
+                    own.push(path.clone());
+                }
+            }
+        }
+        if !own.is_empty() {
+            moved += reorder_set(state, run.clone(), own)?;
+        }
+    }
+    Ok(moved)
+}
+
+/// Post a selection to Patreon, as a draft, through the Node client.
+///
+/// Blocking work on a spawned thread, like an upscale: a post is minutes of
+/// uploading and the window must stay alive. What comes back is the client's
+/// summary; a run that failed is a summary with `error`, so the panel can show
+/// the client's own sentence rather than a Tauri one.
+pub async fn patreon_post(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    request: crate::types::PatreonRequest,
+) -> Result<crate::types::PatreonSummary, String> {
+    if request.ids.is_empty() {
+        return Err("nothing selected".to_string());
+    }
+    if request.title.trim().is_empty() {
+        return Err("a post needs a title".to_string());
+    }
+    let Some(cli) = state.patreon.clone() else {
+        return Err(
+            "the Patreon client is not here: packages/patreon-harness/src/cli.ts was not found beside the app"
+                .to_string(),
+        );
+    };
+    let app = app.clone();
+    let db = Arc::clone(&state.db);
+    let repo_root = state.repo_root.clone();
+    let data_dir = state.data_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::patreon::post(&app, &db, &cli, &repo_root, &data_dir, &request).map_err(stringify)
+    })
+    .await
+    .map_err(|error| format!("the Patreon run was interrupted: {error}"))?
+}
+
 /// What an img2img was made from, found perceptually and walked back to the
 /// picture that started the lineage.
 ///
@@ -1152,6 +1226,8 @@ pub async fn dispatch(
         "set_stars" => ok(set_stars(state, arg(args, "id")?, arg(args, "stars")?)?),
         "set_stars_many" => ok(set_stars_many(state, arg(args, "ids")?, arg(args, "stars")?)?),
         "reorder_set" => ok(reorder_set(state, arg(args, "run")?, arg(args, "paths")?)?),
+        "reorder_sets" => ok(reorder_sets(state, arg(args, "runs")?, arg(args, "paths")?)?),
+        "set_members" => ok(set_members(state, arg(args, "runs")?)?),
         "import_image_browser_db" => ok(import_image_browser_db(state, arg(args, "path")?)?),
         "retry_failed" => ok(retry_failed(app, state, arg(args, "folderId")?)?),
         "reveal_item" => ok(reveal_item(app, arg(args, "path")?)?),
