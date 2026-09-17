@@ -48,6 +48,7 @@
       "seed": 8812,
       "attempt": 0,
       "prompt": "masterpiece, best quality, 1girl, solo, <lora:ari_adopt_v1:1.2>, ari, white hair, aqua hair, wide shot, rooftop at dawn",
+      "plate": "C:\\Users\\me\\AppData\\Local\\net.glitchvector.luma-vault\\comics\\first-light\\plates\\p1-1.png",
       "verdict": { "ok": true, "attempt": 0, "failures": [] }
     },
     {
@@ -58,6 +59,7 @@
       "seed": null,
       "attempt": null,
       "prompt": null,
+      "plate": null,
       "verdict": null
     }
   ],

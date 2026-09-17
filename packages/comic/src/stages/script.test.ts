@@ -86,7 +86,8 @@ describe('stage 1', () => {
     const script = {
       title: 't',
       characters: {},
-      pages: [{ layout: 'splash', panels: [{ id: 'p1-1', camera: 'close-up', scene: 'rooftop, (vaporwave:1.2)', characters: [], reserve_space: 'none' as const, dialogue: [], sfx: [] }] }],
+      locations: {},
+      pages: [{ layout: 'splash', panels: [{ id: 'p1-1', camera: 'close-up', scene: 'rooftop, (vaporwave:1.2)', pose: [], characters: [], reserve_space: 'none' as const, dialogue: [], sfx: [] }] }],
     }
     expect(vocabularyNotes(script, csv)).toEqual(['1 of 3 scene terms are not tags the checkpoint was trained on, e.g. vaporwave'])
     expect(vocabularyNotes(script, join(dir, 'missing.csv'))).toEqual([])

@@ -92,6 +92,31 @@ export const qaConfigSchema = z.object({
   space_std: z.number().default(18),
 })
 
+/**
+ * The plate pass: a hosted model draws the place with stand-in figures, and
+ * the local model redraws the stand-ins as the cast. `none` renders each
+ * panel directly, the way the pipeline started.
+ */
+export const platesConfigSchema = z.object({
+  backend: z.enum(['none', 'openai', 'mock']).default('none'),
+  model: z.string().default('gpt-image-1'),
+  quality: z.enum(['low', 'medium', 'high', 'auto']).default('medium'),
+  /** How closely an edit keeps the master plate it was given. */
+  input_fidelity: z.enum(['low', 'high']).default('high'),
+  /** Style words for the plate. The local pass has its own in `prompt.style`. */
+  style: z.string().default('clean digital illustration, soft natural light, no text'),
+  /** How far a stand-in's mask grows past its colour, in pixels, so the
+   *  redraw covers the edge the hosted model anti-aliased. */
+  mask_grow: z.number().int().min(0).default(24),
+  /** Colour distance (0-441) under which a pixel counts as the stand-in. */
+  mask_tolerance: z.number().min(0).default(90),
+  /** Inpaint strength on the stand-in. High: the figure is redrawn, not tinted. */
+  denoise: z.number().min(0).max(1).default(0.9),
+  mask_blur: z.number().int().min(0).default(8),
+  inpaint_padding: z.number().int().min(0).default(64),
+})
+export type PlatesConfig = z.infer<typeof platesConfigSchema>
+
 export const writerConfigSchema = z.object({
   backend: z.enum(['claude-cli', 'anthropic']).default('claude-cli'),
   model: z.string().default('claude-opus-5'),
@@ -104,6 +129,7 @@ export const configSchema = z.object({
   page: pageConfigSchema.prefault({}),
   qa: qaConfigSchema.prefault({}),
   writer: writerConfigSchema.prefault({}),
+  plates: platesConfigSchema.prefault({}),
   /** Chrome channel Playwright launches for the assembler. */
   browser: z.enum(['chrome', 'msedge', 'chromium']).default('chrome'),
   characters: z.record(z.string(), comicCharacterSchema),

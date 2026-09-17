@@ -23,6 +23,9 @@ export interface RenderRequest {
   checkpoint: string
   clip_skip?: number
   backend: string
+  /** Set when the panel is painted into a plate: the plate's hash and the
+   *  inpaint settings, so a new plate or a new strength is a new picture. */
+  plate?: { hash: string; denoise: number; mask_grow: number; mask_tolerance: number; mask_blur: number; padding: number }
 }
 
 export function canonical(value: unknown): string {

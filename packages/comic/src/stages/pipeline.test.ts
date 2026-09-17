@@ -19,15 +19,17 @@ const script: Script = {
   characters: {
     ari: { lora: 'ari_adopt_v1:1.2', trigger: 'ari', look: 'white hair', subject: '1girl', seed_family: 8812 },
   },
+  locations: {},
   pages: [
     {
       layout: 'hero-top',
       panels: [
-        { id: 'p1-1', camera: 'wide shot', scene: 'rooftop', characters: [], reserve_space: 'top', dialogue: [], sfx: [] },
+        { id: 'p1-1', camera: 'wide shot', scene: 'rooftop', pose: [], characters: [], reserve_space: 'top', dialogue: [], sfx: [] },
         {
           id: 'p1-2',
           camera: 'close-up',
           scene: 'drone',
+          pose: [],
           characters: ['ari'],
           reserve_space: 'top-right',
           dialogue: [{ speaker: 'ari', text: 'Hi', anchor: 'top-right', kind: 'speech' }],
@@ -35,7 +37,7 @@ const script: Script = {
         },
         // A prompt the mock cannot honour: it hatches the whole frame, so
         // the reserved corner is never usable and QA must retry and give up.
-        { id: 'p1-3', camera: 'close-up', scene: 'MOCK_BUSY', characters: ['ari'], reserve_space: 'top-left', dialogue: [], sfx: [] },
+        { id: 'p1-3', camera: 'close-up', scene: 'MOCK_BUSY', pose: [], characters: ['ari'], reserve_space: 'top-left', dialogue: [], sfx: [] },
       ],
     },
   ],
@@ -57,7 +59,7 @@ const report = new Proxy(new Reporter(true), {
 beforeEach(() => {
   events.length = 0
   dir = mkdtempSync(join(tmpdir(), 'comic-pipe-'))
-  writeFileSync(join(dir, 'comic.config.json'), JSON.stringify({ renderer: 'mock', qa: { max_attempts: 2 } }))
+  writeFileSync(join(dir, 'comic.config.json'), JSON.stringify({ renderer: 'mock', plates: { backend: 'none' }, qa: { max_attempts: 2 } }))
   writeFileSync(join(dir, 'script.json'), JSON.stringify(script))
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))

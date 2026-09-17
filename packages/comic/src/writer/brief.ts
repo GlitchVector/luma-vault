@@ -45,6 +45,10 @@ THE CAST (ids you may use in "characters" and "speaker"; the pipeline restates e
 ${cast}
 "narrator" may be used as a speaker for captions only.
 
+PLACES
+- "locations": every recurring place, described once with nobody in it — architecture, materials, colours, time of day, light, weather, props (e.g. "rooftop": "gravel rooftop of an old brick radio building, rusted ventilation ducts, low parapet, city skyline beyond, grey pre-dawn light"). These descriptions go to a hosted image model: keep them free of nudity and sexual content.
+- Each panel names its place in "location". A panel with no fixed place may leave it out.
+
 PAGES AND LAYOUTS
 - 3 to 5 panels per page unless the prose is very short. Choose "layout" from these presets; its panel count must equal the page's number of panels:
 ${layouts}
@@ -58,6 +62,8 @@ EACH PANEL
   - NEVER describe appearance, clothing or hair. The pipeline adds it.
   - NEVER use names or pronouns for the cast. Say what the figure does.
   - Vary the camera across a page. Every panel must restate where we are.
+- "setting": the place and light as seen in THIS panel, nobody in it, one sentence (e.g. "the parapet edge from below, sky filling the top of the frame"). Goes to a hosted model: no nudity, no sexual content, no names.
+- "pose": one short phrase per character in the same order as "characters", describing what a stand-in figure does — posture and gesture only (e.g. "crouching, one hand reaching down"). A hosted model reads it: keep it neutral; the explicit action, if any, belongs in "scene" alone.
 - "characters": the cast ids visible in the panel, the one the panel is about first. Empty for an establishing shot with nobody in it.
 - "figures": only when the number of people differs from the characters listed (a crowd, a silhouette).
 - "reserve_space": where lettering will go, one of ${ANCHORS.join(', ')}, or "none" when the panel has no dialogue. Put it where the empty part of the picture naturally is (sky above a low angle, floor below a high angle).

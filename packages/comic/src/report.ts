@@ -10,6 +10,7 @@
 export type Event =
   | { event: 'stage'; stage: string; status: 'start' | 'done' | 'failed'; message?: string }
   | { event: 'panel'; id: string; status: 'planned' | 'cached' | 'rendering' | 'rendered' | 'failed'; progress?: number; eta?: number; attempt?: number; seed?: number; message?: string }
+  | { event: 'plate'; id: string; status: 'cached' | 'drawn' | 'failed'; message?: string }
   | { event: 'qa'; id: string; status: 'ok' | 'failed' | 'retry'; failures?: string[]; attempt?: number; message?: string }
   | { event: 'page'; page: number; status: 'assembled'; path: string }
   | { event: 'output'; kind: 'pdf' | 'cbz' | 'script'; path: string }
@@ -51,6 +52,8 @@ function describe(event: Event): string {
       const attempt = event.attempt ? ` attempt ${event.attempt + 1}` : ''
       return `  ${event.id}: ${event.status}${seed}${attempt}${progress}${eta}${event.message ? ` — ${event.message}` : ''}`
     }
+    case 'plate':
+      return `  plate ${event.id}: ${event.status}${event.message ? ` — ${event.message}` : ''}`
     case 'qa':
       return `  ${event.id}: ${event.status}${event.failures?.length ? ` (${event.failures.join(', ')})` : ''}${event.message ? ` — ${event.message}` : ''}`
     case 'page':

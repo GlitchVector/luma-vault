@@ -65,8 +65,18 @@ export const comicPanelSchema = z.object({
   /** Framing words, in the tag vocabulary the checkpoint knows (`close-up`,
    *  `cowboy shot`, `from below`, ...). Never a sentence. */
   camera: z.string().min(1),
-  /** The prompt body: setting, action, light. No dialogue, no names. */
+  /** The prompt body: setting, action, light. No dialogue, no names. Only
+   *  the local model ever sees this, so it may say anything. */
   scene: z.string().min(1),
+  /** A key into the script's `locations`, for a plate that stays consistent
+   *  across every panel set there. */
+  location: z.string().optional(),
+  /** The place and light only, with nobody in it, for the plate. Goes to a
+   *  hosted model: keep it free of nudity and sexual content. */
+  setting: z.string().optional(),
+  /** What each stand-in figure does, in order of `characters`, for the
+   *  plate. Same rule: a hosted model reads it. */
+  pose: z.array(z.string()).default([]),
   characters: z.array(z.string()).default([]),
   /** How many people the picture should contain, when it is not simply the
    *  number of characters in it (a crowd, an empty room). */
@@ -196,6 +206,10 @@ export type ComicCharacter = z.infer<typeof comicCharacterSchema>
 export const comicScriptSchema = z.object({
   title: z.string().min(1),
   characters: z.record(z.string(), comicCharacterSchema),
+  /** Recurring places, described once, with nobody in them. A panel names
+   *  one in `location`; the plates stage draws each once and keeps every
+   *  panel set there on the same picture. */
+  locations: z.record(z.string(), z.string()).default({}),
   pages: z.array(comicPageSchema).min(1),
 })
 export type ComicScript = z.infer<typeof comicScriptSchema>
@@ -210,6 +224,7 @@ export const comicDraftPageSchema = comicPageSchema.extend({
 })
 export const comicDraftScriptSchema = z.object({
   title: z.string().min(1),
+  locations: z.record(z.string(), z.string()).default({}),
   pages: z.array(comicDraftPageSchema).min(1),
 })
 export type ComicDraftScript = z.infer<typeof comicDraftScriptSchema>

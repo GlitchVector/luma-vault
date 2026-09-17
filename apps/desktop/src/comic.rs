@@ -181,6 +181,7 @@ pub fn read(root: &Path, name: &str) -> Result<ComicProject> {
             for panel in list {
                 let Some(id) = panel.get("id").and_then(|i| i.as_str()) else { continue };
                 let png = dir.join("panels").join(format!("{id}.png"));
+                let plate = dir.join("plates").join(format!("{id}.png"));
                 let sidecar = read_json(&dir.join("panels").join(format!("{id}.json")));
                 let verdict = read_json(&dir.join("qa").join(format!("{id}.json"))).map(|v| ComicVerdict {
                     ok: v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false),
@@ -207,6 +208,7 @@ pub fn read(root: &Path, name: &str) -> Result<ComicProject> {
                         .and_then(|r| r.get("prompt"))
                         .and_then(|x| x.as_str())
                         .map(str::to_string),
+                    plate: plate.is_file().then(|| plate.to_string_lossy().to_string()),
                     verdict,
                 });
             }

@@ -7,6 +7,7 @@ nothing in the loop but files:
 | Stage | Command | In → Out |
 |---|---|---|
 | 1 | `pnpm comic script <project>` | `prose.md` → `script.json` |
+| 2a | `pnpm comic plates <project>` | `script.json` → `plates/<id>.png` (a hosted model's place with stand-ins; run by `panels` when missing) |
 | 2 | `pnpm comic panels <project>` | `script.json` → `panels/<id>.png` (+ `.json` sidecar) |
 | 4 | `pnpm comic qa <project>` | panels → `qa/<id>.json`, failures re-rendered at the next seed |
 | 3 | `pnpm comic assemble <project>` | panels + script → `out/page-NN.png`, `out/book.pdf`, `out/book.cbz` |
@@ -72,6 +73,43 @@ Panel sizes come from the layout: the grid cell's aspect picks the nearest
 SDXL bucket (`src/layouts.ts`), so a wide establishing panel renders
 landscape and a tall one portrait.
 
+## Plates: a hosted model for the place, the local model for the people
+
+With `plates.backend` set to `openai` (the default), a panel is drawn in two
+passes:
+
+1. **The plate.** OpenAI's image model (`gpt-image-1`) draws the place. Each
+   entry in the script's `locations` becomes a master plate once
+   (`plates/location-<name>.png`, `images/generations`), and every panel set
+   there is drawn as a view of that master (`images/edits` with the master as
+   the reference, `input_fidelity: high`), so the rooftop is the same rooftop
+   in every panel. Where a character will stand, the prompt asks for a
+   featureless matte mannequin in a fixed colour — magenta, cyan, yellow, one
+   per character in order — posed as the panel's `pose` says.
+2. **The people.** Each mannequin is found by its colour (a threshold, grown
+   by `mask_grow` pixels) and painted over with Forge's img2img inpaint at
+   `denoise` 0.9 with that character's LoRA prompt, one character at a time,
+   full-resolution inpaint so a face stays sharp inside a wide plate. The
+   mannequin's silhouette is the pose guide; no ControlNet.
+
+The hosted model only ever sees `locations`, `setting`, `pose` and `camera`.
+It never sees `scene`, which is the field the local prompt is built from —
+so a scene may say anything the local checkpoint will draw, and the plate
+request stays within the hosted model's rules. The writer's brief says the
+same thing in its own words, and `pnpm comic plates` prints exactly what was
+sent, so a refusal names the field to reword.
+
+Plates are cached by their request (prompt, size, quality, the master they
+were shown) and are files in the project: a hosted model has no seed, so they
+are the one part of a comic that cannot be recomputed. Keep them. A plate in
+which the mannequin did not appear is asked for again as a variation, twice;
+after that the panel fails and the run goes on.
+
+Set `plates.backend` to `none` to render every panel directly with Forge, or
+to `mock` to exercise the whole pass without a key. `pnpm comic doctor` says
+whether `OPENAI_API_KEY` (from `.env`) is there. At medium quality a panel
+plate is a few cents; a ten-panel comic with two locations is about a dollar.
+
 ## Assembling
 
 Stage 3 is HTML and CSS, screenshotted by Chrome through Playwright. A page
@@ -116,6 +154,7 @@ packages/comic/
     layouts.ts             presets → grid geometry → SDXL bucket
     prompt.ts  seed.ts  cache.ts
     render/                renderer.ts (the seam), forge.ts, mock.ts
+    plates/                plate.ts (the seam), openai.ts, mock.ts, prompt.ts, mask.ts
     writer/                writer.ts (the seam), claude-cli.ts, anthropic.ts, brief.ts
     stages/                script.ts, panels.ts, qa.ts, assemble.ts
     assemble/page.ts       the page HTML
@@ -130,6 +169,7 @@ A project folder:
   prose.md                 what you write
   comic.config.json        optional overrides (a different checkpoint, a different cast)
   script.json              stage 1's output, yours to edit
+  plates/<id>.png + .json  the hosted model's plates and masters (keep them)
   panels/<id>.png + .json  stage 2's output and the request that made it
   qa/<id>.json             stage 4's verdicts
   build/                   the page HTML (regenerated)
@@ -141,6 +181,7 @@ A project folder:
 ```
 pnpm comic init      <project>
 pnpm comic script    <project> [--prose file]
+pnpm comic plates    <project> [--page N] [--panel ID|N] [--force]
 pnpm comic panels    <project> [--page N] [--panel ID|N] [--force] [--dry-run] [--attempt N]
 pnpm comic render    <project> --page N --panel N [--seed S]
 pnpm comic qa        <project> [--page N] [--panel ID|N] [--no-retry] [--no-tagger]

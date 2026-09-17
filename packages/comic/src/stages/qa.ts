@@ -13,12 +13,13 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { loadScript, writeJson, type Project } from '../project.ts'
+import { writeJson, type Project } from '../project.ts'
 import type { Renderer } from '../render/renderer.ts'
 import type { Reporter } from '../report.ts'
 import { inspectPixels, type PixelVerdict } from '../qa/pixels.ts'
 import { PythonTagger, judgeFigures, type Tagger, type Tags } from '../qa/tagger.ts'
-import { isCached, loraNames, planPanel, rendererFor, renderPlan, selectPanels, type PanelFilter, type PanelPlan } from './panels.ts'
+import { contextFor, finalizePlan, isCached, loraNames, planPanel, renderPlan, selectPanels, type PanelFilter, type PanelPlan } from './panels.ts'
+import type { PlateBackend } from '../plates/plate.ts'
 
 export interface Verdict {
   panel: string
@@ -36,6 +37,7 @@ export interface QaOptions {
   retry?: boolean
   tagger?: Tagger | null
   renderer?: Renderer
+  plates?: PlateBackend | null
 }
 
 export function verdictPath(project: Project, id: string): string {
@@ -79,8 +81,8 @@ export async function inspect(plan: PanelPlan, project: Project, tagger: Tagger 
 }
 
 export async function runQa(project: Project, report: Reporter, filter: PanelFilter = {}, options: QaOptions = {}): Promise<Verdict[]> {
-  const script = loadScript(project)
-  const renderer = options.renderer ?? rendererFor(project)
+  const context = await contextFor(project, report, options.renderer, options.plates)
+  const { script, renderer } = context
   const retry = options.retry ?? true
   let tagger: Tagger | null
   if (options.tagger !== undefined) {
@@ -96,8 +98,9 @@ export async function runQa(project: Project, report: Reporter, filter: PanelFil
   const prepared = await renderer.prepare({ checkpoint: project.config.forge.checkpoint, loras: loraNames(script) })
   const verdicts: Verdict[] = []
   for (const where of selectPanels(script, filter)) {
-    let plan = planPanel(project, script, prepared, where, {}, renderer.name)
     // Panel by panel, attempt by attempt: each render decides the next.
+    // eslint-disable-next-line no-await-in-loop
+    let plan = await finalizePlan(planPanel(project, script, prepared, where, {}, renderer.name), context)
     // eslint-disable-next-line no-await-in-loop
     if (!isCached(plan)) await renderPlan(plan, renderer, report)
     // eslint-disable-next-line no-await-in-loop
@@ -105,7 +108,8 @@ export async function runQa(project: Project, report: Reporter, filter: PanelFil
     const lastAttempt = retry ? project.config.qa.max_attempts - 1 : plan.attempt
     while (!verdict.ok && plan.attempt < lastAttempt) {
       report.emit({ event: 'qa', id: plan.id, status: 'retry', failures: verdict.failures, attempt: plan.attempt })
-      plan = planPanel(project, script, prepared, where, { attempt: plan.attempt + 1 }, renderer.name)
+      // eslint-disable-next-line no-await-in-loop
+      plan = await finalizePlan(planPanel(project, script, prepared, where, { attempt: plan.attempt + 1 }, renderer.name), context)
       // eslint-disable-next-line no-await-in-loop
       await renderPlan(plan, renderer, report)
       // eslint-disable-next-line no-await-in-loop

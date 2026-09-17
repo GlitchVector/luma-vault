@@ -44,3 +44,4 @@ packages/comic/examples/*/qa/
 packages/comic/examples/*/build/
 # `out/` too until the pages are rendered by Forge; the mock pages are not the example.
 packages/comic/examples/*/out/
+packages/comic/examples/*/plates/

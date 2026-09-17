@@ -888,6 +888,8 @@ export const comicPanelStateSchema = z.object({
   seed: z.number().nullable(),
   attempt: z.number().nullable(),
   prompt: z.string().nullable(),
+  /** The hosted model's plate the panel was painted into, when there is one. */
+  plate: z.string().nullable(),
   verdict: comicVerdictSchema.nullable(),
 })
 export type ComicPanelState = z.infer<typeof comicPanelStateSchema>

@@ -777,6 +777,8 @@ pub struct ComicPanel {
     /// The prompt as sent, from the sidecar — for the person who wants to see
     /// what the words became.
     pub prompt: Option<String>,
+    /// The hosted model's plate the panel was painted into, when there is one.
+    pub plate: Option<String>,
     pub verdict: Option<ComicVerdict>,
 }
 

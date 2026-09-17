@@ -23,6 +23,7 @@ const panel: Panel = {
   id: 'p1-1',
   camera: 'from below, cowboy shot',
   scene: 'rooftop at dawn, wind, smirk',
+  pose: [],
   characters: ['ari'],
   reserve_space: 'top-right',
   dialogue: [{ speaker: 'ari', text: 'THIS MUST NEVER BE DRAWN', anchor: 'top-right', kind: 'speech' }],

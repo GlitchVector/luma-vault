@@ -12,7 +12,7 @@
 
 import { PNG } from 'pngjs'
 import type { RenderRequest } from '../cache.ts'
-import type { Needs, Prepared, Progress, RenderResult, Renderer } from './renderer.ts'
+import type { InpaintRequest, Needs, Prepared, Progress, RenderResult, Renderer } from './renderer.ts'
 
 export class MockRenderer implements Renderer {
   readonly name = 'mock'
@@ -25,6 +25,31 @@ export class MockRenderer implements Renderer {
     onProgress?.(1, 0)
     return { png: drawPlaceholder(request), info: { mock: true } }
   }
+
+  async inpaint(request: InpaintRequest, onProgress?: Progress): Promise<RenderResult> {
+    onProgress?.(1, 0)
+    return { png: paintUnderMask(request), info: { mock: true, inpaint: true } }
+  }
+}
+
+/** The "character": a dark, seed-tinted fill wherever the mask is white,
+ *  the plate untouched everywhere else. */
+export function paintUnderMask(request: Pick<InpaintRequest, 'init' | 'mask' | 'seed'>): Buffer {
+  const init = PNG.sync.read(request.init)
+  const mask = PNG.sync.read(request.mask)
+  if (mask.width !== init.width || mask.height !== init.height) {
+    throw new Error(`mask ${mask.width}x${mask.height} does not match the plate ${init.width}x${init.height}`)
+  }
+  const tint = [40 + (request.seed % 40), 30 + ((request.seed >> 3) % 40), 50 + ((request.seed >> 6) % 40)] as const
+  for (let i = 0; i < init.width * init.height; i++) {
+    const o = i * 4
+    if (mask.data[o]! > 127) {
+      init.data[o] = tint[0]
+      init.data[o + 1] = tint[1]
+      init.data[o + 2] = tint[2]
+    }
+  }
+  return PNG.sync.write(init)
 }
 
 /** Which corner the prompt asked to keep empty, read back off the clause the

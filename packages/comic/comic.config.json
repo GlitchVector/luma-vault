@@ -17,7 +17,10 @@
     "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, extra arms, extra legs, jpeg artifacts, signature, watermark, artist name, username, blurry, (censored:1.4), light censor",
     "negative_lettering": "speech bubble, english text, multiple views"
   },
-  "page": { "width": 2000, "height": 3000 },
+  "page": {
+    "width": 2000,
+    "height": 3000
+  },
   "qa": {
     "max_attempts": 3,
     "python": "venv-classifier/Scripts/python.exe",
@@ -27,7 +30,22 @@
     "space_edge_ratio": 0.55,
     "space_std": 18
   },
-  "writer": { "backend": "claude-cli", "model": "claude-opus-5" },
+  "writer": {
+    "backend": "claude-cli",
+    "model": "claude-opus-5"
+  },
+  "plates": {
+    "backend": "openai",
+    "model": "gpt-image-1",
+    "quality": "medium",
+    "input_fidelity": "high",
+    "style": "clean digital illustration, soft natural light, no text",
+    "mask_grow": 24,
+    "mask_tolerance": 90,
+    "denoise": 0.9,
+    "mask_blur": 8,
+    "inpaint_padding": 64
+  },
   "browser": "chrome",
   "characters": {
     "ari": {

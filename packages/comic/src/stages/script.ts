@@ -90,6 +90,9 @@ export function finishDraft(draft: DraftScript, cast: Record<string, Character>)
           throw new Error(`${id} has dialogue for "${line.speaker}", who is not in the cast`)
         }
       }
+      if (panel.location && !draft.locations[panel.location]) {
+        throw new Error(`${id} is set in "${panel.location}", which is not in locations`)
+      }
       // Lettering with nowhere reserved is the one thing QA cannot rescue.
       const reserve = panel.reserve_space === 'none' && panel.dialogue.length > 0 ? panel.dialogue[0]!.anchor : panel.reserve_space
       return { ...panel, id, reserve_space: reserve }
@@ -101,6 +104,7 @@ export function finishDraft(draft: DraftScript, cast: Record<string, Character>)
 
 export interface Finished {
   title: string
+  locations: Record<string, string>
   pages: Page[]
 }
 
@@ -119,7 +123,7 @@ export function withCast(draft: Finished, cast: Record<string, Character>): Scri
     const first = Object.entries(cast)[0]
     if (first) characters[first[0]] = first[1]
   }
-  return { title: draft.title, characters, pages: draft.pages }
+  return { title: draft.title, characters, locations: draft.locations, pages: draft.pages }
 }
 
 /**

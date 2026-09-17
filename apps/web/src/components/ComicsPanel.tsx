@@ -80,6 +80,7 @@ export function blankPanel(pageNumber: number, index: number): ComicPanelSpec {
     id: `p${pageNumber}-${index}`,
     camera: 'cowboy shot',
     scene: '',
+    pose: [],
     characters: [],
     reserve_space: 'none',
     dialogue: [],
@@ -711,7 +712,14 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, onChange, onRemove 
         </button>
       </div>
       <input value={panel.camera} onChange={(event) => onChange((previous) => ({ ...previous, camera: event.target.value }))} className={cn(inputClass, 'mb-1')} placeholder="camera: close-up, from below, cowboy shot…" title="Framing words the checkpoint knows" />
-      <textarea value={panel.scene} onChange={(event) => onChange((previous) => ({ ...previous, scene: event.target.value }))} className={cn(inputClass, 'mb-1 min-h-14 resize-y')} placeholder="scene: setting, action, light — no names, no words spoken" />
+      <textarea value={panel.scene} onChange={(event) => onChange((previous) => ({ ...previous, scene: event.target.value }))} className={cn(inputClass, 'mb-1 min-h-14 resize-y')} placeholder="scene: setting, action, light — no names, no words spoken (only the local model reads this)" />
+      <input
+        value={panel.setting ?? ''}
+        onChange={(event) => onChange((previous) => ({ ...previous, setting: event.target.value || undefined }))}
+        className={cn(inputClass, 'mb-1')}
+        placeholder="setting for the plate: the place and light in this shot, nobody in it (a hosted model reads this — keep it clean)"
+        title="Sent to the hosted image model that draws the plate. The place, the light, the props. No nudity, no sexual content, no names."
+      />
       <div className="mb-1 flex flex-wrap items-center gap-1">
         <span className="text-zinc-500">in the picture:</span>
         {cast.map((id) => {
@@ -729,6 +737,26 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, onChange, onRemove 
         })}
         {cast.length === 0 ? <span className="text-zinc-600">nobody</span> : null}
       </div>
+      {panel.characters.map((id, index) => (
+        <div key={id} className="mb-1 flex items-center gap-1">
+          <span className="w-16 shrink-0 truncate text-zinc-500" title={`${id}'s stand-in in the plate: posture and gesture only, a hosted model reads it`}>
+            pose · {id}
+          </span>
+          <input
+            value={panel.pose[index] ?? ''}
+            onChange={(event) =>
+              onChange((previous) => {
+                const pose = [...previous.pose]
+                while (pose.length <= index) pose.push('')
+                pose[index] = event.target.value
+                return { ...previous, pose }
+              })
+            }
+            className={inputClass}
+            placeholder="standing at the rail, one hand raised"
+          />
+        </div>
+      ))}
       {panel.dialogue.map((line, index) => (
         <div
           // eslint-disable-next-line react/no-array-index-key
@@ -893,6 +921,17 @@ const PanelCard = memo(function PanelCard({ spec, state, progress, busy, onNextS
           <div className="absolute inset-x-0 bottom-0 bg-black/60 p-1">
             <ProgressBar done={progress} total={1} />
           </div>
+        ) : null}
+        {state?.plate ? (
+          <a
+            href={`${fileUrl(state.plate)}&v=${state.renderedAt ?? 0}`}
+            target="_blank"
+            rel="noreferrer"
+            title="The hosted model's plate this panel was painted into — open it"
+            className="absolute bottom-1 right-1 h-12 w-9 overflow-hidden rounded border border-white/40 bg-black/40"
+          >
+            <img src={`${fileUrl(state.plate)}&v=${state.renderedAt ?? 0}`} alt="plate" className="size-full object-cover" />
+          </a>
         ) : null}
         {verdict ? (
           <span className={cn('absolute left-1 top-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium', verdict.ok ? 'bg-emerald-500/80 text-white' : 'bg-red-500/80 text-white')} title={verdict.ok ? 'QA passed' : verdict.failures.join('\n')}>

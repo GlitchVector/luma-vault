@@ -3,6 +3,8 @@
  *
  *   init      <project>                       start a project folder with an empty prose.md
  *   script    <project> [--prose file]        stage 1: prose -> script.json
+ *   plates    <project> [--page N] [--panel ID|N] [--force]
+ *                                             the hosted pass: a plate per panel, with stand-ins
  *   panels    <project> [--page N] [--panel ID|N] [--force] [--dry-run]
  *                                             stage 2: script.json -> panels/*.png
  *   render    <project> --page N --panel N [--seed S]
@@ -30,6 +32,7 @@ import { runAssemble } from './stages/assemble.ts'
 import { loraNames, runPanels } from './stages/panels.ts'
 import { runQa } from './stages/qa.ts'
 import { runScript } from './stages/script.ts'
+import { plateBackendFor, platesEnabled, runPlates } from './stages/plates.ts'
 
 const { values, positionals } = parseArgs({
   args: process.argv.slice(2),
@@ -55,7 +58,7 @@ const report = new Reporter(values.json)
 
 function usage(): never {
   console.error(
-    `usage: comic <init|script|panels|render|qa|assemble|all|doctor|layouts> <project> [flags]
+    `usage: comic <init|script|plates|panels|render|qa|assemble|all|doctor|layouts> <project> [flags]
   --page N        1-based page          --panel ID|N   a panel id (p2-3) or its number on --page
   --seed S        exact seed (render)   --attempt N    plan at this retry slot
   --prose FILE    story file (script)   --format LIST  png,pdf,cbz (assemble)
@@ -92,6 +95,12 @@ async function main(): Promise<void> {
     }
     case 'script': {
       await runScript(project(), report, { prosePath: values.prose })
+      return
+    }
+    case 'plates': {
+      const p = project()
+      if (!platesEnabled(p)) throw new Error('plates.backend is "none" in comic.config.json; set it to "openai" (or "mock") first')
+      await runPlates(p, report, { page: number('page'), panel: values.panel }, { force: values.force })
       return
     }
     case 'panels': {
@@ -167,6 +176,18 @@ async function doctor(p: Project | undefined): Promise<void> {
     say(true, `Forge at ${config.forge.url}: checkpoint ${prepared.checkpoint}, LoRAs ${loras.join(', ') || '(none)'}`)
   } catch (error) {
     say(false, (error as Error).message)
+  }
+
+  const forPlates = p ?? openProject('.')
+  if (platesEnabled(forPlates)) {
+    try {
+      await plateBackendFor(forPlates).prepare()
+      say(true, `plates: ${config.plates.backend}, ${config.plates.model}`)
+    } catch (error) {
+      say(false, `plates: ${(error as Error).message}`)
+    }
+  } else {
+    say(true, 'plates: off (each panel rendered directly)')
   }
 
   const tagger = new PythonTagger(config.qa)

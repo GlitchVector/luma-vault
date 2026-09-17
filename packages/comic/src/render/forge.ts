@@ -11,7 +11,7 @@
 
 import type { RenderRequest } from '../cache.ts'
 import type { ForgeConfig } from '../schema.ts'
-import type { Needs, Prepared, Progress, RenderResult, Renderer } from './renderer.ts'
+import type { InpaintRequest, Needs, Prepared, Progress, RenderResult, Renderer } from './renderer.ts'
 
 interface SdModel {
   title: string
@@ -76,18 +76,25 @@ export class ForgeRenderer implements Renderer {
   }
 
   async render(request: RenderRequest, onProgress?: Progress): Promise<RenderResult> {
-    const payload = toPayload(request, this.config)
+    return this.generate('/sdapi/v1/txt2img', toPayload(request, this.config), onProgress)
+  }
+
+  async inpaint(request: InpaintRequest, onProgress?: Progress): Promise<RenderResult> {
+    return this.generate('/sdapi/v1/img2img', toInpaintPayload(request, this.config), onProgress)
+  }
+
+  private async generate(path: string, payload: Record<string, unknown>, onProgress?: Progress): Promise<RenderResult> {
     const stop = new AbortController()
     const poll = onProgress ? this.watchProgress(onProgress, stop.signal) : Promise.resolve()
     try {
-      const answer = await this.call<{ images?: string[]; info?: string }>('/sdapi/v1/txt2img', {
+      const answer = await this.call<{ images?: string[]; info?: string }>(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(this.config.timeout_s * 1000),
       })
       const image = answer.images?.[0]
-      if (!image) throw new Error('Forge accepted the request but returned no image')
+      if (!image) throw new Error(`Forge accepted the ${path} request but returned no image`)
       // The data URI prefix is present on some builds and absent on others.
       const png = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ''), 'base64')
       let info: unknown
@@ -170,5 +177,28 @@ export function toPayload(request: RenderRequest, config: Pick<ForgeConfig, 'sav
     save_images: config.save_to_forge,
     override_settings: overrides,
     override_settings_restore_afterwards: false,
+  }
+}
+
+/**
+ * The inpaint call: the plate as the init image, the stand-in's mask as the
+ * mask, painted at high strength. `inpaint_full_res` renders the masked
+ * region at full resolution and pastes it back, which is what keeps a face
+ * sharp inside a wide plate; `inpainting_fill: 1` starts from the original
+ * pixels, so the mannequin's silhouette guides the pose.
+ */
+export function toInpaintPayload(request: InpaintRequest, config: Pick<ForgeConfig, 'save_to_forge'>): Record<string, unknown> {
+  return {
+    ...toPayload(request, config),
+    init_images: [request.init.toString('base64')],
+    mask: request.mask.toString('base64'),
+    denoising_strength: request.denoise,
+    mask_blur: request.mask_blur,
+    inpainting_fill: 1,
+    inpaint_full_res: true,
+    inpaint_full_res_padding: request.padding,
+    inpainting_mask_invert: 0,
+    resize_mode: 0,
+    image_cfg_scale: request.cfg,
   }
 }

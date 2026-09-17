@@ -6,6 +6,7 @@ const panel = (id: string) => ({
   id,
   camera: 'cowboy shot',
   scene: 'rooftop',
+  pose: [],
   characters: [],
   reserve_space: 'none' as const,
   dialogue: [],

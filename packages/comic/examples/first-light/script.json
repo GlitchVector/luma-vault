@@ -9,14 +9,25 @@
       "seed_family": 8812
     }
   },
+  "locations": {
+    "fire escape": "rusted iron fire escape bolted to an old brick radio building, twelve flights of flaking steps and railings, peeling paint, wet metal, empty grey street far below, cold pre-dawn light, windy",
+    "rooftop": "gravel and tar rooftop of an old brick radio building, rusted ventilation ducts and a leaning antenna mast, low concrete parapet, city skyline of grey towers beyond, quiet pre-dawn light, no rain",
+    "rooftop vents": "narrow gap between two squat rusted air vents on a gravel rooftop, grit and old leaves in the corner, dented metal panels, pale early light raking low across the stones",
+    "street below": "narrow city street at dawn seen from high above, wet asphalt, a single yellow tram on its rails, dark shopfronts still shuttered, long thin shadows"
+  },
   "pages": [
     {
-      "layout": "hero-top",
+      "layout": "grid-2x2",
       "panels": [
         {
           "id": "p1-1",
           "camera": "wide shot, from below",
-          "scene": "old radio building at dawn, rusted fire escape zigzagging up twelve floors, grey city sky, climbing figure small against iron rails, cold wind",
+          "scene": "fire escape, brick wall, dawn, climbing stairs, hand on railing, wind, rust, looking up, twelve flights, cold light",
+          "location": "fire escape",
+          "setting": "the iron fire escape seen from the street looking straight up the flights, pale sky at the top of the frame",
+          "pose": [
+            "climbing steps, one hand gripping the railing"
+          ],
           "characters": [
             "ari"
           ],
@@ -24,7 +35,7 @@
           "dialogue": [
             {
               "speaker": "narrator",
-              "text": "She had never seen the city from this high.",
+              "text": "Twelve floors of rust and wind, before the sun.",
               "anchor": "top",
               "kind": "caption"
             }
@@ -34,7 +45,12 @@
         {
           "id": "p1-2",
           "camera": "full body, from behind",
-          "scene": "gravel rooftop of the radio building, standing at the parapet, skyline spread grey and quiet below, hair and clothes pulled sideways by wind, empty sky waiting for light",
+          "scene": "rooftop, gravel, parapet, standing at edge, skyline beyond, grey morning, wind, hair blown, ventilation ducts, quiet",
+          "location": "rooftop",
+          "setting": "the low parapet with the grey skyline spread out behind it, rooftop gravel in the foreground",
+          "pose": [
+            "standing at the parapet, arms loose at the sides"
+          ],
           "characters": [
             "ari"
           ],
@@ -42,7 +58,7 @@
           "dialogue": [
             {
               "speaker": "narrator",
-              "text": "Twelve floors of rust and wind. Then the whole skyline.",
+              "text": "She had never seen the city from this high.",
               "anchor": "top-right",
               "kind": "caption"
             }
@@ -51,20 +67,43 @@
         },
         {
           "id": "p1-3",
-          "camera": "close-up, from side",
-          "scene": "rooftop edge at dawn, head tilted listening, eyes half closed, faint smile, distant streets far below, first tram bell carrying up through cold air",
-          "characters": [
-            "ari"
-          ],
-          "reserve_space": "left",
+          "camera": "wide shot, from above",
+          "scene": "street below, dawn, tram on rails, wet asphalt, empty street, long shadows, shuttered shops, seen from rooftop height",
+          "location": "street below",
+          "setting": "the narrow street far below with a single tram passing, viewed from the rooftop edge",
+          "pose": [],
+          "characters": [],
+          "reserve_space": "bottom-left",
           "dialogue": [
             {
               "speaker": "narrator",
-              "text": "Somewhere down there, the first tram of the day.",
-              "anchor": "left",
+              "text": "Somewhere below, the first tram rang its bell.",
+              "anchor": "bottom-left",
               "kind": "caption"
             }
           ],
+          "sfx": [
+            {
+              "text": "DING",
+              "anchor": "top-right",
+              "rotate": -8
+            }
+          ]
+        },
+        {
+          "id": "p1-4",
+          "camera": "close-up, from side",
+          "scene": "rooftop, parapet, eyes closed, wind on face, faint smile, grey light, skyline blur, calm, morning chill",
+          "location": "rooftop",
+          "setting": "the parapet edge in profile with the soft grey skyline out of focus behind it",
+          "pose": [
+            "head tilted back slightly into the wind"
+          ],
+          "characters": [
+            "ari"
+          ],
+          "reserve_space": "right",
+          "dialogue": [],
           "sfx": []
         }
       ]
@@ -75,50 +114,70 @@
         {
           "id": "p2-1",
           "camera": "upper body, looking away",
-          "scene": "rooftop between rows of air vents, head turning sharply toward a low buzzing sound, brows raised, grey pre-dawn light on metal ducts",
+          "scene": "rooftop, turning head, listening, ventilation ducts, gravel, grey dawn, surprised expression, wind, antenna mast, quiet",
+          "location": "rooftop",
+          "setting": "the rooftop ducts and antenna mast in cool pre-dawn light, gravel underfoot",
+          "pose": [
+            "turning at the waist, head cocked to listen"
+          ],
           "characters": [
             "ari"
           ],
           "reserve_space": "top-left",
           "dialogue": [
             {
-              "speaker": "ari",
-              "text": "...what is that?",
+              "speaker": "narrator",
+              "text": "That was when she heard the buzzing.",
               "anchor": "top-left",
-              "kind": "speech"
+              "kind": "caption"
+            }
+          ],
+          "sfx": [
+            {
+              "text": "BZZT",
+              "anchor": "top-right",
+              "rotate": -10
+            }
+          ]
+        },
+        {
+          "id": "p2-2",
+          "camera": "close-up, from above",
+          "scene": "rooftop vents, small delivery drone, tipped on side, bent rotor, blinking light, gravel, grit, shadow, dented metal, no people",
+          "location": "rooftop vents",
+          "setting": "the gap between two rusted vents, a small toppled delivery drone among the gravel, low raking light",
+          "pose": [],
+          "characters": [],
+          "figures": 0,
+          "reserve_space": "bottom",
+          "dialogue": [
+            {
+              "speaker": "narrator",
+              "text": "One rotor bent. A slow, tired green blink.",
+              "anchor": "bottom",
+              "kind": "caption"
             }
           ],
           "sfx": []
         },
         {
-          "id": "p2-2",
-          "camera": "close-up, from above",
-          "scene": "narrow gap between two rooftop air vents, small delivery drone lying on its side, one rotor bent, tiny green indicator blinking slow and tired, dust and grit",
-          "characters": [],
-          "figures": 0,
-          "reserve_space": "bottom-right",
-          "dialogue": [],
-          "sfx": [
-            {
-              "text": "BZZT",
-              "anchor": "bottom-right",
-              "rotate": -8
-            }
-          ]
-        },
-        {
           "id": "p2-3",
           "camera": "cowboy shot, from side",
-          "scene": "crouching low between the vents on the rooftop, hands lifting a small broken drone and turning it over carefully, gentle focused expression, grey morning light",
+          "scene": "rooftop vents, crouching, reaching for drone, turning it over, gravel, knees bent, careful expression, morning light, rusted panels",
+          "location": "rooftop vents",
+          "setting": "the narrow space between vents from a low side angle, gravel and dented metal",
+          "pose": [
+            "crouching low, both hands reaching toward the ground"
+          ],
           "characters": [
             "ari"
           ],
-          "reserve_space": "right",
+          "reserve_space": "top-right",
           "dialogue": [
             {
               "speaker": "ari",
               "text": "Hey. Who lost you?",
-              "anchor": "right",
+              "anchor": "top-right",
               "kind": "speech"
             }
           ],
@@ -127,17 +186,22 @@
         {
           "id": "p2-4",
           "camera": "close-up",
-          "scene": "rooftop, cupped hands holding the drone's underside, a torn parcel tag still clipped to its belly with the address ripped away, flickering small light",
+          "scene": "rooftop vents, hands holding drone, parcel tag, torn paper label, flickering light, gravel background, gentle grip, early light",
+          "location": "rooftop vents",
+          "setting": "tight on the rooftop gravel where a parcel tag dangles from a small machine's underside",
+          "pose": [
+            "holding the small machine in both hands, thumb on a dangling tag"
+          ],
           "characters": [
             "ari"
           ],
-          "reserve_space": "bottom",
+          "reserve_space": "bottom-right",
           "dialogue": [
             {
-              "speaker": "narrator",
-              "text": "The address was torn off. The light flickered, like it was trying to answer.",
-              "anchor": "bottom",
-              "kind": "caption"
+              "speaker": "ari",
+              "text": "Address is gone. Great.",
+              "anchor": "bottom-right",
+              "kind": "speech"
             }
           ],
           "sfx": []
@@ -145,54 +209,71 @@
       ]
     },
     {
-      "layout": "hero-bottom",
+      "layout": "hero-top",
       "panels": [
         {
           "id": "p3-1",
-          "camera": "wide shot",
-          "scene": "rooftop horizon, sun breaking over the towers, gold flooding across rooftops and air vents, long shadows stretching over gravel, sky burning warm",
-          "characters": [],
-          "figures": 0,
-          "reserve_space": "none",
-          "dialogue": [],
-          "sfx": []
-        },
-        {
-          "id": "p3-2",
-          "camera": "close-up",
-          "scene": "small drone tucked against a ribcage in the crook of an arm, its indicator burning steady green in warm sunrise light, quiet hum",
+          "camera": "full body, from below",
+          "scene": "rooftop, standing up, drone under arm, sunrise, golden light, towers, long shadows, grinning, wind, gravel, warm glow",
+          "location": "rooftop",
+          "setting": "the rooftop from a low angle with sunrise breaking between the towers, gold flooding the vents and sky filling the top",
+          "pose": [
+            "rising to full height, one arm cradling a small object at the side"
+          ],
           "characters": [
             "ari"
           ],
-          "reserve_space": "top-left",
+          "reserve_space": "top",
           "dialogue": [
             {
               "speaker": "narrator",
-              "text": "In the warmth, the light held steady.",
-              "anchor": "top-left",
+              "text": "The sun broke over the towers. Gold, everywhere.",
+              "anchor": "top",
               "kind": "caption"
             }
           ],
           "sfx": []
         },
         {
-          "id": "p3-3",
-          "camera": "full body, from below",
-          "scene": "rooftop parapet at sunrise, standing tall with a small drone tucked under one arm, wide grin, hair lit gold, one foot already swinging onto the fire escape rail, city waking up below",
+          "id": "p3-2",
+          "camera": "close-up",
+          "scene": "rooftop, drone held close, steady green light, warm sunlight, soft smile, golden reflection, gravel blur, morning, calm",
+          "location": "rooftop",
+          "setting": "a sunlit patch of rooftop with warm light glancing off dented metal, blurred gravel behind",
+          "pose": [
+            "holding a small object up near the chest, looking down at it"
+          ],
           "characters": [
             "ari"
           ],
-          "reserve_space": "top-right",
+          "reserve_space": "right",
           "dialogue": [
             {
               "speaker": "ari",
               "text": "Alright. Let's find out where you belong.",
-              "anchor": "top-right",
+              "anchor": "right",
               "kind": "speech"
-            },
+            }
+          ],
+          "sfx": []
+        },
+        {
+          "id": "p3-3",
+          "camera": "wide shot, from above",
+          "scene": "fire escape, descending stairs, drone under arm, sunrise city, waking street, long shadows, rust, wind, small figure, warm light",
+          "location": "fire escape",
+          "setting": "the fire escape switchbacks from high above, sunlit street and rails far below",
+          "pose": [
+            "stepping down the stairs, one hand on the railing"
+          ],
+          "characters": [
+            "ari"
+          ],
+          "reserve_space": "bottom-right",
+          "dialogue": [
             {
               "speaker": "narrator",
-              "text": "And she started back down.",
+              "text": "The city woke up below her, and it hummed against her side.",
               "anchor": "bottom-right",
               "kind": "caption"
             }
