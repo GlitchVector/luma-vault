@@ -13,8 +13,7 @@ belongs here; if it is needed only when working *in an area*, it belongs in
 | Something behaves unexpectedly, or you are about to "simplify" something | `.ai/gotchas.md` |
 | Adding or changing tests | `.ai/testing.md` |
 | Touching the Patreon post automation, or capturing anything from patreon.com | `packages/patreon-harness/README.md` |
-| Touching the comic pipeline (prose → script → panels → pages) or its Comics panel | `packages/comic/README.md` |
-| Touching the comic studio (characters, canon, story, scenes, panel specs; content lives outside this repo) | `packages/studio/README.md` |
+| Anything comics — the picture pipeline, the Comics panel, the studio, the owner's decisions, what is verified | `.ai/comics.md` first, then `packages/comic/README.md` and `packages/studio/README.md` |
 | Rendering with, or training, one of the character LoRAs | `docs/loras.md` |
 
 ## The shape, in one paragraph
