@@ -1,0 +1,21 @@
+{
+  "name": "@luma/studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "//": "AI Comic Studio, stage 1: canon, story, scenes and panel specs, developed with a story model and approved by a person. Content lives outside this repo (STUDIO_ROOT). Image work is @luma/comic's job.",
+  "scripts": {
+    "studio": "node --env-file-if-exists=../../.env --experimental-strip-types src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.8.0",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

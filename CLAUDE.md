@@ -14,6 +14,7 @@ belongs here; if it is needed only when working *in an area*, it belongs in
 | Adding or changing tests | `.ai/testing.md` |
 | Touching the Patreon post automation, or capturing anything from patreon.com | `packages/patreon-harness/README.md` |
 | Touching the comic pipeline (prose → script → panels → pages) or its Comics panel | `packages/comic/README.md` |
+| Touching the comic studio (characters, canon, story, scenes, panel specs; content lives outside this repo) | `packages/studio/README.md` |
 | Rendering with, or training, one of the character LoRAs | `docs/loras.md` |
 
 ## The shape, in one paragraph
@@ -60,6 +61,7 @@ pnpm dev:desktop         # the real app
 pnpm dev                 # SPA only (shows a "run the desktop app" notice)
 pnpm queue --drain       # render everything queued with --queue, when the GPU may be loud
 pnpm comic all <dir>     # a comic from prose.md in <dir>; see packages/comic/README.md
+pnpm studio status       # the comics in development in the studio root (D:\Development\comic-studio)
 ```
 
 The gate that matches CI:
