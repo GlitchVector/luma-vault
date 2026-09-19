@@ -1,0 +1,31 @@
+CHARACTER: {character_name}. She is the exact same character in every image of this dataset.
+
+{description}
+
+Use every supplied reference image as the identity and design reference. Reproduce as closely as possible:
+- facial identity and face shape
+- eyes (shape and colour)
+- hairstyle, hair length and hair colours (including where the colour changes)
+- body proportions and silhouette
+- the construction of the outfit: every garment, its cut, its colours, its materials
+- accessories and jewellery, worn exactly as in the reference
+- footwear
+- every recurring design detail
+
+Do not redesign the character. Do not simplify, recolour or replace any outfit component unless the view says so. Reference fidelity matters more than creative reinterpretation.
+
+PURPOSE: a machine-learning dataset image (LoRA training). Maximise usefulness for training, not scene composition.
+
+REQUIREMENTS:
+- exactly one character
+- clean composition, the whole figure clearly readable
+- full body visible unless the view says otherwise: the entire head and both entire feet inside the frame, with margin
+- no cropping of any important anatomy
+- neutral studio-style presentation
+- {background}
+- no text, no captions, no labels, no watermark
+- no character-sheet layout, no multiple views in one image, no decorative border
+- no unrelated props; only what she wears
+- clear silhouette, anatomically coherent pose, believable hands
+- consistent identity and a consistent visual style across the whole dataset
+- high image quality

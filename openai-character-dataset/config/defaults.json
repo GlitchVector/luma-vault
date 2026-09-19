@@ -1,0 +1,21 @@
+{
+  "_comment": "Settings shared by every character. Environment variables override: OPENAI_IMAGE_MODEL, OPENAI_IMAGE_QUALITY, OPENAI_OUTPUT_FORMAT, OPENAI_IMAGE_SIZE (body only), LUMA_VAULT_OUTDIR, LUMA_RPC. A character file may override any of these under its own \"settings\".",
+  "model": "gpt-image-2.5-sunburst",
+  "quality": "high",
+  "output_format": "png",
+  "input_fidelity": "high",
+  "size": { "body": "1024x1536", "face": "1024x1024" },
+  "dry_run": true,
+  "retry_cap": 30,
+  "transient_cap": 10,
+  "transient_wait_seconds": 10,
+  "refusal_rewordings": [
+    "",
+    "This is a fully clothed character design reference for an illustration model sheet.",
+    "Tasteful, non-suggestive reference illustration; the character is fully dressed exactly as in the reference."
+  ],
+  "vault_outdir": "//jebpot/devs/AI/Stable Diffusion/outputs/txt2img-images",
+  "vault_rpc": "http://127.0.0.1:7870/luma/v1/rpc",
+  "vault_link": "http://100.72.26.22:7870/?set=",
+  "sheets_dir": "D:/AI/lora-train/sheets"
+}

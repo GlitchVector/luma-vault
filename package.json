@@ -27,6 +27,7 @@
     "migrate-prompt": "node --env-file-if-exists=.env --experimental-strip-types scripts/migrate-prompt.mjs",
     "open-in-forge": "node --env-file-if-exists=.env --experimental-strip-types scripts/open-in-forge.mjs",
     "queue": "node --env-file-if-exists=.env --experimental-strip-types scripts/render-queue.mjs",
+    "refs": "openai-character-dataset\\.venv\\Scripts\\python.exe openai-character-dataset/src/charrefs.py",
     "patreon": "pnpm --filter @luma/patreon-harness patreon",
     "comic": "pnpm --filter @luma/comic comic",
     "studio": "pnpm --filter @luma/studio studio",

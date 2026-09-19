@@ -175,6 +175,14 @@ hips, which is the point of that build and wrong for a character drawn
 athletic. It is never combined with the slider — under the maximum thickness
 rung the answer is ignored and the tag stays at `1`.
 
+### And ask about the lighting — its own call
+
+Every render command carries it since 2026-09-19. Options and the exact words:
+*Lighting* in `.claude/shot-tags.md`. One answer for the whole set, joined to the
+**setting chunk** of every frame, never to the style flag. The words that sound
+right — `soft lighting`, `diffused lighting`, `cinematic lighting`, `golden hour`
+— are not tags; the file lists the ones that are.
+
 ### And ask about the legs — in the same call as the style
 
 | Question | Options (recommended first) |

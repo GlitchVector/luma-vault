@@ -25,6 +25,7 @@ Asked by every render command since 2026-09-10:
 | Question | Options |
 |---|---|
 | Leg length | `(long legs:1.2)` — the block's default · `(long legs:1.5)` · `(long legs:1.8)` · `(long legs:2)` — see *Leg length* in `.claude/shot-tags.md`; only applies when the frame shows hips |
+| Lighting | as the scene implies · soft daylight · hard sun · golden/evening · night/artificial · interior lamp · studio — the exact words are in *Lighting* in `.claude/shot-tags.md`; the answer joins the SETTING chunk, never the style flag |
 
 The answer goes into the body slot of the migrated prompt when the framing
 shows hips, and is dropped silently for a portrait or close-up. A boost above

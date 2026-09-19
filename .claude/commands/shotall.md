@@ -23,7 +23,10 @@ nothing else:
      first option on each axis. A "none" axis stays unnamed on every frame
      and the brackets leave it alone.
   2. **Waist · leg length · the legs shot (yes/no) · the character sheet
-     (yes/no) · the setting.** Leg length is `(long legs:1.2)` · `1.5` ·
+     (yes/no) · the setting.** A third call asks the **lighting** on its own
+     (the tool caps a call at four questions): the options and the exact words
+     are *Lighting* in `.claude/shot-tags.md`, and the answer joins the setting
+     chunk of every frame, never the style flag. Leg length is `(long legs:1.2)` · `1.5` ·
      `1.8` · `2` as in `.claude/shot-tags.md`; the setting offers a plain
      ground first and two or three scenes. The character sheet still argues
      with `1girl, solo`, so it is asked rather than assumed.

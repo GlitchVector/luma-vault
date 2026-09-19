@@ -161,6 +161,9 @@ term per concept, never a tug of war.
 
 ### Call 3 — the shot, the boosts, the leg length and the style
 
+(and a fourth call for the **lighting** — four questions is the cap, so it gets
+its own; see *Lighting* in `.claude/shot-tags.md`)
+
 Ass and breasts have real rungs, so boosting waits for this call, which always
 happens because it also carries the shot and the style:
 
@@ -239,8 +242,11 @@ a body-tuned render — and having it in the positive *silently defeats negating
 it*, so a prompt that lists it in both places argues with itself and the blobs
 stay. Removing it costs nothing: the skin still reads soft and lit, and it now
 holds its own gradients instead of being covered by a plastic highlight layer.
-Ask for light in the **setting** instead — `(overcast:1.3), cloudy, soft
-lighting, diffused lighting` — which is what produced the best-lit set so far.
+Ask for light in the **setting** instead, through the lighting question every
+command now carries — *Lighting* in `.claude/shot-tags.md`. **Correction,
+2026-09-19:** `soft lighting`, `diffused lighting` and `cloudy` are not danbooru
+tags and were inert wherever this file recommended them; the real words for that
+look are `overcast, cloud, backlighting`.
 
 **Do not hand-write these tags.** The obvious words for this axis are mostly
 not danbooru tags at all — `3d`, `cel shading`, `soft shading`, `glossy skin`

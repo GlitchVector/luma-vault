@@ -1,0 +1,18 @@
+{
+  "name": "Ari",
+  "description": "a young woman with a white chin-length bob with straight bangs whose tips fade to aqua, a teal headband, pale skin, light blue eyes, blue teardrop earrings, a thin gold chain necklace with one round blue gem pendant resting at the front of her neck, a very curvy figure with a large bust, wide hips and thick thighs. She wears a cropped teal long-sleeved top with a black high collar and a black yoke across the shoulders, black cut-out shoulders, puffy teal sleeves with black ribbed cuffs; white high-waisted shorts with a scalloped hem and two vertical rows of three black buttons on the front; bare legs; white chunky platform sneakers with teal soles and teal lace panels. No other accessories, no tattoos, no bracelets, no socks.",
+  "audit": [
+    "necklace: chain around the neck, the single pendant hangs at the FRONT; from behind only the chain at the nape may show, never a pendant on the back; never missing",
+    "headband: teal band over the crown, visible from every angle including the back of the head",
+    "earrings: one blue teardrop on each ear, visible on the side that faces the camera",
+    "hair: white with aqua only at the ends; the fade must not creep up; bangs straight; chin length",
+    "top: black high collar and black yoke continuous around neck and shoulders, teal body, cropped above the shorts' waistband, black ribbed cuffs; no white on the top",
+    "shorts: white, high waist, 2x3 black buttons on the front, scalloped hem; never teal, black or long; nothing on the legs",
+    "shoes: white platform sneakers with teal soles and lace panels, both feet in frame on body views",
+    "body: bust, hips and thighs as in the source, pale skin; no tattoos, no bracelet, no anklet, no socks, no extra garment",
+    "frame: body views show head to soles with margin; face views head and shoulders; nothing cropped, no text"
+  ],
+  "background": "a plain, even, pale mint background with no scenery or shadows",
+  "reference_images": ["reference-front.png"],
+  "settings": {}
+}

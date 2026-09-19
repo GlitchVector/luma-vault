@@ -65,7 +65,7 @@ to the settings line; the queue and the API payload carry them through.
 Two `AskUserQuestion` calls, because the shot table needs all four question
 slots of its own and the tool caps a call at four.
 
-### Call 1 — the two shots that do not fit the table, and the leg length
+### Call 1 — the two shots that do not fit the table, the leg length and the lighting
 
 The sizes are **not asked any more** — they are detected in step 1, and the
 set keeps the input's figure. Exploring other sizes is what the variation
@@ -77,6 +77,7 @@ judged, rather than one global answer up front.
 | Legs (hips down) | no · yes |
 | Character sheet | no · yes — **landscape**, front/back/side in one frame |
 | Leg length | `(long legs:1.2)` — the block's default · `(long legs:1.5)` · `(long legs:1.8)` · **max:** `(long legs:2)` — see *Leg length* in `.claude/shot-tags.md` for what a boost does to the framing |
+| Lighting | as the scene implies · soft daylight · hard sun · golden/evening · night/artificial · interior lamp · studio — the exact words are in *Lighting* in `.claude/shot-tags.md`; the answer joins the SETTING chunk, never the style flag |
 
 **Detected sizes are still filtered per shot in step 3.** A face close-up gets
 none of them whatever was detected — that is not the detection being

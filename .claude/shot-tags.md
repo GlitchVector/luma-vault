@@ -988,6 +988,46 @@ answer — every frame the same — because legs are judged across the board, no
 shot by shot the way the size brackets are. Boards rendered at different leg
 lengths can share a set: the shot label carries ` legs <n>`.
 
+## Lighting
+
+Asked by every render command since 2026-09-19 (user: "that light question does also
+need to be in all other commands, not just photoset"). Single-select, one answer for
+the whole run, and it joins the **setting chunk** — never the style flag, which is the
+2D/2.5D/3D axis and negates the glow words on purpose.
+
+| Option | Setting-chunk words |
+|---|---|
+| As the scene implies | nothing added — the checkpoint lights the place it was given |
+| Soft daylight | `overcast, cloud, backlighting` |
+| Hard sun | `sunlight, sunbeam, light rays, dappled sunlight` |
+| Golden / evening | `sunset, evening, orange theme, backlighting` |
+| Night, artificial | `night, city lights, neon lights, lens flare` |
+| Interior lamp | `lamp, candlelight, sidelighting` |
+| Studio | `spotlight, stage lights, high contrast` |
+
+**Every word above is in `selected_tags.csv`; the obvious ones are not.** `soft
+lighting`, `diffused lighting`, `dramatic lighting`, `rim lighting`, `cinematic
+lighting`, `studio lighting`, `volumetric lighting`, `god rays`, `golden hour`,
+`cloudy`, `window light`, `dim lighting` and `chiaroscuro` are all **absent** — they
+were doing nothing wherever they appeared, including in `/recreate`'s own advice until
+this was written. Counts of the real ones: `sunlight` 65,746 · `night` 95,699 ·
+`lens flare` 33,164 · `backlighting` 29,462 · `sunset` 25,075 · `light rays` 21,941 ·
+`sunbeam` 9,352 · `dappled sunlight` 8,448 · `city lights` 3,756 · `spotlight` 3,762 ·
+`stage lights` 3,176 · `moonlight` 3,176 · `orange theme` 3,207 · `high contrast`
+2,580 · `neon lights` 2,176 · `overcast` 1,819 · `candlelight` 946.
+
+**Two commands do not ask it.** `/checkpoint` exists to keep one picture as close
+as it can on another model, so changing its light defeats the command; and
+`/character-refs` renders onto a deliberately plain, even background, where a light
+word would vary between the views the dataset needs identical.
+
+**Two traps.** `high contrast` is in the standing negative of most boards, so the
+Studio answer must remove it there before asserting it. And `bloom`, `lens flare`,
+`light particles` and `sparkle` are exactly the words `--style` negates to kill the
+ring-shaped specular blobs — a lighting answer that asserts them wins over the style's
+negation, so only the Night answer carries `lens flare`, and `bloom`/`light particles`
+are never offered.
+
 ## Build words the questions should offer
 
 Learned on the Mira white-variant board, 2026-09-10, with the user judging live:
