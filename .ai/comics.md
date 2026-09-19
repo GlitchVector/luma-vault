@@ -1,6 +1,6 @@
 # Comics
 
-Everything built for comics, 2026-09-17 to 2026-09-18, in two packages and one
+Everything built for comics, 2026-09-17 to 2026-09-19, in two packages and one
 panel of the app. Read this before touching any of it; each package has its
 own README for the command reference.
 
@@ -12,9 +12,10 @@ apps/web Comics      the app's workspace over packages/comic (Rust bridge in
                      apps/desktop/src/comic.rs, projects under app data).
 ```
 
-The two packages are not yet joined: a studio panel spec (`panel_017.yaml`)
-does not render, and a comic script (`script.json`) knows nothing about canon.
-Joining them is Milestone 4 of the owner's stage-1 plan (below), not done.
+The two are joined by `pnpm studio export <comic> [dir]`, which writes a comic
+project the renderer understands. Neither package imports the other; the
+bridge is a generated `script.json`. That was Milestone 4 of the owner's
+stage-1 plan and it is done.
 
 ## The rules the owner set
 
@@ -146,33 +147,111 @@ turns output into one event per line, which is what the app reads.
   whose cell count matches. `script` prints how many scene terms are not in
   the tagger vocabulary — a high count means the writer drifted into prose.
 
+### The prompt, and why it looks the way it does
+
+Every number here was measured on this house's own LoRAs and checkpoint. None
+of it is taste, and re-deriving any of it costs an afternoon.
+
+- **Framing words are weighted, angle words are not** (`prompt.camera_weight`
+  1.35, `prompt.angle_weight` 1.1). Unweighted framing loses to a character
+  LoRA and `wide shot` renders as a cowboy shot — which was already written
+  down for boards as "weight every framing word". But weighting the ANGLE the
+  same way is how the owner's first studio page came back with a forty-metre
+  Ari: `from below` at 1.35 stops meaning "a low camera" and starts meaning
+  "look up at something enormous".
+- **Wide shots ease the LoRA** (`prompt.wide_lora_scale` 0.6, applied when
+  the camera says `wide shot`, `scenery` or `establishing`). A character LoRA
+  at full strength fills whatever frame it is given, so a wide shot becomes a
+  close-up of a giant. Also the house rule already: "try a lower LoRA weight,
+  not negatives".
+- **Negating the giantess genre does nothing.** Four renders at one seed with
+  `giantess`, `giant`, `size difference`, `minigirl`, `soles` and
+  `foreshortening` in the negative at rising weights were indistinguishable
+  from the original. It is geometry, not genre bleed. Do not try this again.
+- **Reserving lettering space by prompt is impossible on this checkpoint.**
+  Four wordings, weighted and moved to the front, all scored 4.8-5.3 against
+  a limit of 3.4. The assembler works around it instead (below).
+
+### Lettering
+
+`assets/theme.css` is the whole look; `assets/balloons.js` places and draws.
+
+- **A balloon goes where the art is quiet.** `assemble/energy.ts` reduces each
+  panel to a 16x24 grid of mean luminance gradient, scaled to that panel's own
+  busiest cell so a night scene still has a quiet corner, and passes it on the
+  panel element as `data-energy`. The script's anchor is still what the writer
+  asked for; drifting from it is charged for, so a balloon only moves when
+  what it would have covered is genuinely busy. It also avoids sound effects
+  and balloons already placed.
+- **The balloon and its tail are ONE path.** The tail is spliced into whichever
+  edge faces the speaker and curves to the tip. Drawing a separate triangle
+  and hiding the join under a second fill is what made the old tails look
+  stuck on.
+- **A tail's length is a property of the balloon**, a little under its own
+  height, never the distance to the speaker. Interpolating toward the target
+  was fine while balloons sat at fixed corners and absurd once they could
+  move: on a close-up the tail ran the length of the panel.
+
+### Page geometry, and retina
+
+- **The page is print size already.** 2000x3000 CSS pixels is 6.67 x 10
+  inches at 300 DPI, essentially a US comic trim, and the PDF is laid out at
+  that width.
+- **A panel renders at its cell's TRUE aspect** (`sizeForCellBox`), which is
+  the page minus `page.margin` and minus `page.gutter` between tracks — 926 x
+  1426 on a 2x2, not 1000 x 1500. Measuring off the raw grid leaves a couple
+  of percent for `object-fit: cover` to shave, and that is a face on a wide
+  panel. `cellPixels` in `layouts.ts` is the one place this is computed, and
+  `page.ts` injects the margin and gutter into the stylesheet from the same
+  config so the two cannot drift.
+- **`object-position` is anchored to the top**, so any residual crop takes the
+  floor rather than a head.
+- **`page.scale: 2` is a retina page**: the layout is unchanged and the
+  screenshot is taken at twice the density, so lettering is redrawn sharp
+  rather than enlarged. 4000x6000, about 600 DPI across a comic trim. Panels
+  are enlarged first with `forge.upscaler` (an anime ESRGAN, through
+  `/sdapi/v1/extra-single-image`) by the factor the CELL needs — not by the
+  device scale, which leaves them 13% short — plus 1% because Forge rounds the
+  resize to whole pixels. Cached in `build/retina` by the panel's request
+  hash. An upscaler rather than a second sampler pass on purpose: no prompt,
+  no seed, no second head.
+- Cost: assembling the 11-panel example is 6 s at scale 1 and about 40 s at
+  scale 2, and a page PNG goes from 5 MB to 15 MB, a PDF from 26 MB to 60 MB.
+  300 DPI is already more than a screen shows, so scale 1 is right for
+  anything posted and scale 2 for a print master.
+
 ### State of verification (2026-09-19)
 
 Forge, live, on the worked example `packages/comic/examples/first-light`:
 
 | | |
 |---|---|
-| 11 panels, all at their first seed | 1 min 52 s |
+| 11 panels, all at their first seed | 2 min 10 s |
 | QA, tagger included | 10 s |
-| Assemble, PDF, CBZ | 6 s |
+| Assemble at `page.scale: 2` | 40 s |
 
 Identity and outfit hold on every panel; the lettering reads; the tails point
-at the right person. Stage 1 is proven with the real claude CLI (20-50 s a
-call). **This is the path that works and the one to build on.**
+at the right person; QA passes all eleven with notes and no re-renders. Stage
+1 is proven with the real claude CLI (20-50 s a call). **This is the path that
+works and the one to build on.**
+
+The studio bridge is proven too: `studio export comic_001` then `comic panels`
+renders the owner's own panel specs, 5 panels on 2 pages, in about 50 s.
 
 OpenAI: called live, and the plate pass failed as described above. The API
-shapes in `plates/openai.ts` are correct (`generations` JSON, `edits`
-multipart with `image[]`); the *method* is what failed.
+shapes in `plates/openai.ts` are correct; the *method* is what failed.
 
 Known, still open:
 
-- **Panel aspect can differ from the grid cell**, and `object-fit: cover`
-  crops the difference, so QA measures pixels the reader never sees. On the
-  example it is 3% off the sides for most panels and 4% off top and bottom
-  for the wide hero, where the render already had zero headroom. Anchoring
-  the crop to the top of the panel would protect heads; not done.
 - The checkpoint renders her considerably bustier than her references,
   because these prompts carry no body block. Creative, not technical.
+- A wide shot with the subject near the camera still reads large even with
+  the LoRA eased; `prompt.wide_lora_scale` is the dial, and identity starts
+  softening below about 0.4.
+- Panels are 1.0 MP single-pass with no hires and no face pass, which is why
+  a whole comic costs less GPU time than one candidate round. Faces at small
+  sizes are softer than a board render. Adding a hires or ADetailer pass to
+  `comic.config.json` is where the time would go back.
 
 ## The Comics panel in the app
 
@@ -244,8 +323,37 @@ comics/<id>/       comic.yaml, concept/outline/story/continuity.md,
   and names the panel directed three or more times without approval.
 - Ari is seeded from the LoRA work (`seed-ari.ts`): appearance, generation
   config, default outfit. Nothing about who she is.
+- **`export` is the bridge to the renderer** (`export.ts`). Panels group by
+  scene into pages, the layout follows the count, a character's LoRA, trigger
+  and weight come from her `generation.yaml` and never from a panel, her
+  outfit's words go in the scene rather than her `look` (because `look` is one
+  string for a whole script and she changes clothes), and a balloon is
+  anchored and aimed from where its speaker was staged. A character with no
+  `generation.yaml` is refused rather than guessed at; a panel nobody has
+  staged is skipped by name.
+- **Only words the checkpoint knows cross over** (`vocabulary.ts`). This is
+  the whole point of the bridge and it was learned the hard way: the first
+  version passed the director's prose through and every panel came back a
+  crouching close-up, because `pose: "hanging one-armed from the lowest
+  surviving rung, one knee drawn to brace on the rail"` has exactly one word
+  a sampler recognises and it is `knee`. Now the tagger's own
+  `selected_tags.csv` is the filter, longest match first. Three things
+  measurement caught that guessing would not have:
+  - `crouching` is not a tag at all (danbooru says `squatting`), so "crouching
+    low" silently lost its pose. There is a small synonym table for this.
+  - `camera`, `back`, `drone` and `palms` are real tags that mean the wrong
+    thing in staging: "back three-quarters to camera" became `back, camera`
+    and the render grew a literal camera. Blocked in staging only.
+  - Scraping a location's description was worse than useless: "old radio
+    building roof, north fire escape, alley below" yields `radio, fire,
+    alley`. A place contributes its curated `prompt_words:` line (in
+    `locations/<id>.md`, the same bargain outfits strike) or nothing, and the
+    export names every place still missing one.
+- **The camera is translated by table** (`cameraWords`), both fields through
+  both tables, because a director writes "medium close-up over her shoulder"
+  in the framing field and "eye level with her hands" in the angle field.
 
-### State (2026-09-18)
+### State (2026-09-19)
 
 - Milestones 1–3 tooling done and run end to end with the claude CLI: a
   brainstorm on Ari (unapproved, the owner's call), `comic_001` "First Light",
@@ -254,9 +362,11 @@ comics/<id>/       comic.yaml, concept/outline/story/continuity.md,
 - **No local LLM server on this PC** (no Ollama, LM Studio, GGUF). Suggested
   when the owner wants the explicit facets: Ollama + a 12B Mistral-Nemo
   roleplay finetune at Q4 (~8 GB), not beside a kohya run.
-- Milestones 4–7 (image backend from a panel spec, correction loop, dialogue
-  and lettering, the first real comic) are not started. The pieces are in
-  `packages/comic`; the join is a panel spec → render request adapter.
+- **Milestone 4 is done**: `studio export comic_001` then `comic panels`
+  renders the owner's own panel specs end to end, 5 panels on 2 pages in
+  about 50 s. Milestones 5-7 (correction loop, dialogue and lettering from
+  the studio, the first real comic) are not started; lettering already works
+  in `packages/comic` and the studio feeds it dialogue through `export`.
 
 ## Gotchas met along the way
 
@@ -289,13 +399,23 @@ comics/<id>/       comic.yaml, concept/outline/story/continuity.md,
   `git -c credential.helper='!gh auth git-credential' push https://github.com/GlitchVector/luma-vault.git main`.
 - **Windows shells from this tooling**: heredocs mangle backslashes; write
   patch scripts to the scratchpad with the Write tool and run `python <file>`.
-  Regexes in heredocs will come out broken.
+  Regexes in heredocs will come out broken. This bites HARD and silently:
+  writing a regex table through a heredoc turned every `` into a literal
+  backspace (0x08), so the patterns compiled, matched nothing, and the
+  translator quietly returned no tags. If a regex mysteriously matches
+  nothing, hexdump it before doubting the logic.
 
 ## Where to look
 
 - `packages/comic/README.md` — every command and flag, the plate pass, QA.
 - `packages/studio/README.md` — the loop, the content root, the model.
 - `packages/core/src/comic.ts` — the script schema and layouts, shared.
+- `packages/comic/src/prompt.ts` — the weights, and why each one is not 1.
+- `packages/comic/src/layouts.ts` — `cellPixels` and `sizeForCellBox`, the one
+  place page geometry is computed.
+- `packages/comic/assets/balloons.js` — placement and the one-path tail.
+- `packages/studio/src/vocabulary.ts` — prose to tags, with the synonym table
+  and the staging blocklist.
 - `apps/desktop/src/comic.rs` — projects, the runner, the event parser.
 - `apps/web/src/components/ComicsPanel.tsx` — the workspace.
 - Memories: `comic-pipeline-in-the-app`, `comic-plates-hosted-place-local-people`,
