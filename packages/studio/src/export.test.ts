@@ -3,8 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { comicScriptSchema } from '@luma/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { anchorFor, cameraWords, exportComic, layoutFor, seedFamilyFor } from './export.ts'
-import { initStudio, openStudio, scaffoldCharacter, type Studio } from './root.ts'
+import { anchorFor, cameraWords, exportComic, gazeTags, layoutFor, locationId, seedFamilyFor } from './export.ts'
+import { initStudio, openStudio, scaffoldCharacter, writeText, type Studio } from './root.ts'
 import { seedAri } from './seed-ari.ts'
 import { panelSchema, writeComic, writePanel, writeScene } from './spec.ts'
 
@@ -76,10 +76,17 @@ describe('exporting a studio comic for the renderer', () => {
     const panel = script.pages[0]!.panels[0]!
 
     expect(panel.camera).toBe('medium shot, from below')
-    expect(panel.scene).toContain('warm evening')
+    // Prose in, tags out: `warm_evening` is not a tag, `evening` is. The
+    // place contributes nothing until someone writes its prompt words,
+    // which the run reports; see the vague-location test below.
+    expect(panel.scene).toContain('evening')
+    expect(panel.scene).not.toContain('rooftop')
     expect(panel.scene).toContain('standing')
-    expect(panel.scene).toContain('annoyed but amused')
-    expect(panel.scene).toContain('looking at the drone')
+    // "annoyed but amused" keeps only the word the checkpoint knows, and
+    // "looking at the drone" is staging the sampler has no tag for at all.
+    expect(panel.scene).toContain('annoyed')
+    expect(panel.scene).not.toContain('but amused')
+    expect(panel.scene).not.toContain('looking at the drone')
     // The outfit's words, because she changes clothes between scenes and
     // `look` is one string for the whole script.
     expect(panel.scene).toContain('aqua shirt')
@@ -170,6 +177,90 @@ describe('exporting a studio comic for the renderer', () => {
     expect(cameraWords('medium close-up', undefined)).toBe('upper body')
     expect(cameraWords('medium shot', undefined)).toBe('medium shot')
     expect(cameraWords('extreme close-up', undefined)).toBe('close-up, face focus')
+  })
+
+  it('keeps prose out of the prompt, which is what the bridge is for', () => {
+    // The real staging line that used to render her kneeling: the sampler
+    // only recognised `knee`, so that is what it drew.
+    writePanel(
+      studio,
+      'comic_001',
+      stagedPanel('panel_001', 'scene_001', {
+        characters: {
+          ari: {
+            screen_position: 'left_foreground',
+            pose: 'hanging one-armed from the lowest surviving rung, other hand reaching up, one knee drawn to brace on the rail',
+            body_orientation: 'back three-quarters to camera',
+            expression: 'set, breathing hard',
+            outfit: 'default',
+          },
+        },
+      }),
+    )
+    exportComic(studio, 'comic_001', join(root, 'render'))
+    const script = comicScriptSchema.parse(JSON.parse(readFileSync(join(root, 'render', 'script.json'), 'utf8')))
+    const scene = script.pages[0]!.panels[0]!.scene
+
+    expect(scene).toContain('reaching')
+    expect(scene).toContain('from behind')
+    // The words that made the render wrong.
+    expect(scene).not.toContain('knee')
+    expect(scene).not.toContain('rung')
+    expect(scene).not.toContain('camera')
+    expect(scene).not.toContain('rail')
+  })
+
+  it('reports a place that has no prompt words rather than quietly guessing', () => {
+    writePanel(studio, 'comic_001', stagedPanel('panel_001', 'scene_001'))
+    const done = exportComic(studio, 'comic_001', join(root, 'render'))
+    expect(done.vagueLocations).toEqual(['rooftop'])
+
+    writeText(
+      join(root, 'locations', 'rooftop.md'),
+      ['# Rooftop', '', 'Gravel and ducts.', '', 'prompt_words: rooftop, ventilation duct, city, night', ''].join('\n'),
+    )
+    const after = exportComic(studio, 'comic_001', join(root, 'render2'))
+    expect(after.vagueLocations).toEqual([])
+    const script = comicScriptSchema.parse(JSON.parse(readFileSync(join(root, 'render2', 'script.json'), 'utf8')))
+    expect(script.pages[0]!.panels[0]!.scene).toContain('ventilation duct')
+  })
+
+  it('takes the place id out of a planner that kept describing', () => {
+    expect(locationId('rooftop')).toBe('rooftop')
+    expect(locationId('old radio building roof — gravel deck, squat vent housings')).toBe('old_radio_building_roof')
+    expect(locationId('hotel_room, lamp on')).toBe('hotel_room')
+    expect(locationId(undefined)).toBe('')
+  })
+
+  it('leaves a place out entirely rather than scraping dangerous words from its prose', () => {
+    writePanel(
+      studio,
+      'comic_001',
+      stagedPanel('panel_001', 'scene_001', {
+        environment: { location: 'old radio building roof — north fire escape, alley below', lighting: 'night' },
+      }),
+    )
+    const done = exportComic(studio, 'comic_001', join(root, 'render'))
+    const script = comicScriptSchema.parse(JSON.parse(readFileSync(join(root, 'render', 'script.json'), 'utf8')))
+    const scene = script.pages[0]!.panels[0]!.scene
+
+    // `radio`, `fire` and `alley` are all real tags, and all of them would
+    // draw the wrong picture.
+    expect(scene).not.toContain('radio')
+    expect(scene).not.toContain('fire')
+    expect(scene).not.toContain('alley')
+    // The lighting is simple enough to survive, and the person is told.
+    expect(scene).toContain('night')
+    expect(done.vagueLocations).toEqual(['old_radio_building_roof'])
+  })
+
+  it('only says "looking at viewer" when the gaze really leaves the frame', () => {
+    expect(gazeTags('the viewer')).toEqual(['looking at viewer'])
+    expect(gazeTags('camera')).toEqual(['looking at viewer'])
+    expect(gazeTags('the horizon')).toEqual(['looking away'])
+    // Another character is staging the sampler has no word for.
+    expect(gazeTags('maya')).toEqual([])
+    expect(gazeTags(undefined)).toEqual([])
   })
 
   it('alternates balloon corners so two lines do not stack', () => {

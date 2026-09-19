@@ -355,6 +355,11 @@ async function main(): Promise<void> {
       console.log(`${done.panels} panels on ${done.pages} page(s) → ${done.dir}`)
       console.log(`cast: ${done.characters.join(', ') || '(nobody)'}`)
       for (const s of done.skipped) console.log(`  skipped ${s.id}: ${s.why}`)
+      if (done.vagueLocations.length > 0) {
+        console.log(`
+these places have no prompt words, so their scenes were scraped out of prose:`)
+        for (const id of done.vagueLocations) console.log(`  locations/${id}.md — add a line: prompt_words: rooftop, city, night, …`)
+      }
       console.log(`
 render it with:
   pnpm comic panels ${done.dir}

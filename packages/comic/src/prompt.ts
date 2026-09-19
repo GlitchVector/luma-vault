@@ -45,6 +45,20 @@ export function loraTag(lora: string): string {
   return `<lora:${lora}>`
 }
 
+/**
+ * Each comma-separated term at the given weight. A term that already carries
+ * one is left alone, so a script can overrule this per panel.
+ */
+export function weighted(text: string, weight: number): string {
+  if (weight === 1) return text
+  return text
+    .split(',')
+    .map((term) => term.trim())
+    .filter(Boolean)
+    .map((term) => (/^\(.*:[\d.]+\)$/.test(term) ? term : `(${term}:${weight})`))
+    .join(', ')
+}
+
 export function buildPrompt(
   panel: Pick<Panel, 'camera' | 'scene' | 'characters' | 'reserve_space'>,
   characters: Record<string, Character>,
@@ -61,7 +75,14 @@ export function buildPrompt(
   for (const character of cast) {
     parts.push(loraTag(character.lora), character.trigger, character.look)
   }
-  parts.push(panel.camera, panel.scene)
+  // Framing words are weighted, because unweighted they lose.
+  //
+  // Measured on this house's own LoRAs long before the comic pipeline
+  // existed ("weight every framing word"): a character LoRA plus a body
+  // block drags every shot toward the hips, so `wide shot` renders as a
+  // cowboy shot and `full body` as a crop. Weighting is the difference
+  // between the camera being a request and being an instruction.
+  parts.push(weighted(panel.camera, config.prompt.camera_weight), panel.scene)
   if (config.prompt.style) parts.push(config.prompt.style)
   if (panel.reserve_space !== 'none') parts.push(reserveClause(panel.reserve_space))
 

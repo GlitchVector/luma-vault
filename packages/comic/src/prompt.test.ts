@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPrompt, reserveClause, subjectTags } from './prompt.ts'
+import { buildPrompt, reserveClause, subjectTags, weighted } from './prompt.ts'
 import type { Character, Panel } from './schema.ts'
 
 const ari: Character = {
@@ -16,6 +16,7 @@ const config = {
     style: '',
     negative: 'worst quality, lowres',
     negative_lettering: 'speech bubble, english text',
+    camera_weight: 1,
   },
 }
 
@@ -43,6 +44,18 @@ describe('the panel prompt', () => {
     const { prompt, negative } = buildPrompt(panel, { ari }, config)
     expect(prompt).not.toMatch(/NEVER BE DRAWN|WHAM/)
     expect(negative).not.toMatch(/NEVER BE DRAWN|WHAM/)
+  })
+
+  it('weights the camera words, because unweighted framing loses to the LoRA', () => {
+    const pushy = { prompt: { ...config.prompt, camera_weight: 1.35 } }
+    const { prompt } = buildPrompt(panel, { ari }, pushy)
+    expect(prompt).toContain('(from below:1.35), (cowboy shot:1.35)')
+    // The scene is never weighted: only the camera has to fight the LoRA.
+    expect(prompt).toContain('rooftop at dawn, wind, smirk')
+    expect(weighted('wide shot, full body', 1.4)).toBe('(wide shot:1.4), (full body:1.4)')
+    // A script that weighted a term itself keeps its own number.
+    expect(weighted('(close-up:1.6), from side', 1.35)).toBe('(close-up:1.6), (from side:1.35)')
+    expect(weighted('wide shot', 1)).toBe('wide shot')
   })
 
   it('ends with the clause reserving the lettering space', () => {

@@ -19,6 +19,7 @@ import { z } from 'zod'
 import { COMIC_LAYOUTS } from '@luma/core'
 import { characterDir, comicDir, writeText, type Studio } from './root.ts'
 import { listIds, readComic, readPanel, type Panel } from './spec.ts'
+import { loadVocabulary, sceneTags, stagingTags, type Vocabulary } from './vocabulary.ts'
 
 /** How the image model draws a character. Lives in the studio so the panel
  *  specs never carry prompt syntax. */
@@ -66,6 +67,39 @@ export function readOutfit(studio: Studio, id: string, outfit: string): { words:
   const parsed = outfitSchema.safeParse(readYaml(path))
   if (!parsed.success) return { words: '', avoid: [] }
   return { words: parsed.data.prompt_words, avoid: parsed.data.must_not_appear }
+}
+
+/**
+ * The place's id, out of whatever ended up in `environment.location`.
+ *
+ * The panel planner writes the id and then keeps describing: "rooftop — gravel
+ * deck, squat vent housings, parapet edge". The id is the part before it
+ * starts describing, so everything from the first dash or comma is dropped.
+ */
+export function locationId(raw: string | undefined): string {
+  if (!raw) return ''
+  return String(raw)
+    .split(/[\u2014\u2013,;(]/)[0]!
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64)
+}
+
+/**
+ * A location's prompt words, if someone has written them.
+ *
+ * `locations/<id>.md` is prose for a person. A line beginning
+ * `prompt_words:` is the technical half, the same bargain outfits strike:
+ * the description stays readable, and the renderer gets tags rather than a
+ * sentence it will mostly ignore.
+ */
+export function readLocationWords(studio: Studio, id: string): string | null {
+  const path = join(studio.root, 'locations', `${id}.md`)
+  if (!existsSync(path)) return null
+  const line = readFileSync(path, 'utf8').match(/^prompt_words:\s*(.+)$/m)
+  return line ? line[1]!.trim() : null
 }
 
 /** A seed family from the character's id, so it is the same every run and on
@@ -178,6 +212,20 @@ export function anchorFor(position: string | undefined, index: number): { anchor
   return { anchor, tail: { x, y: side.includes('background') ? 45 : 58 } }
 }
 
+/**
+ * A gaze is only a tag when it points out of the frame. "looking at maya"
+ * is a fact about the staging that the sampler has no word for; `looking at
+ * viewer` is one of the strongest tags there is, so it is worth getting
+ * right and worth never emitting by accident.
+ */
+export function gazeTags(target: string | undefined): string[] {
+  if (!target) return []
+  const at = target.toLowerCase()
+  if (/\b(viewer|camera|reader|us)\b/.test(at)) return ['looking at viewer']
+  if (/\b(away|offscreen|off-screen|distance|horizon|sky)\b/.test(at)) return ['looking away']
+  return []
+}
+
 /** The preset for a page of `count` panels. */
 export function layoutFor(count: number): string {
   const byCount: Record<number, string> = { 1: 'splash', 2: 'two-stack', 3: 'hero-top', 4: 'grid-2x2', 5: 'wide-2-2', 6: 'grid-2x3' }
@@ -189,6 +237,8 @@ export function layoutFor(count: number): string {
 export interface ExportOptions {
   /** Most panels on one page before it is split. */
   perPage?: number
+  /** The tag list to filter prose against. Loaded from the repo by default. */
+  vocabulary?: Vocabulary
   /** Only these scenes, in this order. Default: every scene, in order. */
   scenes?: string[]
 }
@@ -200,6 +250,9 @@ export interface Exported {
   characters: string[]
   /** Panels left out because they are not staged yet, with the reason. */
   skipped: Array<{ id: string; why: string }>
+  /** Locations with no `prompt_words:` line, so their scene was guessed at
+   *  by pulling tags out of the prose. Worth writing properly. */
+  vagueLocations: string[]
 }
 
 /**
@@ -213,6 +266,9 @@ export function exportComic(studio: Studio, comicId: string, outDir: string, opt
   const comic = readComic(studio, comicId)
   const perPage = options.perPage ?? 4
   const sceneIds = options.scenes ?? listIds(studio, comicId, 'scenes')
+
+  const vocabulary: Vocabulary = options.vocabulary ?? loadVocabulary()
+  const vagueLocations: string[] = []
 
   const byScene = new Map<string, Panel[]>()
   const loose: Panel[] = []
@@ -245,17 +301,32 @@ export function exportComic(studio: Studio, comicId: string, outDir: string, opt
       for (const [who] of cast) used.add(who)
 
       // Outfit words go in the scene, not in the character's `look`: `look`
-      // is one string for the whole script, and she changes clothes.
+      // is one string for the whole script, and she changes clothes. They
+      // are used verbatim because a person curated them as tags already.
       const staging = cast.flatMap(([who, staged]) => {
         const outfit = staged.outfit && staged.outfit !== 'default' ? readOutfit(studio, who, staged.outfit).words : readOutfit(studio, who, 'default').words
-        return [outfit, staged.pose, staged.body_orientation, staged.expression, staged.gaze_target ? `looking at ${staged.gaze_target}` : '']
+        // `tags` is what the planner wrote as tags; everything else is the
+        // director's prose and only its recognisable words get through.
+        const explicit = typeof staged['tags'] === 'string' ? (staged['tags'] as string) : ''
+        return [
+          outfit,
+          explicit,
+          ...stagingTags([staged.pose, staged.body_orientation, staged.head_orientation, staged.expression].filter(Boolean).join(', '), vocabulary),
+          ...gazeTags(staged.gaze_target),
+        ]
       })
 
-      const scene = words(
-        panel.environment.location as string | undefined,
-        panel.environment.lighting as string | undefined,
-        ...staging,
-      )
+      // A place contributes its curated words or nothing at all. Scraping
+      // tags out of its description looked helpful and was not: "old radio
+      // building roof, alley below" yielded `radio, fire, alley`, which is a
+      // burning radio rather than a rooftop. Same rule as the camera and the
+      // staging — only words someone chose on purpose reach the sampler.
+      const place = locationId(panel.environment.location as string | undefined)
+      const curated = place ? readLocationWords(studio, place) : null
+      if (place && !curated && !vagueLocations.includes(place)) vagueLocations.push(place)
+      const lighting = sceneTags(panel.environment.lighting as string | undefined, vocabulary)
+
+      const scene = words(...(curated ? [curated] : []), ...lighting, ...staging)
       const camera = cameraWords(panel.camera.framing as string | undefined, panel.camera.angle as string | undefined)
 
       const lines = panel.dialogue.lines.map((line, index) => {
@@ -328,6 +399,7 @@ export function exportComic(studio: Studio, comicId: string, outDir: string, opt
     panels: pages.reduce((n, page) => n + page.panels.length, 0),
     characters: [...used],
     skipped,
+    vagueLocations,
   }
 }
 

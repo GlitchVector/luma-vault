@@ -70,6 +70,9 @@ export const promptConfigSchema = z.object({
   /** Lettering words. Added to every negative so the model does not draw
    *  the balloons the assembler is about to add. */
   negative_lettering: z.string().default('speech bubble, english text, multiple views'),
+  /** How hard to push the camera words. 1 disables weighting. See
+   *  `prompt.ts` for why the default is not 1. */
+  camera_weight: z.number().min(1).max(2).default(1.35),
 })
 
 export const pageConfigSchema = z.object({
