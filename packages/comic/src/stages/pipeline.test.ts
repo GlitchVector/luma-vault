@@ -108,20 +108,33 @@ describe('panels', () => {
 })
 
 describe('qa', () => {
-  it('passes the panels with usable space, retries the one without, and stops at max_attempts', async () => {
+  it('reports a crowded lettering corner as a note and never re-renders for it', async () => {
     const project = openProject(dir)
     const verdicts = await runQa(project, report, {}, { tagger: null })
+    // p1-3 has no room where its balloon goes, and that is no longer a gate:
+    // re-rolling never produced room (measured), and balloons read over art.
     expect(verdicts.map((v) => [v.panel, v.ok, v.attempt])).toEqual([
       ['p1-1', true, 0],
       ['p1-2', true, 0],
-      ['p1-3', false, 1],
+      ['p1-3', true, 0],
     ])
-    expect(verdicts[2]!.failures).toEqual(['space: nothing usable at top-left'])
-    expect(events).toContain('qa:p1-3:retry')
+    expect(verdicts[2]!.failures).toEqual([])
+    expect(verdicts[2]!.notes).toEqual(['space: little empty room at top-left'])
+    expect(events).not.toContain('qa:p1-3:retry')
     expect(existsSync(join(dir, 'qa', 'p1-3.json'))).toBe(true)
-    // The retried panel stays at its last attempt for the next run.
+    // The first render is kept: nothing was thrown away for a note.
     const sidecar = JSON.parse(readFileSync(join(dir, 'panels', 'p1-3.json'), 'utf8'))
-    expect(sidecar).toMatchObject({ attempt: 1, seed: 8833 })
+    expect(sidecar).toMatchObject({ attempt: 0, seed: 8832 })
+  })
+
+  it('still retries a real failure, and gives up at max_attempts', async () => {
+    const project = openProject(dir)
+    const tagger = { tag: async (paths: string[]) => new Map(paths.map((p) => [p, { 'no humans': 0.9 }])) }
+    const verdicts = await runQa(project, report, { page: 1, panel: 'p1-2' }, { tagger })
+    expect(verdicts[0]!.ok).toBe(false)
+    expect(verdicts[0]!.failures).toEqual(['figures: expected one, found nobody'])
+    expect(events).toContain('qa:p1-2:retry')
+    expect(verdicts[0]!.attempt).toBe(1)
   })
 
   it('uses the tagger when given one', async () => {

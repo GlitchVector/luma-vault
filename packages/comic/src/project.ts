@@ -58,7 +58,10 @@ export function loadConfig(projectDir: string): Config {
       ...((base['characters'] as Record<string, unknown> | undefined) ?? {}),
       ...((override['characters'] as Record<string, unknown> | undefined) ?? {}),
     }
-    for (const key of ['forge', 'prompt', 'page', 'qa', 'writer'] as const) {
+    // Every nested section, or a project that overrides one field of a
+    // section silently loses the rest of it — `{"plates":{"style":"…"}}`
+    // dropped `backend` and rendered with no plates at all, saying nothing.
+    for (const key of ['forge', 'prompt', 'page', 'qa', 'writer', 'plates'] as const) {
       if (base[key] && override[key] && typeof override[key] === 'object') {
         merged[key] = { ...(base[key] as object), ...(override[key] as object) }
       }

@@ -35,16 +35,17 @@
     "model": "claude-opus-5"
   },
   "plates": {
-    "backend": "openai",
+    "backend": "none",
     "model": "gpt-image-1",
     "quality": "medium",
     "input_fidelity": "high",
-    "style": "clean digital illustration, soft natural light, no text",
-    "mask_grow": 24,
+    "style": "detailed anime illustration background, cel shaded with soft gradient shading and subtle rim light, clean thin linework, rich colour, no text",
+    "mask_grow": 56,
     "mask_tolerance": 90,
     "denoise": 0.9,
     "mask_blur": 8,
-    "inpaint_padding": 64
+    "inpaint_padding": 64,
+    "//": "Off. Tried live 2026-09-19 on gpt-image-1: the stand-in mannequin was drawn on only 5 of 11 panels, so 6 panels died after 3 attempts each. Set to \"openai\" only if the mannequin problem is solved first. See .ai/comics.md."
   },
   "browser": "chrome",
   "characters": {

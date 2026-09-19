@@ -7,7 +7,7 @@ own README for the command reference.
 ```
 packages/studio      before any picture: characters, canon, story, scenes,
                      panel specs. Content lives OUTSIDE this repo.
-packages/comic       pictures: prose → script → plates → panels → QA → lettered pages.
+packages/comic       pictures: prose → script → panels (Forge) → QA → lettered pages.
 apps/web Comics      the app's workspace over packages/comic (Rust bridge in
                      apps/desktop/src/comic.rs, projects under app data).
 ```
@@ -30,14 +30,16 @@ These are decisions, not defaults. Do not re-litigate them.
 2. **Canon never changes silently.** A contradiction is flagged
    (`studio continuity`), then the person keeps the canon, changes the
    document, or changes the canon on purpose.
-3. **The hosted image model draws the place; the local model draws the
-   people.** OpenAI's image model sees `locations`, `setting`, `pose` and
-   `camera` and never `scene`, the field the explicit local prompt is built
-   from. That split is what lets a comic go where a hosted model will not.
+3. **RETIRED 2026-09-19.** The rule was "the hosted image model draws the
+   place; the local model draws the people", with OpenAI seeing `locations`,
+   `setting`, `pose` and `camera` and never `scene`. The split was sound and
+   the schema still carries those fields, but the mannequin mechanism that
+   implemented it failed live (see the plates section). Everything is Forge.
+   If a hosted model is ever brought back, keep the field split: it is what
+   lets a comic go where a hosted model will not.
 4. **Dialogue never enters an image prompt.** Lettering is deterministic
    HTML/CSS, never generated.
-5. **No ControlNet, no pose conditioning.** Camera and pose are words; with
-   plates, the stand-in mannequin's silhouette is the pose guide.
+5. **No ControlNet, no pose conditioning.** Camera and pose are words.
 6. **Deterministic CLI, no agent in the render loop.** Seeds are
    arithmetic, requests are hashed, sidecars hold every parameter.
 7. **The content root is private.** luma-vault on GitHub is public; the
@@ -55,9 +57,8 @@ turns output into one event per line, which is what the app reads.
 | Stage | Command | Reads → writes |
 |---|---|---|
 | 1 | `script` | `prose.md` → `script.json` (writer: claude CLI with `--json-schema`, or Anthropic API) |
-| 2a | `plates` | `script.json` → `plates/<id>.png` + master plates per location (OpenAI; run by `panels` when missing) |
-| 2 | `panels` | script (+ plates) → `panels/<id>.png` + `.json` sidecar (Forge txt2img, or img2img inpaint into the plate) |
-| 4 | `qa` | panels → `qa/<id>.json`; failures re-rendered at the next seed |
+| 2 | `panels` | `script.json` → `panels/<id>.png` + `.json` sidecar (Forge txt2img) |
+| 4 | `qa` | panels → `qa/<id>.json`; hard failures re-rendered at the next seed |
 | 3 | `assemble` | panels + script → `out/page-NN.png`, `book.pdf`, `book.cbz` (Chrome via Playwright) |
 
 `all` runs them in order. `doctor` says what is reachable. `render --page N
@@ -86,22 +87,53 @@ turns output into one event per line, which is what the app reads.
   Forge is the only one that draws. `mock` draws deterministic placeholders
   (`COMIC_RENDERER=mock` or `"renderer": "mock"`) so layout, lettering and
   QA can be worked on while the GPU is busy.
-- **Plates** (`plates/`, `stages/plates.ts`): one master per script
-  `location` (`images/generations`), each panel an `images/edits` view of its
-  master (`input_fidelity: high`). Stand-ins are matte mannequins in fixed
-  colours — magenta, cyan, yellow, one per character in `characters` order —
-  posed by the panel's `pose`. Mask = colour threshold + dilation
-  (`plates/mask.ts`); inpaint = Forge img2img, `inpainting_fill: 1`,
-  `inpaint_full_res`, denoise 0.9, one character at a time, each with a prompt
-  naming only her. A plate with no stand-in is re-asked as a variation twice,
-  then the panel fails and the run continues. Plates have no seed: they are
-  files to keep (`plates/` in a project is not regenerable). `COMIC_PLATES=mock`
-  for tests. Default `plates.backend` is `openai`; `none` renders directly.
+- **Plates are OFF, and that is a verdict, not a default.** (`plates/`,
+  `stages/plates.ts`, `plates.backend: "none"`.) The idea was: OpenAI draws
+  the location with a flat coloured mannequin where each character goes, a
+  colour threshold makes a mask, Forge inpaints the character into it.
+  **Tried live against gpt-image-1 on 2026-09-19 and it failed.** Numbers,
+  so nobody re-runs the experiment by accident:
+  - **The mannequin is drawn about half the time.** 5 panels of 11 got one.
+    The other 6 died after three attempts each. An awkward pose or a tight
+    crop makes the model draw a real person, or nobody.
+  - **The mannequin's silhouette is not the character's.** It is bald and
+    smooth; Ari has a bob. The inpaint cannot paint outside the mask, so her
+    crown came out sliced flat. `mask_grow` 24 clipped her, 96 repainted so
+    much background that a dusk sky grew daylight clouds, 56 was the narrow
+    window that worked. Tuning a dilation is treating the symptom.
+  - **A plate style that suits the character fights the mannequin.** Asking
+    for "painterly, no outlines" to match delburry75 made the model refuse to
+    draw a flat matte silhouette at all. Cel shading plus linework
+    (`plates.style`, still in the config) both matched delburry75 well and
+    kept the mannequin drawable, but that is a narrow corridor.
+  - **A retry redrew the location master too**, roughly doubling the spend on
+    every failure. `ensurePlate` passes `force` down to `ensureMaster`. Fix
+    that before any revival.
+
+  One part genuinely worked and is worth remembering: **the empty location
+  master was excellent.** Drawing a place with nobody in it is what these
+  models are good at. If plates are ever revisited, the design to try is:
+  hosted model draws the location EMPTY, and the character mask is generated
+  by us from the panel's `screen_position`, sized for the character. No
+  mannequin to fail, no silhouette mismatch. The owner's verdict on the
+  mannequin version was "this approach is bullshit, the first way without
+  openai was working", and he is right on the evidence.
+
 - **QA** (`qa/`): pixels (blank, and edge energy in the reserved corner) plus
   the vault's wd-vit-tagger-v3 on the CPU through `venv-classifier`
   (`qa/tagger.py`): figure count (`solo`/`2girls`/`no humans`), `multiple
-  views`, the few anatomy tags. Hard failures only. It cannot see a subtly
-  wrong hand; say so rather than promising it.
+  views`, the few anatomy tags. It cannot see a subtly wrong hand; say so
+  rather than promising it.
+
+  **Room for the lettering is a note, never a gate** (changed 2026-09-19).
+  It used to fail and retry, and that was wrong twice over. Prompt wording
+  cannot deliver empty space on this checkpoint: four wordings, weighted and
+  moved to the front, all scored 4.8-5.3 against a limit of 3.4. And it does
+  not matter, because the balloons are opaque with a black stroke and read
+  fine over sky, brick and clothing. What the gate actually did was discard
+  each panel's first render and keep its third, which was no better. On the
+  worked example it failed 8 of 11 and turned a 10-second QA pass into 3
+  minutes 11. `Verdict.failures` is retried; `Verdict.notes` is not.
 - **Assembly** (`assemble/page.ts`, `assets/theme.css`, `assets/balloons.js`):
   CSS grid page, `<figure>` per panel with a span, balloons as inline SVG
   sized in the browser after fonts load, tails toward `tail_to` (default:
@@ -114,18 +146,33 @@ turns output into one event per line, which is what the app reads.
   whose cell count matches. `script` prints how many scene terms are not in
   the tagger vocabulary — a high count means the writer drifted into prose.
 
-### State of verification (2026-09-18)
+### State of verification (2026-09-19)
 
-- Proven end to end on the **mock** renderer and **mock** plates, including
-  the worked example `packages/comic/examples/first-light` (its `panels/`,
-  `plates/`, `out/` are gitignored until real ones exist).
-- Stage 1 proven with the real claude CLI (about 20–50 s a call).
-- **Never rendered with Forge**: the GPU has been in kohya runs the whole
-  time (`never-render-while-training`). The first real render is the test of
-  the prompt words and of the plate/character style match.
-- **Never called OpenAI**: `OPENAI_API_KEY` is not in `.env`. The request
-  shapes are unit-tested against the API reference (`generations` JSON,
-  `edits` multipart with `image[]`).
+Forge, live, on the worked example `packages/comic/examples/first-light`:
+
+| | |
+|---|---|
+| 11 panels, all at their first seed | 1 min 52 s |
+| QA, tagger included | 10 s |
+| Assemble, PDF, CBZ | 6 s |
+
+Identity and outfit hold on every panel; the lettering reads; the tails point
+at the right person. Stage 1 is proven with the real claude CLI (20-50 s a
+call). **This is the path that works and the one to build on.**
+
+OpenAI: called live, and the plate pass failed as described above. The API
+shapes in `plates/openai.ts` are correct (`generations` JSON, `edits`
+multipart with `image[]`); the *method* is what failed.
+
+Known, still open:
+
+- **Panel aspect can differ from the grid cell**, and `object-fit: cover`
+  crops the difference, so QA measures pixels the reader never sees. On the
+  example it is 3% off the sides for most panels and 4% off top and bottom
+  for the wide hero, where the render already had zero headroom. Anchoring
+  the crop to the top of the panel would protect heads; not done.
+- The checkpoint renders her considerably bustier than her references,
+  because these prompts carry no body block. Creative, not technical.
 
 ## The Comics panel in the app
 

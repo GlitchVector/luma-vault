@@ -105,9 +105,15 @@ export const platesConfigSchema = z.object({
   input_fidelity: z.enum(['low', 'high']).default('high'),
   /** Style words for the plate. The local pass has its own in `prompt.style`. */
   style: z.string().default('clean digital illustration, soft natural light, no text'),
-  /** How far a stand-in's mask grows past its colour, in pixels, so the
-   *  redraw covers the edge the hosted model anti-aliased. */
-  mask_grow: z.number().int().min(0).default(24),
+  /** How far a stand-in's mask grows past its colour, in pixels.
+   *
+   *  Not just anti-aliasing slack: the mannequin is bald and smooth, and a
+   *  character is not. At 24 the mask was narrower than Ari's bob and the
+   *  inpaint sliced her crown flat, because it cannot paint outside the
+   *  mask. At 96 it repaints so much background that a dusk sky grew
+   *  daylight clouds. 56 clears her hair and leaves the plate alone. A
+   *  character with bigger hair or bulky armour needs more. */
+  mask_grow: z.number().int().min(0).default(56),
   /** Colour distance (0-441) under which a pixel counts as the stand-in. */
   mask_tolerance: z.number().min(0).default(90),
   /** Inpaint strength on the stand-in. High: the figure is redrawn, not tinted. */

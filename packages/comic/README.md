@@ -7,7 +7,6 @@ nothing in the loop but files:
 | Stage | Command | In → Out |
 |---|---|---|
 | 1 | `pnpm comic script <project>` | `prose.md` → `script.json` |
-| 2a | `pnpm comic plates <project>` | `script.json` → `plates/<id>.png` (a hosted model's place with stand-ins; run by `panels` when missing) |
 | 2 | `pnpm comic panels <project>` | `script.json` → `panels/<id>.png` (+ `.json` sidecar) |
 | 4 | `pnpm comic qa <project>` | panels → `qa/<id>.json`, failures re-rendered at the next seed |
 | 3 | `pnpm comic assemble <project>` | panels + script → `out/page-NN.png`, `out/book.pdf`, `out/book.cbz` |
@@ -73,42 +72,27 @@ Panel sizes come from the layout: the grid cell's aspect picks the nearest
 SDXL bucket (`src/layouts.ts`), so a wide establishing panel renders
 landscape and a tall one portrait.
 
-## Plates: a hosted model for the place, the local model for the people
+## Plates: tried, failed, switched off
 
-With `plates.backend` set to `openai` (the default), a panel is drawn in two
-passes:
+`plates.backend` is `none`. The idea was that OpenAI would draw the location
+with a flat coloured mannequin where each character goes, a colour threshold
+would make a mask, and Forge would inpaint the character into it.
 
-1. **The plate.** OpenAI's image model (`gpt-image-1`) draws the place. Each
-   entry in the script's `locations` becomes a master plate once
-   (`plates/location-<name>.png`, `images/generations`), and every panel set
-   there is drawn as a view of that master (`images/edits` with the master as
-   the reference, `input_fidelity: high`), so the rooftop is the same rooftop
-   in every panel. Where a character will stand, the prompt asks for a
-   featureless matte mannequin in a fixed colour — magenta, cyan, yellow, one
-   per character in order — posed as the panel's `pose` says.
-2. **The people.** Each mannequin is found by its colour (a threshold, grown
-   by `mask_grow` pixels) and painted over with Forge's img2img inpaint at
-   `denoise` 0.9 with that character's LoRA prompt, one character at a time,
-   full-resolution inpaint so a face stays sharp inside a wide plate. The
-   mannequin's silhouette is the pose guide; no ControlNet.
+It was tested live on 2026-09-19 and it does not work. The mannequin was
+drawn on 5 panels of 11; the other 6 died after three attempts each. When it
+was drawn, its bald silhouette was smaller than the character, so the inpaint
+sliced the top off her hair. A retry also redrew the location master, roughly
+doubling the cost of each failure.
 
-The hosted model only ever sees `locations`, `setting`, `pose` and `camera`.
-It never sees `scene`, which is the field the local prompt is built from —
-so a scene may say anything the local checkpoint will draw, and the plate
-request stays within the hosted model's rules. The writer's brief says the
-same thing in its own words, and `pnpm comic plates` prints exactly what was
-sent, so a refusal names the field to reword.
+The code is still here, behind the same seam as the renderer, and
+`plates.backend: "openai"` still runs it. Do not switch it on expecting it to
+work. The one part that was genuinely good was the empty location plate, and
+if this is ever revisited the design to try is: draw the location with nobody
+in it, and build the character mask ourselves from the panel's
+`screen_position`. See `.ai/comics.md` for the numbers.
 
-Plates are cached by their request (prompt, size, quality, the master they
-were shown) and are files in the project: a hosted model has no seed, so they
-are the one part of a comic that cannot be recomputed. Keep them. A plate in
-which the mannequin did not appear is asked for again as a variation, twice;
-after that the panel fails and the run goes on.
-
-Set `plates.backend` to `none` to render every panel directly with Forge, or
-to `mock` to exercise the whole pass without a key. `pnpm comic doctor` says
-whether `OPENAI_API_KEY` (from `.env`) is there. At medium quality a panel
-plate is a few cents; a ten-panel comic with two locations is about a dollar.
+Everything below and above this section is the Forge path, which renders a
+panel directly and is what the pipeline does by default.
 
 ## Assembling
 

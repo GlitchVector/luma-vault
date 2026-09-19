@@ -2,9 +2,10 @@
  * Stage 4: look at every rendered panel and retry the ones that failed.
  *
  * Hard failures only — a blank picture, the wrong number of people, an
- * anatomy tag, or nowhere to put the balloon. Nothing here has an opinion
- * about whether a panel is good; that is the difference between a gate the
- * owner can leave unattended and one that argues with him.
+ * anatomy tag. Nothing here has an opinion about whether a panel is good;
+ * that is the difference between a gate the owner can leave unattended and
+ * one that argues with him. Room for the lettering is a NOTE rather than a
+ * failure, for the reasons measured in `inspect`.
  *
  * A failed panel is re-rendered at the next attempt in its seed family and
  * inspected again, up to `qa.max_attempts`. The verdicts are written beside
@@ -27,7 +28,10 @@ export interface Verdict {
   seed: number
   hash: string
   ok: boolean
+  /** Hard failures: these are retried at the next seed. */
   failures: string[]
+  /** Observations for the person. Never retried, never fail a run. */
+  notes: string[]
   pixels: PixelVerdict
   tags?: Tags
   inspected_at: string
@@ -59,7 +63,6 @@ export async function inspect(plan: PanelPlan, project: Project, tagger: Tagger 
   const pixels = inspectPixels(png, plan.panel.reserve_space, project.config.qa)
   const failures: string[] = []
   if (pixels.blank) failures.push('blank: no picture')
-  if (pixels.space_usable === false) failures.push(`space: nothing usable at ${plan.panel.reserve_space}`)
 
   let tags: Tags | undefined
   if (tagger && !pixels.blank) {
@@ -67,6 +70,21 @@ export async function inspect(plan: PanelPlan, project: Project, tagger: Tagger 
     const expected = plan.panel.figures ?? plan.panel.characters.length
     failures.push(...judgeFigures(tags, expected, project.config.qa.tag_threshold))
   }
+
+  // Lettering space is reported, never retried.
+  //
+  // Measured 2026-09-19 on the worked example: 8 of 11 panels "failed" this,
+  // and re-rolling did not fix a single one — four wordings of the reserve
+  // clause, weighted and moved to the front of the prompt, all landed at
+  // 4.8-5.3 against a limit of 3.4, because the checkpoint composes the
+  // frame and words do not move it. What retrying DID do was throw away the
+  // first render and keep the third, which was no better and sometimes
+  // worse. It also does not matter: the balloons are opaque with a black
+  // stroke and read fine over sky, brick and clothing, which is how comics
+  // have always lettered. So this is a note for the person, not a gate.
+  const notes: string[] = []
+  if (pixels.space_usable === false) notes.push(`space: little empty room at ${plan.panel.reserve_space}`)
+
   return {
     panel: plan.id,
     attempt: plan.attempt,
@@ -74,6 +92,7 @@ export async function inspect(plan: PanelPlan, project: Project, tagger: Tagger 
     hash: plan.hash,
     ok: failures.length === 0,
     failures,
+    notes,
     pixels,
     tags,
     inspected_at: new Date().toISOString(),
@@ -116,7 +135,13 @@ export async function runQa(project: Project, report: Reporter, filter: PanelFil
       verdict = await inspect(plan, project, tagger)
     }
     writeJson(verdictPath(project, plan.id), verdict)
-    report.emit({ event: 'qa', id: plan.id, status: verdict.ok ? 'ok' : 'failed', failures: verdict.failures, attempt: plan.attempt })
+    report.emit({
+      event: 'qa',
+      id: plan.id,
+      status: verdict.ok ? 'ok' : 'failed',
+      failures: [...verdict.failures, ...verdict.notes],
+      attempt: plan.attempt,
+    })
     verdicts.push(verdict)
   }
   const failed = verdicts.filter((v) => !v.ok)
