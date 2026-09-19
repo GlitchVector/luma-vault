@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { requestHash, type RenderRequest, type Sidecar } from '../cache.ts'
-import { bucketFor, cellAspect, resolveGrid, resolveSpans, sizeForCell } from '../layouts.ts'
+import { bucketFor, sizeForCellBox } from '../layouts.ts'
 import { buildPrompt } from '../prompt.ts'
 import { DUMMIES, plateSizeFor, type PlateBackend } from '../plates/plate.ts'
 import { maskForColour, maskPng } from '../plates/mask.ts'
@@ -85,11 +85,12 @@ export function planPanel(
   const sidecarPath = join(project.panelsDir, `${panel.id}.json`)
   const attempt = options.attempt ?? readSidecar(sidecarPath)?.attempt ?? 0
 
-  const grid = resolveGrid(page)
-  const span = resolveSpans(page)[where.panelIndex]!
-  const aspect = cellAspect(grid, span, project.config.page.width, project.config.page.height)
-  // The cell's own aspect, so the page has nothing to crop.
-  let { width, height } = sizeForCell(aspect)
+  // The cell's TRUE aspect — page minus margins, minus the gutters between
+  // tracks — so `object-fit: cover` has nothing to crop. Measuring it off
+  // the raw grid instead leaves a couple of percent, which is small and is
+  // still a face getting shaved on a wide panel.
+  let { width, height } = sizeForCellBox(page, where.panelIndex, project.config.page)
+  const aspect = width / height
   if (platesEnabled(project)) {
     // The plate is the init image, so the request is the plate's size - one
     // of the three the hosted model draws - not the SDXL bucket.

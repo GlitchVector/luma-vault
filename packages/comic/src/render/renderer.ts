@@ -45,6 +45,12 @@ export interface InpaintRequest extends RenderRequest {
 
 export interface Renderer {
   readonly name: string
+  /**
+   * Enlarge a finished picture. Optional: a backend without one simply
+   * leaves the page to stretch the panel, which is what happened before
+   * retina pages existed.
+   */
+  upscale?(png: Buffer, scale: number, model: string): Promise<Buffer>
   /** Confirm the backend can serve the script, or throw naming what it lacks. */
   prepare(needs: Needs): Promise<Prepared>
   render(request: RenderRequest, onProgress?: Progress): Promise<RenderResult>

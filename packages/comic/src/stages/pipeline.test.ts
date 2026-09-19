@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { pageHtml } from '../assemble/page.ts'
+import { cellPixels, pageHtml } from '../assemble/page.ts'
 import { openProject } from '../project.ts'
 import { Reporter } from '../report.ts'
 import type { Script } from '../schema.ts'
@@ -69,11 +69,15 @@ describe('panels', () => {
     const project = openProject(dir)
     const plans = await runPanels(project, report)
     expect(plans.map((p) => p.seed)).toEqual([8812, 8822, 8832])
-    // Each panel is rendered at its CELL's aspect, not the nearest bucket,
-    // so `object-fit: cover` on the page has nothing to crop away.
-    expect(plans.map((p) => `${p.request.width}x${p.request.height}`)).toEqual(['1184x888', '816x1224', '816x1224'])
-    expect(1184 / 888).toBeCloseTo(2000 / 1500, 3)
-    expect(816 / 1224).toBeCloseTo(1000 / 1500, 3)
+    // Each panel is rendered at its CELL's real aspect — the page minus its
+    // margins, minus the gutters between tracks — so `object-fit: cover` on
+    // the page has nothing to crop away.
+    expect(plans.map((p) => `${p.request.width}x${p.request.height}`)).toEqual(['1160x880', '816x1256', '816x1256'])
+    const box = { width: 2000, height: 3000, margin: 60, gutter: 28 }
+    const hero = cellPixels(script.pages[0]!, 0, { page: box })
+    const under = cellPixels(script.pages[0]!, 1, { page: box })
+    expect(1160 / 880).toBeCloseTo(hero.width / hero.height, 2)
+    expect(816 / 1256).toBeCloseTo(under.width / under.height, 2)
     for (const plan of plans) {
       expect(existsSync(plan.pngPath)).toBe(true)
       const sidecar = JSON.parse(readFileSync(plan.sidecarPath, 'utf8'))
@@ -150,7 +154,7 @@ describe('qa', () => {
 
 describe('page html', () => {
   it('places the grid, the panels and the balloons, with dialogue only in balloons', () => {
-    const html = pageHtml(script.pages[0]!, 1, 'Test', { page: { width: 2000, height: 3000 } })
+    const html = pageHtml(script.pages[0]!, 1, 'Test', { page: { width: 2000, height: 3000, scale: 1, margin: 60, gutter: 28 } })
     expect(html).toContain('grid-template-columns:repeat(2, 1fr)')
     expect(html).toContain('grid-column:1 / 3;grid-row:1')
     expect(html).toContain('src="http://comic.local/panels/p1-2.png"')

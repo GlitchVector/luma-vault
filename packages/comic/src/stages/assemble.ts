@@ -12,10 +12,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { extname, join } from 'node:path'
 import { zipSync } from 'fflate'
 import { chromium, type Browser, type Page as BrowserPage } from 'playwright-core'
-import { ORIGIN, bookHtml, pageHtml, type PanelEnergy } from '../assemble/page.ts'
+import { ORIGIN, bookHtml, cellPixels, pageHtml, type PanelEnergy, type PanelSources } from '../assemble/page.ts'
 import { energyMap } from '../assemble/energy.ts'
+import { readSidecar, rendererFor } from './panels.ts'
 import { ASSETS_DIR, loadScript, type Project } from '../project.ts'
 import type { Reporter } from '../report.ts'
+import type { Page as PageSpec } from '../schema.ts'
+import { PNG } from 'pngjs'
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -60,6 +63,53 @@ async function route(page: BrowserPage, project: Project): Promise<void> {
   })
 }
 
+/**
+ * Panels enlarged for a retina page, cached by the hash of the request that
+ * drew them, so re-assembling is free and a re-rendered panel is redone.
+ *
+ * ESRGAN rather than a second sampler pass: no prompt, no seed, and no
+ * chance of inventing a second head, which is the risk of re-sampling a
+ * panel at a size the checkpoint was not trained for.
+ */
+async function upscalePanels(project: Project, page: PageSpec, report: Reporter): Promise<PanelSources> {
+  const sources: PanelSources = new Map()
+  const scale = project.config.page.scale
+  if (scale <= 1) return sources
+
+  const renderer = rendererFor(project)
+  if (!renderer.upscale) {
+    report.emit({ event: 'note', message: `${renderer.name} cannot upscale, so the page will stretch the panels instead` })
+    return sources
+  }
+
+  const dir = join(project.buildDir, 'retina')
+  mkdirSync(dir, { recursive: true })
+  for (const [index, panel] of page.panels.entries()) {
+    const source = join(project.panelsDir, `${panel.id}.png`)
+    const drawn = PNG.sync.read(readFileSync(source))
+    const cell = cellPixels(page, index, project.config)
+    // What the cell actually needs, not the device scale: a panel is drawn
+    // at the sampler's comfortable size, which is smaller than its cell, so
+    // doubling it would still leave the browser stretching it.
+    // A whisker of headroom: Forge rounds the resize to whole pixels, and
+    // landing four pixels short means the page stretches the panel after
+    // all the trouble taken not to. Overshoot is free; the browser
+    // downsamples, which is sharp.
+    const needed = (cell.width * scale) / drawn.width
+    const factor = Math.min(4, Math.max(1, needed * 1.01))
+    const name = `${panel.id}-${readSidecar(join(project.panelsDir, `${panel.id}.json`))?.hash ?? 'nohash'}@${factor.toFixed(2)}x.png`
+    const target = join(dir, name)
+    if (!existsSync(target)) {
+      report.emit({ event: 'panel', id: panel.id, status: 'rendering', message: `upscaling ${factor.toFixed(2)}x for the retina page` })
+      // eslint-disable-next-line no-await-in-loop
+      const big = await renderer.upscale(readFileSync(source), factor, project.config.forge.upscaler)
+      writeFileSync(target, big)
+    }
+    sources.set(panel.id, `${ORIGIN}/build/retina/${name}`)
+  }
+  return sources
+}
+
 export async function runAssemble(project: Project, report: Reporter, options: AssembleOptions = {}): Promise<string[]> {
   const script = loadScript(project)
   const formats = options.formats ?? ['png', 'pdf', 'cbz']
@@ -84,7 +134,9 @@ export async function runAssemble(project: Project, report: Reporter, options: A
   try {
     const context = await browser.newContext({
       viewport: { width: project.config.page.width, height: project.config.page.height },
-      deviceScaleFactor: 1,
+      // The layout stays in CSS pixels; only the device pixels double. That
+      // is what makes the lettering redraw sharp instead of being enlarged.
+      deviceScaleFactor: project.config.page.scale,
     })
     const tab = await context.newPage()
     await route(tab, project)
@@ -95,7 +147,9 @@ export async function runAssemble(project: Project, report: Reporter, options: A
       for (const panel of page.panels) {
         energy.set(panel.id, energyMap(readFileSync(join(project.panelsDir, `${panel.id}.png`))))
       }
-      const html = pageHtml(page, number, script.title, project.config, energy)
+      // eslint-disable-next-line no-await-in-loop
+      const sources = await upscalePanels(project, page, report)
+      const html = pageHtml(page, number, script.title, project.config, energy, sources)
       const htmlName = `page-${String(number).padStart(2, '0')}.html`
       writeFileSync(join(project.buildDir, htmlName), html)
       // One tab, one page at a time: the pages share the browser, not the work.
@@ -117,6 +171,8 @@ export async function runAssemble(project: Project, report: Reporter, options: A
       .sort()
     if (formats.includes('pdf')) {
       writeFileSync(join(project.buildDir, 'book.html'), bookHtml(sheets, script.title, project.config))
+      // The PDF keeps its inch size whatever the pixel density: a retina page
+      // prints at a higher DPI rather than on a bigger sheet.
       await tab.goto(`${ORIGIN}/build/book.html`, { waitUntil: 'load' })
       const pdf = join(project.outDir, 'book.pdf')
       await tab.pdf({ path: pdf, printBackground: true, preferCSSPageSize: true })

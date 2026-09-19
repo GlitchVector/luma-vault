@@ -26,6 +26,24 @@ export class MockRenderer implements Renderer {
     return { png: drawPlaceholder(request), info: { mock: true } }
   }
 
+  /** Nearest-neighbour, so a retina page can be tested without a GPU and
+   *  the result is still deterministic. */
+  async upscale(png: Buffer, scale: number): Promise<Buffer> {
+    const source = PNG.sync.read(png)
+    const out = new PNG({ width: Math.round(source.width * scale), height: Math.round(source.height * scale) })
+    for (let y = 0; y < out.height; y++) {
+      for (let x = 0; x < out.width; x++) {
+        const from = (Math.min(source.height - 1, Math.floor(y / scale)) * source.width + Math.min(source.width - 1, Math.floor(x / scale))) * 4
+        const to = (y * out.width + x) * 4
+        out.data[to] = source.data[from]!
+        out.data[to + 1] = source.data[from + 1]!
+        out.data[to + 2] = source.data[from + 2]!
+        out.data[to + 3] = 255
+      }
+    }
+    return PNG.sync.write(out)
+  }
+
   async inpaint(request: InpaintRequest, onProgress?: Progress): Promise<RenderResult> {
     onProgress?.(1, 0)
     return { png: paintUnderMask(request), info: { mock: true, inpaint: true } }

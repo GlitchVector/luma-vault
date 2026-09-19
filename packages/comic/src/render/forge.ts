@@ -110,6 +110,28 @@ export class ForgeRenderer implements Renderer {
     }
   }
 
+  /**
+   * Forge's extras endpoint, which runs an ESRGAN-family model rather than
+   * the sampler: no seed, no prompt, no chance of it inventing a second
+   * head the way a high-resolution re-sample can.
+   */
+  async upscale(png: Buffer, scale: number, model: string): Promise<Buffer> {
+    const answer = await this.call<{ image?: string }>('/sdapi/v1/extra-single-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image: png.toString('base64'),
+        resize_mode: 0,
+        upscaling_resize: scale,
+        upscaler_1: model,
+        upscale_first: false,
+      }),
+      signal: AbortSignal.timeout(this.config.timeout_s * 1000),
+    })
+    if (!answer.image) throw new Error(`Forge's upscaler "${model}" returned no image`)
+    return Buffer.from(answer.image.replace(/^data:image\/\w+;base64,/, ''), 'base64')
+  }
+
   private async watchProgress(onProgress: Progress, signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       // eslint-disable-next-line no-await-in-loop

@@ -9,7 +9,8 @@
     "steps": 28,
     "cfg": 5,
     "save_to_forge": true,
-    "timeout_s": 900
+    "timeout_s": 900,
+    "upscaler": "R-ESRGAN 4x+ Anime6B"
   },
   "prompt": {
     "quality": "masterpiece, best quality",
@@ -19,7 +20,8 @@
   },
   "page": {
     "width": 2000,
-    "height": 3000
+    "height": 3000,
+    "scale": 2
   },
   "qa": {
     "max_attempts": 3,

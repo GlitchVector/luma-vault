@@ -120,6 +120,44 @@ export const BUCKETS: ReadonlyArray<readonly [number, number]> = [
   [1536, 640],
 ]
 
+
+/** What the stylesheet needs to lay a page out, and the renderer needs to
+ *  know how big a panel really is. */
+export interface PageBox {
+  width: number
+  height: number
+  margin: number
+  gutter: number
+}
+
+/**
+ * How big a panel's cell actually is, in CSS pixels.
+ *
+ * The grid is the page minus its margins, minus a gutter between every pair
+ * of tracks, shared out by the track fractions. The upscaler needs this:
+ * enlarging a panel by the device scale alone leaves it short, because a
+ * panel is drawn at the sampler's comfortable size rather than the cell's.
+ */
+export function cellPixels(page: Page, index: number, config: { page: PageBox }): { width: number; height: number } {
+  const grid = resolveGrid(page)
+  const span = resolveSpans(page)[index]!
+  const inner = {
+    width: config.page.width - 2 * config.page.margin,
+    height: config.page.height - 2 * config.page.margin,
+  }
+  const columns = trackFractions(grid.columns).length
+  const rows = trackFractions(grid.rows).length
+  const usable = {
+    width: inner.width - config.page.gutter * (columns - 1),
+    height: inner.height - config.page.gutter * (rows - 1),
+  }
+  const spanned = { col: lineRange(span.col), row: lineRange(span.row) }
+  return {
+    width: usable.width * coverage(grid.columns, span.col) + config.page.gutter * (spanned.col.end - spanned.col.start - 1),
+    height: usable.height * coverage(grid.rows, span.row) + config.page.gutter * (spanned.row.end - spanned.row.start - 1),
+  }
+}
+
 /**
  * The size to render a panel at: the nearest bucket's pixel budget, but at
  * the CELL's exact aspect rather than the bucket's.
@@ -131,6 +169,11 @@ export const BUCKETS: ReadonlyArray<readonly [number, number]> = [
  * Multiples of 8 are what the sampler needs, and they land within about a
  * percent of any aspect, so nothing meaningful is cropped.
  */
+export function sizeForCellBox(page: Page, index: number, box: PageBox): { width: number; height: number } {
+  const cell = cellPixels(page, index, { page: box })
+  return sizeForCell(cell.width / cell.height)
+}
+
 export function sizeForCell(aspect: number): { width: number; height: number } {
   const bucket = bucketFor(aspect)
   const budget = bucket.width * bucket.height

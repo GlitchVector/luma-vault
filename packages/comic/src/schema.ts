@@ -58,6 +58,9 @@ export const forgeConfigSchema = z.object({
   save_to_forge: z.boolean().default(true),
   /** Seconds a single txt2img may take before the run gives up on it. */
   timeout_s: z.number().min(10).default(900),
+  /** Which of Forge's upscalers enlarges a panel for a retina page. The
+   *  anime models are the right ones for this art; see `/sdapi/v1/upscalers`. */
+  upscaler: z.string().default('R-ESRGAN 4x+ Anime6B'),
 })
 
 export const promptConfigSchema = z.object({
@@ -83,8 +86,22 @@ export const promptConfigSchema = z.object({
 })
 
 export const pageConfigSchema = z.object({
+  /** The page in CSS pixels. 2000x3000 is 6.67 x 10 inches at 300 DPI,
+   *  which is a standard comic trim, so the PDF prints correctly. */
   width: z.number().int().min(100).default(2000),
   height: z.number().int().min(100).default(3000),
+  /**
+   * Device pixels per CSS pixel. 2 is a retina page: the same layout at
+   * twice the resolution, so the lettering is redrawn sharp rather than
+   * enlarged, and the panels are upscaled by `forge.upscaler` first so they
+   * are native at that size instead of stretched by the browser.
+   */
+  scale: z.number().min(1).max(4).default(1),
+  /** The paper edge and the space between panels, in CSS pixels. Here as
+   *  well as in `theme.css` because the upscaler has to know how big a cell
+   *  really is; `page.ts` injects these so the two cannot drift. */
+  margin: z.number().int().min(0).default(60),
+  gutter: z.number().int().min(0).default(28),
 })
 
 export const qaConfigSchema = z.object({

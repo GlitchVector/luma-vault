@@ -11,6 +11,7 @@
 
 import { resolveGrid, resolveSpans } from '../layouts.ts'
 import type { EnergyMap } from './energy.ts'
+export { cellPixels } from '../layouts.ts'
 import type { Anchor, Config, Dialogue, Page, Point } from '../schema.ts'
 
 export const ORIGIN = 'http://comic.local'
@@ -51,12 +52,17 @@ function balloonHtml(line: Dialogue): string {
  *  balloons sit at their anchors, which is how this worked before. */
 export type PanelEnergy = Map<string, EnergyMap>
 
+/** Panel id to the URL its picture is served from, when it is not the
+ *  plain `/panels/<id>.png` — a retina page points at the upscaled copy. */
+export type PanelSources = Map<string, string>
+
 export function pageHtml(
   page: Page,
   pageNumber: number,
   title: string,
   config: Pick<Config, 'page'>,
   energy?: PanelEnergy,
+  sources?: PanelSources,
 ): string {
   const grid = resolveGrid(page)
   const spans = resolveSpans(page)
@@ -71,7 +77,7 @@ export function pageHtml(
       const map = energy?.get(panel.id)
       const busy = map ? ` data-energy="${map.cols},${map.rows},${map.cells}"` : ''
       return `<figure class="panel" data-id="${panel.id}"${busy} style="grid-column:${span.col};grid-row:${span.row};${clip}">
-  <img src="${ORIGIN}/panels/${panel.id}.png" alt="">
+  <img src="${sources?.get(panel.id) ?? `${ORIGIN}/panels/${panel.id}.png`}" alt="">
 ${balloons}
 ${sfx}
 </figure>`
@@ -84,7 +90,7 @@ ${sfx}
 <meta charset="utf-8">
 <title>${escape(title)} — page ${pageNumber}</title>
 <link rel="stylesheet" href="${ORIGIN}/assets/theme.css">
-<style>:root { --page-w: ${config.page.width}px; --page-h: ${config.page.height}px; }</style>
+<style>:root { --page-w: ${config.page.width}px; --page-h: ${config.page.height}px; --margin: ${config.page.margin}px; --gutter: ${config.page.gutter}px; }</style>
 </head>
 <body>
 <div class="page" data-page="${pageNumber}">

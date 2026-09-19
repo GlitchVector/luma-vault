@@ -54,3 +54,26 @@ describe('the energy map', () => {
     expect(map2.cells).toBe('0'.repeat(ENERGY_COLS * ENERGY_ROWS))
   })
 })
+
+import { cellPixels } from './page.ts'
+import type { Page } from '../schema.ts'
+
+describe('cell geometry', () => {
+  const config = { page: { width: 2000, height: 3000, scale: 2, margin: 60, gutter: 28 } }
+  const panel = (id: string) => ({ id, camera: 'x', scene: 'y', pose: [], characters: [], reserve_space: 'none' as const, dialogue: [], sfx: [] })
+
+  it('measures a cell the way the stylesheet lays it out', () => {
+    const page: Page = { layout: 'grid-2x2', panels: [panel('a'), panel('b'), panel('c'), panel('d')] }
+    const cell = cellPixels(page, 0, config)
+    // (2000 - 120 - 28) / 2 and (3000 - 120 - 28) / 2
+    expect(Math.round(cell.width)).toBe(926)
+    expect(Math.round(cell.height)).toBe(1426)
+  })
+
+  it('gives a spanning panel the gutter it swallows', () => {
+    const page: Page = { layout: 'hero-top', panels: [panel('a'), panel('b'), panel('c')] }
+    const wide = cellPixels(page, 0, config)
+    // Two columns plus the gutter between them: the full content width.
+    expect(Math.round(wide.width)).toBe(1880)
+  })
+})
