@@ -13,6 +13,11 @@ import { z } from 'zod'
 
 export const DEFAULT_ROOT = 'D:\\Development\\comic-studio'
 
+/** A path the person typed, against the directory they typed it in. */
+export function resolveUserPath(given: string): string {
+  return isAbsolute(given) ? given : resolve(process.env['INIT_CWD'] ?? process.cwd(), given)
+}
+
 export function studioRoot(given?: string): string {
   const root = given ?? process.env['STUDIO_ROOT'] ?? DEFAULT_ROOT
   return isAbsolute(root) ? root : resolve(process.env['INIT_CWD'] ?? process.cwd(), root)

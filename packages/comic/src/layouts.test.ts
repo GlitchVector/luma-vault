@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LAYOUTS, bucketFor, cellAspect, coverage, defaultLayoutFor, lineRange, resolveGrid, resolveSpans, trackFractions } from './layouts.ts'
+import { LAYOUTS, bucketFor, cellAspect, coverage, defaultLayoutFor, lineRange, resolveGrid, resolveSpans, sizeForCell, trackFractions } from './layouts.ts'
 import type { Page } from './schema.ts'
 
 const panel = (id: string) => ({
@@ -81,5 +81,51 @@ describe('buckets', () => {
 
   it('a square cell is the square bucket', () => {
     expect(bucketFor(1)).toEqual({ width: 1024, height: 1024 })
+  })
+})
+
+describe('render size', () => {
+  const cells = [
+    ['a wide hero on a 2:3 page', 2000 / 1500],
+    ['a half-width cell', 1000 / 1500],
+    ['a square cell', 1],
+    ['a tall narrow cell', 500 / 1500],
+  ] as const
+
+  it('matches the cell aspect closely enough that the page crops nothing visible', () => {
+    for (const [what, aspect] of cells) {
+      const size = sizeForCell(aspect)
+      const error = Math.abs(size.width / size.height - aspect) / aspect
+      // The page would crop this fraction away; the old bucket cost 4%.
+      expect(error, what).toBeLessThan(0.012)
+    }
+  })
+
+  it('keeps both sides on multiples of 8, which is what the sampler needs', () => {
+    for (const [what, aspect] of cells) {
+      const size = sizeForCell(aspect)
+      expect(size.width % 8, what).toBe(0)
+      expect(size.height % 8, what).toBe(0)
+    }
+  })
+
+  it('stays near the bucket it replaces, so quality does not drift', () => {
+    for (const [what, aspect] of cells) {
+      const size = sizeForCell(aspect)
+      const bucket = bucketFor(aspect)
+      const ratio = (size.width * size.height) / (bucket.width * bucket.height)
+      expect(ratio, what).toBeGreaterThan(0.85)
+      expect(ratio, what).toBeLessThan(1.15)
+    }
+  })
+
+  it('beats the bucket on the 4:3 hero cell that was losing its heads', () => {
+    const aspect = 2000 / 1500
+    const bucket = bucketFor(aspect)
+    const bucketError = Math.abs(bucket.width / bucket.height - aspect) / aspect
+    const size = sizeForCell(aspect)
+    const sizeError = Math.abs(size.width / size.height - aspect) / aspect
+    expect(bucketError).toBeGreaterThan(0.03)
+    expect(sizeError).toBeLessThan(bucketError / 3)
   })
 })

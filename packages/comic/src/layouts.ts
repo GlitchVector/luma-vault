@@ -120,6 +120,42 @@ export const BUCKETS: ReadonlyArray<readonly [number, number]> = [
   [1536, 640],
 ]
 
+/**
+ * The size to render a panel at: the nearest bucket's pixel budget, but at
+ * the CELL's exact aspect rather than the bucket's.
+ *
+ * A bucket is a coarse step, so a 4:3 cell was rendered at 1152x896 (1.286)
+ * and the page's `object-fit: cover` then threw away 4% of it — off the top
+ * and bottom, on a render that already had the character's head at the very
+ * edge. Worse, QA measured the whole file while the reader saw the crop.
+ * Multiples of 8 are what the sampler needs, and they land within about a
+ * percent of any aspect, so nothing meaningful is cropped.
+ */
+export function sizeForCell(aspect: number): { width: number; height: number } {
+  const bucket = bucketFor(aspect)
+  const budget = bucket.width * bucket.height
+  let best = { width: bucket.width, height: bucket.height }
+  let bestError = Infinity
+  // A few steps either side of the ideal, so both dimensions stay on 8 and
+  // the total stays near the budget the checkpoint was trained around.
+  const ideal = Math.sqrt(budget * aspect)
+  for (let step = -4; step <= 4; step++) {
+    const width = Math.round((ideal + step * 8) / 8) * 8
+    if (width < 256) continue
+    const height = Math.round(width / aspect / 8) * 8
+    if (height < 256) continue
+    const shape = Math.abs(width / height - aspect) / aspect
+    const size = Math.abs(width * height - budget) / budget
+    // Shape is what causes a crop; total pixels only affect quality a little.
+    const error = shape * 10 + size
+    if (error < bestError) {
+      bestError = error
+      best = { width, height }
+    }
+  }
+  return best
+}
+
 /** The bucket whose aspect is nearest — in log space, so 2:1 and 1:2 are
  *  equally far from square. */
 export function bucketFor(aspect: number): { width: number; height: number } {

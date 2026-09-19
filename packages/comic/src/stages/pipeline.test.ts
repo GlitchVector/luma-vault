@@ -69,8 +69,11 @@ describe('panels', () => {
     const project = openProject(dir)
     const plans = await runPanels(project, report)
     expect(plans.map((p) => p.seed)).toEqual([8812, 8822, 8832])
-    // The hero cell is landscape, the two below are portrait.
-    expect(plans.map((p) => `${p.request.width}x${p.request.height}`)).toEqual(['1152x896', '832x1216', '832x1216'])
+    // Each panel is rendered at its CELL's aspect, not the nearest bucket,
+    // so `object-fit: cover` on the page has nothing to crop away.
+    expect(plans.map((p) => `${p.request.width}x${p.request.height}`)).toEqual(['1184x888', '816x1224', '816x1224'])
+    expect(1184 / 888).toBeCloseTo(2000 / 1500, 3)
+    expect(816 / 1224).toBeCloseTo(1000 / 1500, 3)
     for (const plan of plans) {
       expect(existsSync(plan.pngPath)).toBe(true)
       const sidecar = JSON.parse(readFileSync(plan.sidecarPath, 'utf8'))

@@ -108,7 +108,9 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center;
+  /* Anchored to the top, not the middle: when a panel and its cell differ
+   * even slightly, a comic would rather lose the floor than a head. */
+  object-position: 50% 0%;
 }
 
 /* ---- Balloons -------------------------------------------------------- */

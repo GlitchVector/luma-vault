@@ -18,6 +18,7 @@
  *   direct <comic> <panel_NNN> "<instruction>" [--dry-run]
  *   lock <comic> <panel_NNN> <name…> / unlock …
  *   state <comic> <panel_NNN> <STATE>                  the person moves a panel; REVIEW → APPROVED is only ever this
+ *   export <comic> [dir]                               → a comic project for `pnpm comic panels <dir>`
  *   continuity <comic> [scene_NNN|panel_NNN]           warnings, never edits
  *   cliches <comic> <scene_NNN|panel_NNN>              criticism, never edits
  *
@@ -44,11 +45,12 @@ import {
 } from './briefs.ts'
 import { approve, pass, writeProposals } from './canon.ts'
 import { assemble, render, type Task } from './context.ts'
+import { defaultExportDir, exportComic } from './export.ts'
 import { DIRECTOR_BRIEF, PATCH_JSON_SCHEMA, applyPatch, describe, lockPath, patchReplySchema } from './director.ts'
 import { ClaudeCliModel } from './model/claude-cli.ts'
 import { extractJson, type StoryModel } from './model/model.ts'
 import { OpenAiCompatibleModel } from './model/openai-compatible.ts'
-import { assertId, comicDir, initStudio, openStudio, scaffoldCharacter, studioRoot, writeText, type Studio } from './root.ts'
+import { assertId, comicDir, initStudio, openStudio, resolveUserPath, scaffoldCharacter, studioRoot, writeText, type Studio } from './root.ts'
 import { seedAri } from './seed-ari.ts'
 import {
   PANEL_STATES,
@@ -84,7 +86,7 @@ const { values, positionals } = parseArgs({
 
 function usage(): never {
   console.error(
-    `usage: studio <init|status|context|character|comic|story|scene|panels|direct|lock|unlock|state|continuity|cliches> …
+    `usage: studio <init|status|context|character|comic|story|scene|panels|direct|lock|unlock|state|export|continuity|cliches> …
   init [root] [--no-ari]            character new <id> --name "…"
   status [comic]                    character brainstorm <id> "<ask>" [--count N]
   context <task> …                  character approve <id> <file|latest> <n,n> --into <file>
@@ -92,7 +94,8 @@ function usage(): never {
   story brainstorm <comic> "<ask>"  story approve <comic> <file|latest> <n,n> --into concept|outline|story|continuity
   scene draft <comic> "<direction>" panels plan <comic> <scene_NNN> [--count N]
   direct <comic> <panel> "<instruction>" [--dry-run]     lock|unlock <comic> <panel> <name…>
-  state <comic> <panel> <STATE>     continuity <comic> [scene|panel]     cliches <comic> <scene|panel>
+  state <comic> <panel> <STATE>     export <comic> [dir]                 cliches <comic> <scene|panel>
+  continuity <comic> [scene|panel]
   --root <dir> overrides STUDIO_ROOT`,
   )
   process.exit(2)
@@ -343,6 +346,19 @@ async function main(): Promise<void> {
       panel.status = state.data
       writePanel(studio, comic, panel)
       console.log(`${panelId}: ${before} → ${state.data}`)
+      return
+    }
+    case 'export': {
+      const comic = need(1, 'comic id')
+      const dir = positionals[2] ? resolveUserPath(positionals[2]) : defaultExportDir(studio, comic)
+      const done = exportComic(studio, comic, dir, { perPage: values.count ? Number(values.count) : undefined })
+      console.log(`${done.panels} panels on ${done.pages} page(s) → ${done.dir}`)
+      console.log(`cast: ${done.characters.join(', ') || '(nobody)'}`)
+      for (const s of done.skipped) console.log(`  skipped ${s.id}: ${s.why}`)
+      console.log(`
+render it with:
+  pnpm comic panels ${done.dir}
+  pnpm comic assemble ${done.dir}`)
       return
     }
     case 'continuity': {

@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { requestHash, type RenderRequest, type Sidecar } from '../cache.ts'
-import { bucketFor, cellAspect, resolveGrid, resolveSpans } from '../layouts.ts'
+import { bucketFor, cellAspect, resolveGrid, resolveSpans, sizeForCell } from '../layouts.ts'
 import { buildPrompt } from '../prompt.ts'
 import { DUMMIES, plateSizeFor, type PlateBackend } from '../plates/plate.ts'
 import { maskForColour, maskPng } from '../plates/mask.ts'
@@ -87,11 +87,14 @@ export function planPanel(
 
   const grid = resolveGrid(page)
   const span = resolveSpans(page)[where.panelIndex]!
-  let { width, height } = bucketFor(cellAspect(grid, span, project.config.page.width, project.config.page.height))
+  const aspect = cellAspect(grid, span, project.config.page.width, project.config.page.height)
+  // The cell's own aspect, so the page has nothing to crop.
+  let { width, height } = sizeForCell(aspect)
   if (platesEnabled(project)) {
     // The plate is the init image, so the request is the plate's size - one
     // of the three the hosted model draws - not the SDXL bucket.
-    const [w, h] = plateSizeFor(width, height).split('x').map(Number) as [number, number]
+    const bucket = bucketFor(aspect)
+    const [w, h] = plateSizeFor(bucket.width, bucket.height).split('x').map(Number) as [number, number]
     width = w
     height = h
   }
