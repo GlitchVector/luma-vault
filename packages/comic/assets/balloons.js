@@ -271,16 +271,31 @@
             svg.appendChild(circle)
           }
         } else {
-          const edge = exitEdge(spot, target)
-          /* Stop short of the speaker so the point never lands on a face. */
-          const pull = 0.78
+          /*
+           * A tail POINTS at the speaker, it does not reach her. Its length
+           * is a property of the balloon — a little under its own height —
+           * not of how far away she happens to be. Interpolating toward the
+           * target instead produced tails the length of the panel once
+           * balloons were free to move away from what they point at.
+           */
+          const cx = w / 2
+          const cy = h / 2
+          const dx = target.x - cx
+          const dy = target.y - cy
+          const away = Math.hypot(dx, dy) || 1
+          const ux = dx / away
+          const uy = dy / away
+          /* Where the centre-to-speaker ray leaves the bubble. */
+          const toSide = Math.abs(ux) > 1e-6 ? cx / Math.abs(ux) : Infinity
+          const toTopOrBottom = Math.abs(uy) > 1e-6 ? cy / Math.abs(uy) : Infinity
+          const edgeAt = Math.min(toSide, toTopOrBottom)
+          const reach = Math.min(Math.max(0, away - edgeAt) * 0.7, Math.max(30, h * 0.8))
+          const tipDistance = edgeAt + reach
           tail = {
-            edge: edge,
-            base: Math.max(14, Math.min(30, h * 0.3)),
-            tip: {
-              x: (w / 2 + (target.x - w / 2) * pull).toFixed(1) * 1,
-              y: (h / 2 + (target.y - h / 2) * pull).toFixed(1) * 1,
-            },
+            edge: exitEdge(spot, target),
+            /* Narrow enough to taper over that reach. */
+            base: Math.max(10, Math.min(24, Math.min(h * 0.26, reach * 0.6))),
+            tip: { x: Number((cx + ux * tipDistance).toFixed(1)), y: Number((cy + uy * tipDistance).toFixed(1)) },
           }
         }
       }
