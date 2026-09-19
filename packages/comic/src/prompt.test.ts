@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildPrompt, reserveClause, subjectTags, weighted } from './prompt.ts'
+import { buildPrompt, isWideShot, reserveClause, scaleLora, subjectTags, weighted } from './prompt.ts'
 import type { Character, Panel } from './schema.ts'
 
 const ari: Character = {
@@ -17,6 +17,8 @@ const config = {
     negative: 'worst quality, lowres',
     negative_lettering: 'speech bubble, english text',
     camera_weight: 1,
+    angle_weight: 1,
+    wide_lora_scale: 1,
   },
 }
 
@@ -47,7 +49,7 @@ describe('the panel prompt', () => {
   })
 
   it('weights the camera words, because unweighted framing loses to the LoRA', () => {
-    const pushy = { prompt: { ...config.prompt, camera_weight: 1.35 } }
+    const pushy = { prompt: { ...config.prompt, camera_weight: 1.35, angle_weight: 1.35 } }
     const { prompt } = buildPrompt(panel, { ari }, pushy)
     expect(prompt).toContain('(from below:1.35), (cowboy shot:1.35)')
     // The scene is never weighted: only the camera has to fight the LoRA.
@@ -56,6 +58,32 @@ describe('the panel prompt', () => {
     // A script that weighted a term itself keeps its own number.
     expect(weighted('(close-up:1.6), from side', 1.35)).toBe('(close-up:1.6), (from side:1.35)')
     expect(weighted('wide shot', 1)).toBe('wide shot')
+  })
+
+  it('weights the angle far more gently than the framing', () => {
+    // `from below` at 1.35 does not read as a low camera, it reads as a
+    // giant. The owner's first studio page came back forty metres tall.
+    const pushy = { prompt: { ...config.prompt, camera_weight: 1.35, angle_weight: 1.1 } }
+    const { prompt } = buildPrompt({ ...panel, camera: 'wide shot, full body, from below' }, { ari }, pushy)
+    expect(prompt).toContain('(wide shot:1.35)')
+    expect(prompt).toContain('(full body:1.35)')
+    expect(prompt).toContain('(from below:1.1)')
+    expect(weighted('close-up, from above', 1.35, 1.1)).toBe('(close-up:1.35), (from above:1.1)')
+  })
+
+  it('eases the LoRA on a wide shot so she reads at human scale', () => {
+    const scaled = { prompt: { ...config.prompt, wide_lora_scale: 0.6 } }
+    const wide = buildPrompt({ ...panel, camera: 'wide shot, from below' }, { ari }, scaled).prompt
+    expect(wide).toContain('<lora:ari_adopt_v1:0.72>')
+    // A close-up is about her, so she keeps her full strength.
+    const close = buildPrompt({ ...panel, camera: 'close-up' }, { ari }, scaled).prompt
+    expect(close).toContain('<lora:ari_adopt_v1:1.2>')
+
+    expect(isWideShot('wide shot, from below')).toBe(true)
+    expect(isWideShot('establishing shot')).toBe(true)
+    expect(isWideShot('close-up, from above')).toBe(false)
+    expect(scaleLora('ari_adopt_v1:1.2', 0.6)).toBe('ari_adopt_v1:0.72')
+    expect(scaleLora('ari_adopt_v1:1.2', 1)).toBe('ari_adopt_v1:1.2')
   })
 
   it('ends with the clause reserving the lettering space', () => {

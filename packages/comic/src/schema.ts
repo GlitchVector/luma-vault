@@ -70,9 +70,16 @@ export const promptConfigSchema = z.object({
   /** Lettering words. Added to every negative so the model does not draw
    *  the balloons the assembler is about to add. */
   negative_lettering: z.string().default('speech bubble, english text, multiple views'),
-  /** How hard to push the camera words. 1 disables weighting. See
+  /** How hard to push the framing words. 1 disables weighting. See
    *  `prompt.ts` for why the default is not 1. */
   camera_weight: z.number().min(1).max(2).default(1.35),
+  /** The angle words are weighted separately and far more gently: pushed as
+   *  hard as the framing, `from below` stops meaning "a low camera" and
+   *  starts meaning "look up at a giant". */
+  angle_weight: z.number().min(1).max(2).default(1.1),
+  /** What a character's LoRA weight is multiplied by on a wide shot, so the
+   *  scene has room and she reads at human scale. 1 disables it. */
+  wide_lora_scale: z.number().min(0.1).max(1).default(0.6),
 })
 
 export const pageConfigSchema = z.object({
