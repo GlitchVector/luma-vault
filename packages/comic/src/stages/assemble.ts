@@ -12,7 +12,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { extname, join } from 'node:path'
 import { zipSync } from 'fflate'
 import { chromium, type Browser, type Page as BrowserPage } from 'playwright-core'
-import { ORIGIN, bookHtml, pageHtml } from '../assemble/page.ts'
+import { ORIGIN, bookHtml, pageHtml, type PanelEnergy } from '../assemble/page.ts'
+import { energyMap } from '../assemble/energy.ts'
 import { ASSETS_DIR, loadScript, type Project } from '../project.ts'
 import type { Reporter } from '../report.ts'
 
@@ -89,7 +90,12 @@ export async function runAssemble(project: Project, report: Reporter, options: A
     await route(tab, project)
 
     for (const { page, number } of pages) {
-      const html = pageHtml(page, number, script.title, project.config)
+      // Where the art is quiet, so a balloon can avoid the face it belongs to.
+      const energy: PanelEnergy = new Map()
+      for (const panel of page.panels) {
+        energy.set(panel.id, energyMap(readFileSync(join(project.panelsDir, `${panel.id}.png`))))
+      }
+      const html = pageHtml(page, number, script.title, project.config, energy)
       const htmlName = `page-${String(number).padStart(2, '0')}.html`
       writeFileSync(join(project.buildDir, htmlName), html)
       // One tab, one page at a time: the pages share the browser, not the work.

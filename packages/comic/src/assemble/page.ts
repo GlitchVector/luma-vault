@@ -10,6 +10,7 @@
  */
 
 import { resolveGrid, resolveSpans } from '../layouts.ts'
+import type { EnergyMap } from './energy.ts'
 import type { Anchor, Config, Dialogue, Page, Point } from '../schema.ts'
 
 export const ORIGIN = 'http://comic.local'
@@ -46,7 +47,17 @@ function balloonHtml(line: Dialogue): string {
   return `<div class="balloon ${line.kind}" data-anchor="${line.anchor}"${tailAttr} data-speaker="${escape(line.speaker)}"><span class="text">${escape(line.text)}</span></div>`
 }
 
-export function pageHtml(page: Page, pageNumber: number, title: string, config: Pick<Config, 'page'>): string {
+/** Busyness per panel id, from `energy.ts`. Optional: without it the
+ *  balloons sit at their anchors, which is how this worked before. */
+export type PanelEnergy = Map<string, EnergyMap>
+
+export function pageHtml(
+  page: Page,
+  pageNumber: number,
+  title: string,
+  config: Pick<Config, 'page'>,
+  energy?: PanelEnergy,
+): string {
   const grid = resolveGrid(page)
   const spans = resolveSpans(page)
   const panels = page.panels
@@ -57,7 +68,9 @@ export function pageHtml(page: Page, pageNumber: number, title: string, config: 
       const sfx = panel.sfx
         .map((s) => `<div class="sfx" data-anchor="${s.anchor}" style="--rotate:${s.rotate}deg">${escape(s.text)}</div>`)
         .join('\n')
-      return `<figure class="panel" data-id="${panel.id}" style="grid-column:${span.col};grid-row:${span.row};${clip}">
+      const map = energy?.get(panel.id)
+      const busy = map ? ` data-energy="${map.cols},${map.rows},${map.cells}"` : ''
+      return `<figure class="panel" data-id="${panel.id}"${busy} style="grid-column:${span.col};grid-row:${span.row};${clip}">
   <img src="${ORIGIN}/panels/${panel.id}.png" alt="">
 ${balloons}
 ${sfx}
