@@ -24,8 +24,8 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 
 use crate::types::{
-    ComicEvent, ComicPage, ComicPanel, ComicProject, ComicRunOptions, ComicStatus, ComicSummary,
-    ComicVerdict,
+    ComicEvent, ComicInspection, ComicPage, ComicPanel, ComicProject, ComicRunOptions, ComicSettings,
+    ComicStatus, ComicSummary, ComicVerdict,
 };
 
 /// The CLI's entry point, in a dev tree or a bundle. Mirrors `patreon::resolve`.
@@ -166,6 +166,17 @@ pub fn list(root: &Path) -> Result<Vec<ComicSummary>> {
     Ok(comics)
 }
 
+/// A string array out of a JSON object, or empty. Missing and malformed are
+/// the same thing here: a verdict file nobody can read is not a reason to
+/// lose the panel it belongs to.
+fn strings(value: &serde_json::Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(|x| x.as_array())
+        .map(|f| f.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
 pub fn read(root: &Path, name: &str) -> Result<ComicProject> {
     let dir = project_dir(root, name)?;
     if !dir.is_dir() {
@@ -186,11 +197,10 @@ pub fn read(root: &Path, name: &str) -> Result<ComicProject> {
                 let verdict = read_json(&dir.join("qa").join(format!("{id}.json"))).map(|v| ComicVerdict {
                     ok: v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false),
                     attempt: v.get("attempt").and_then(|x| x.as_i64()).unwrap_or(0),
-                    failures: v
-                        .get("failures")
-                        .and_then(|x| x.as_array())
-                        .map(|f| f.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
-                        .unwrap_or_default(),
+                    failures: strings(&v, "failures"),
+                    // Notes are not failures and never retry, but they are
+                    // the only thing QA has to say about a panel it passed.
+                    notes: strings(&v, "notes"),
                 });
                 panels.push(ComicPanel {
                     id: id.to_string(),
@@ -227,10 +237,20 @@ pub fn read(root: &Path, name: &str) -> Result<ComicProject> {
             .collect();
         files.sort();
         for (index, file) in files.iter().enumerate() {
+            let number = index as i64 + 1;
+            let laid_out = mtime_ms(file);
+            // A page is a screenshot of its panels. If any of them is newer,
+            // the person is looking at art that has since been replaced —
+            // which is not something the panels themselves can show.
+            let stale = panels
+                .iter()
+                .filter(|panel| panel.page == number)
+                .any(|panel| panel.rendered_at.is_some_and(|drawn| drawn > laid_out));
             pages.push(ComicPage {
-                number: index as i64 + 1,
+                number,
                 path: file.to_string_lossy().to_string(),
-                rendered_at: mtime_ms(file),
+                rendered_at: laid_out,
+                stale,
             });
         }
     }
@@ -376,6 +396,82 @@ fn client(cli: &Path, repo_root: &Path) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command
+}
+
+/// Ask the pipeline what it would do, without doing it.
+///
+/// Synchronous and outside the `Runner`, because this answers a question
+/// rather than starting work: it reads files, talks to nothing, and takes
+/// about as long as node takes to start. It deliberately does NOT go through
+/// `start`, so it still answers while a render is running.
+pub fn inspect(cli: &Path, repo_root: &Path, root: &Path, name: &str) -> Result<ComicInspection> {
+    let dir = project_dir(root, name)?;
+    if !dir.is_dir() {
+        anyhow::bail!("there is no comic called \"{name}\"");
+    }
+    let output = client(cli, repo_root)
+        .arg("inspect")
+        .arg(&dir)
+        .arg("--json")
+        .output()
+        .context("could not start node — is it on PATH?")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let tail = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no output");
+        anyhow::bail!("comic inspect failed: {tail}");
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with('{'))
+        .context("comic inspect printed nothing to read")?;
+    serde_json::from_str(line).context("comic inspect printed something this app cannot read")
+}
+
+/// Write the four editable settings into the project's own
+/// `comic.config.json`, leaving every other key in it untouched.
+///
+/// The project file is an override laid over the package's, merged key by
+/// key at every depth, so writing `forge.hires.enabled` here does not cost
+/// the project its checkpoint or the package its defaults.
+pub fn save_settings(root: &Path, name: &str, settings: &ComicSettings) -> Result<()> {
+    if settings.checkpoint.trim().is_empty() {
+        anyhow::bail!("the checkpoint cannot be empty");
+    }
+    if !(1.0..=4.0).contains(&settings.page_scale) {
+        anyhow::bail!("the page scale has to be between 1 and 4");
+    }
+    if !(0.0..=1.0).contains(&settings.hires_denoise) {
+        anyhow::bail!("the hires denoise has to be between 0 and 1");
+    }
+    let dir = project_dir(root, name)?;
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("comic.config.json");
+    let mut config = read_json(&path).unwrap_or_else(|| serde_json::json!({}));
+    let object = config
+        .as_object_mut()
+        .context("comic.config.json in this project is not a JSON object")?;
+
+    {
+        let forge = object.entry("forge").or_insert_with(|| serde_json::json!({}));
+        let forge = forge.as_object_mut().context("\"forge\" in comic.config.json is not an object")?;
+        forge.insert("checkpoint".to_string(), serde_json::json!(settings.checkpoint.trim()));
+        let hires = forge.entry("hires").or_insert_with(|| serde_json::json!({}));
+        let hires = hires.as_object_mut().context("\"forge.hires\" in comic.config.json is not an object")?;
+        hires.insert("enabled".to_string(), serde_json::json!(settings.hires_enabled));
+        hires.insert("denoise".to_string(), serde_json::json!(settings.hires_denoise));
+    }
+    {
+        let page = object.entry("page").or_insert_with(|| serde_json::json!({}));
+        let page = page.as_object_mut().context("\"page\" in comic.config.json is not an object")?;
+        page.insert("scale".to_string(), serde_json::json!(settings.page_scale));
+    }
+
+    let mut text = serde_json::to_string_pretty(&config)?;
+    text.push('\n');
+    std::fs::write(&path, text)?;
+    Ok(())
 }
 
 const STAGES: [&str; 5] = ["script", "panels", "qa", "assemble", "all"];

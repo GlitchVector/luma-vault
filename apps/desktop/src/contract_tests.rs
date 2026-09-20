@@ -167,6 +167,13 @@ fn comic_statuses_match_the_shared_fixture() {
 }
 
 #[test]
+fn comic_inspections_match_the_shared_fixture() {
+    round_trip::<crate::types::ComicInspection>(include_str!(
+        "../../../contracts/comic-inspection.json"
+    ));
+}
+
+#[test]
 fn deviantart_summary_matches_the_shared_fixture() {
     round_trip::<crate::types::DeviantArtSummary>(include_str!(
         "../../../contracts/deviantart-summary.json"

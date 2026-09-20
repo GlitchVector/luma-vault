@@ -208,12 +208,18 @@ export type {
   ComicRunOptions,
   ComicEvent,
   ComicStatus,
+  ComicInspection,
+  ComicPanelStatus,
+  ComicSettings,
 } from './schemas.ts'
 export {
   comicSummarySchema,
   comicProjectSchema,
   comicRunOptionsSchema,
   comicStatusSchema,
+  comicInspectionSchema,
+  comicPanelStatusSchema,
+  comicSettingsSchema,
 } from './schemas.ts'
 export {
   COMIC_ANCHORS,

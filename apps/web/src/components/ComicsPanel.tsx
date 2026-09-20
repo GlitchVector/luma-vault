@@ -6,12 +6,15 @@ import {
   comicScriptSchema,
   type ComicDialogue,
   type ComicEvent,
+  type ComicInspection,
   type ComicPageSpec,
   type ComicPanelSpec,
   type ComicPanelState,
   type ComicProject,
+  type ComicPanelStatus,
   type ComicRunOptions,
   type ComicScript,
+  type ComicSettings,
   type ComicStatus,
   type ComicSummary,
 } from '@luma/core'
@@ -19,10 +22,12 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   comicCancel,
   comicCreate,
+  comicInspect,
   comicList,
   comicRead,
   comicRun,
   comicSave,
+  comicSaveSettings,
   comicStatus,
   fileUrl,
   forgeStatus,
@@ -145,6 +150,7 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
   const [comics, setComics] = useState<ComicSummary[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [project, setProject] = useState<ComicProject | null>(null)
+  const [inspection, setInspection] = useState<ComicInspection | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [step, setStep] = useState<Step>('story')
   const [newName, setNewName] = useState('')
@@ -195,6 +201,12 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
       setScriptError(parsed.error)
       setScriptDirty(false)
       setRawText(loaded.script ? JSON.stringify(loaded.script, null, 2) : '')
+      // Separate call, separate failure: it starts the CLI, and a machine
+      // without the pipeline beside it should still show the comic.
+      setInspection(null)
+      void comicInspect(name)
+        .then((found) => live.current && setInspection(found))
+        .catch(() => undefined)
     } catch (error) {
       if (live.current) setLoadError(String(error))
     }
@@ -328,6 +340,25 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
   }, [])
 
   const cast = useMemo(() => Object.keys(script?.characters ?? {}), [script])
+  const panelStatus = useMemo(
+    () => new Map<string, ComicPanelStatus>((inspection?.panels ?? []).map((panel) => [panel.id, panel])),
+    [inspection],
+  )
+  const saveSettings = useCallback(
+    async (settings: ComicSettings) => {
+      if (!selected) return
+      try {
+        await comicSaveSettings(selected, settings)
+        toast('settings saved')
+        // Changing any of these changes what a render would produce, so the
+        // panels that were current a moment ago may not be. Ask again.
+        await open(selected)
+      } catch (error) {
+        void showMessage(String(error), { title: 'Comics' })
+      }
+    },
+    [selected, open],
+  )
   const panelState = useMemo(() => new Map((project?.panels ?? []).map((panel) => [panel.id, panel])), [project])
   const lastEvent = events.at(-1)
   const rendering = useMemo(() => {
@@ -496,6 +527,7 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
                           setRawMode(true)
                         }
                       }}
+                      plates={inspection?.settings.plates ?? false}
                       onChange={updateScript}
                       onRender={() => void run({ stage: 'panels', page: null, panel: null, seed: null, attempt: null, force: false, noTagger: false })}
                       busy={busy}
@@ -510,9 +542,12 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
                     <PanelsView
                       script={script}
                       state={panelState}
+                      status={panelStatus}
+                      settings={inspection?.settings ?? null}
                       rendering={rendering}
                       busy={busy}
                       onRender={(options) => void run(options)}
+                      onSaveSettings={(settings) => void saveSettings(settings)}
                     />
                   )
                 ) : null}
@@ -554,6 +589,9 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
 interface ScriptEditorProps {
   script: ComicScript
   cast: string[]
+  /** Whether the hosted plate pass is on. Its fields are hidden when it is
+   *  not, rather than asking for words nothing reads. */
+  plates: boolean
   rawMode: boolean
   rawText: string
   scriptError: string | null
@@ -564,7 +602,7 @@ interface ScriptEditorProps {
   onRender: () => void
 }
 
-function ScriptEditor({ script, cast, rawMode, rawText, scriptError, busy, onRaw, onToggleRaw, onChange, onRender }: ScriptEditorProps) {
+function ScriptEditor({ script, cast, plates, rawMode, rawText, scriptError, busy, onRaw, onToggleRaw, onChange, onRender }: ScriptEditorProps) {
   const setPage = (pageIndex: number, update: (page: ComicPageSpec) => ComicPageSpec) =>
     onChange((previous) => ({
       ...previous,
@@ -602,6 +640,7 @@ function ScriptEditor({ script, cast, rawMode, rawText, scriptError, busy, onRaw
             page={page}
             pageNumber={pageIndex + 1}
             cast={cast}
+            plates={plates}
             onChange={(update) => setPage(pageIndex, update)}
             onRemove={() => onChange((previous) => ({ ...previous, pages: renumber(previous.pages.filter((_, index) => index !== pageIndex)) }))}
           />
@@ -628,11 +667,12 @@ interface PageEditorProps {
   page: ComicPageSpec
   pageNumber: number
   cast: string[]
+  plates: boolean
   onChange: (update: (page: ComicPageSpec) => ComicPageSpec) => void
   onRemove: () => void
 }
 
-const PageEditor = memo(function PageEditor({ page, pageNumber, cast, onChange, onRemove }: PageEditorProps) {
+const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, onChange, onRemove }: PageEditorProps) {
   const layoutName = typeof page.layout === 'string' ? page.layout : 'custom'
   const cells = typeof page.layout === 'string' ? COMIC_LAYOUTS[page.layout]?.cells.length : undefined
   const mismatch = cells !== undefined && cells !== page.panels.length
@@ -672,6 +712,7 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, onChange, 
             key={panel.id}
             panel={panel}
             cast={cast}
+            plates={plates}
             onChange={(update) => onChange((previous) => ({ ...previous, panels: previous.panels.map((p, i) => (i === index ? update(p) : p)) }))}
             onRemove={() => onChange((previous) => ({ ...previous, panels: previous.panels.filter((_, i) => i !== index) }))}
           />
@@ -684,11 +725,12 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, onChange, 
 interface PanelEditorProps {
   panel: ComicPanelSpec
   cast: string[]
+  plates: boolean
   onChange: (update: (panel: ComicPanelSpec) => ComicPanelSpec) => void
   onRemove: () => void
 }
 
-const PanelEditor = memo(function PanelEditor({ panel, cast, onChange, onRemove }: PanelEditorProps) {
+const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, onRemove }: PanelEditorProps) {
   const setLine = (index: number, patch: Partial<ComicDialogue>) =>
     onChange((previous) => ({ ...previous, dialogue: previous.dialogue.map((line, i) => (i === index ? { ...line, ...patch } : line)) }))
 
@@ -696,7 +738,26 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, onChange, onRemove 
     <div className="rounded-md border border-white/10 bg-black/30 p-2 text-xs">
       <div className="mb-1 flex items-center gap-2">
         <span className="font-mono text-zinc-400">{panel.id}</span>
-        <label className="ml-auto flex items-center gap-1 text-zinc-500">
+        <label
+          className="ml-auto flex items-center gap-1 text-zinc-500"
+          title="How many people QA should expect to see. Blank means as many as there are characters; set it when the shot has extras, or a crowd, or nobody."
+        >
+          figures
+          <input
+            type="number"
+            min={0}
+            value={panel.figures ?? ''}
+            placeholder={String(panel.characters.length)}
+            onChange={(event) =>
+              onChange((previous: ComicPanelSpec) => ({
+                ...previous,
+                figures: event.target.value === '' ? undefined : Math.max(0, Number(event.target.value)),
+              }))
+            }
+            className={cn(inputClass, 'w-14')}
+          />
+        </label>
+        <label className="flex items-center gap-1 text-zinc-500">
           space for lettering
           <select value={panel.reserve_space} onChange={(event) => onChange((previous) => ({ ...previous, reserve_space: event.target.value as ComicPanelSpec['reserve_space'] }))} className={selectClass}>
             <option value="none">none</option>
@@ -713,6 +774,7 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, onChange, onRemove 
       </div>
       <input value={panel.camera} onChange={(event) => onChange((previous) => ({ ...previous, camera: event.target.value }))} className={cn(inputClass, 'mb-1')} placeholder="camera: close-up, from below, cowboy shot…" title="Framing words the checkpoint knows" />
       <textarea value={panel.scene} onChange={(event) => onChange((previous) => ({ ...previous, scene: event.target.value }))} className={cn(inputClass, 'mb-1 min-h-14 resize-y')} placeholder="scene: setting, action, light — no names, no words spoken (only the local model reads this)" />
+      {plates ? (
       <input
         value={panel.setting ?? ''}
         onChange={(event) => onChange((previous) => ({ ...previous, setting: event.target.value || undefined }))}
@@ -720,6 +782,7 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, onChange, onRemove 
         placeholder="setting for the plate: the place and light in this shot, nobody in it (a hosted model reads this — keep it clean)"
         title="Sent to the hosted image model that draws the plate. The place, the light, the props. No nudity, no sexual content, no names."
       />
+      ) : null}
       <div className="mb-1 flex flex-wrap items-center gap-1">
         <span className="text-zinc-500">in the picture:</span>
         {cast.map((id) => {
@@ -737,7 +800,7 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, onChange, onRemove 
         })}
         {cast.length === 0 ? <span className="text-zinc-600">nobody</span> : null}
       </div>
-      {panel.characters.map((id, index) => (
+      {(plates ? panel.characters : []).map((id, index) => (
         <div key={id} className="mb-1 flex items-center gap-1">
           <span className="w-16 shrink-0 truncate text-zinc-500" title={`${id}'s stand-in in the plate: posture and gesture only, a hosted model reads it`}>
             pose · {id}
@@ -842,26 +905,34 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, onChange, onRemove 
 interface PanelsViewProps {
   script: ComicScript
   state: Map<string, ComicPanelState>
+  /** Whether each panel on disk is still what the script asks for. Empty
+   *  until the pipeline has answered, and on a machine without it. */
+  status: Map<string, ComicPanelStatus>
+  settings: ComicSettings | null
   rendering: ComicEvent | null
   busy: boolean
   onRender: (options: ComicRunOptions) => void
+  onSaveSettings: (settings: ComicSettings) => void
 }
 
 const baseRun: ComicRunOptions = { stage: 'panels', page: null, panel: null, seed: null, attempt: null, force: false, noTagger: false }
 
-function PanelsView({ script, state, rendering, busy, onRender }: PanelsViewProps) {
+function PanelsView({ script, state, status, settings, rendering, busy, onRender, onSaveSettings }: PanelsViewProps) {
   const total = script.pages.reduce((n, page) => n + page.panels.length, 0)
   const done = script.pages.reduce((n, page) => n + page.panels.filter((panel) => state.get(panel.id)?.path).length, 0)
   const checked = [...state.values()].filter((panel) => panel.verdict).length
   const failing = [...state.values()].filter((panel) => panel.verdict && !panel.verdict.ok).length
+  const noted = [...state.values()].filter((panel) => (panel.verdict?.notes.length ?? 0) > 0).length
+  const stale = [...status.values()].filter((panel) => panel.status === 'stale').length
 
   return (
     <section className="flex flex-col gap-4">
+      {settings ? <SettingsBar settings={settings} busy={busy} onSave={onSaveSettings} /> : null}
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" disabled={busy} onClick={() => onRender(baseRun)} title="Render every panel that is missing or whose prompt changed; the rest come from the cache">
-          Render {done < total ? `the missing ${total - done}` : 'changed panels'}
+        <Button variant="primary" disabled={busy} onClick={() => onRender(baseRun)} title="Render every panel that is missing or no longer matches the script; the rest come from the cache">
+          Render {done < total ? `the missing ${total - done}` : stale > 0 ? `the ${stale} changed` : 'changed panels'}
         </Button>
-        <Button disabled={busy || done === 0} onClick={() => onRender({ ...baseRun, stage: 'qa' })} title="Check every rendered panel for blank output, the wrong number of figures, anatomy tags and no room for the balloon; failures re-render at the next seed">
+        <Button disabled={busy || done === 0} onClick={() => onRender({ ...baseRun, stage: 'qa' })} title="Check every rendered panel for blank output and for the wrong number of figures; those re-render at the next seed. Anything else QA sees, such as no empty room where a balloon goes, is reported as a note and never re-renders.">
           Check (QA)
         </Button>
         <Button disabled={busy} onClick={() => onRender({ ...baseRun, force: true })} title="Render every panel again at its current seed, cache or not">
@@ -869,7 +940,13 @@ function PanelsView({ script, state, rendering, busy, onRender }: PanelsViewProp
         </Button>
         <span className="text-xs text-zinc-500">
           {done}/{total} rendered · {checked} checked{failing ? ` · ${failing} failing` : ''}
+          {noted ? ` · ${noted} with notes` : ''}
         </span>
+        {stale > 0 ? (
+          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300">
+            {stale === 1 ? '1 panel is' : `${stale} panels are`} not what the script now asks for
+          </span>
+        ) : null}
       </div>
       {script.pages.map((page, pageIndex) => (
         <div
@@ -888,6 +965,8 @@ function PanelsView({ script, state, rendering, busy, onRender }: PanelsViewProp
                 key={panel.id}
                 spec={panel}
                 state={state.get(panel.id)}
+                status={status.get(panel.id)}
+                plates={settings?.plates ?? false}
                 progress={rendering?.id === panel.id ? (rendering.progress ?? 0) : null}
                 busy={busy}
                 onNextSeed={() => onRender({ ...baseRun, page: pageIndex + 1, panel: panel.id, attempt: (state.get(panel.id)?.attempt ?? 0) + 1, force: true })}
@@ -901,16 +980,92 @@ function PanelsView({ script, state, rendering, busy, onRender }: PanelsViewProp
   )
 }
 
+/**
+ * The settings that change what a render produces, where the person can see
+ * them before pressing render.
+ *
+ * Only four are editable, and they are written into the project's own
+ * `comic.config.json` rather than the package's. Everything else about a
+ * render stays a file edit: this is the short list that was costing people
+ * a surprise, not a settings screen.
+ */
+function SettingsBar({ settings, busy, onSave }: { settings: ComicSettings; busy: boolean; onSave: (settings: ComicSettings) => void }) {
+  const [draft, setDraft] = useState(settings)
+  useEffect(() => setDraft(settings), [settings])
+  const dirty = JSON.stringify(draft) !== JSON.stringify(settings)
+  const set = (patch: Partial<ComicSettings>) => setDraft((previous) => ({ ...previous, ...patch }))
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 text-xs">
+      <label className="flex items-center gap-1">
+        <span className="text-zinc-500">checkpoint</span>
+        <input
+          value={draft.checkpoint}
+          onChange={(event) => set({ checkpoint: event.target.value })}
+          className={cn(inputClass, 'w-40')}
+          title="Part of the checkpoint's filename. Forge resolves it, and refuses rather than guessing when it matches more than one."
+        />
+      </label>
+      <label className="flex items-center gap-1" title="Device pixels per page pixel. Above 1 the lettering is redrawn sharp rather than enlarged.">
+        <span className="text-zinc-500">page scale</span>
+        <input
+          type="number"
+          min={1}
+          max={4}
+          step={0.25}
+          value={draft.pageScale}
+          onChange={(event) => set({ pageScale: Number(event.target.value) })}
+          className={cn(inputClass, 'w-16')}
+        />
+        <span className="text-zinc-600">
+          {Math.round(settings.pageWidth * draft.pageScale)}x{Math.round(settings.pageHeight * draft.pageScale)}
+        </span>
+      </label>
+      <label className="flex items-center gap-1" title="Render each panel at the size its cell displays it at, as a second pass of the same render, instead of enlarging it afterwards. Off means the assembler's upscaler does it, which cannot redraw a face.">
+        <input type="checkbox" checked={draft.hiresEnabled} onChange={(event) => set({ hiresEnabled: event.target.checked })} />
+        <span className="text-zinc-400">panels at their cell size</span>
+      </label>
+      {draft.hiresEnabled ? (
+        <label className="flex items-center gap-1" title="How much the second pass may redraw. Below about 0.35 it only sharpens; above about 0.55 it starts changing the picture.">
+          <span className="text-zinc-500">denoise</span>
+          <input
+            type="number"
+            min={0}
+            max={1}
+            step={0.05}
+            value={draft.hiresDenoise}
+            onChange={(event) => set({ hiresDenoise: Number(event.target.value) })}
+            className={cn(inputClass, 'w-16')}
+          />
+        </label>
+      ) : null}
+      <span className="text-zinc-600" title="The backend that draws. `mock` paints coloured placeholders and touches no GPU.">
+        {settings.renderer}
+        {settings.plates ? ' · plates on' : ''}
+      </span>
+      {dirty ? (
+        <Button size="sm" variant="primary" className="ml-auto" disabled={busy} onClick={() => onSave(draft)}>
+          Save settings
+        </Button>
+      ) : (
+        <span className="ml-auto text-zinc-600">edited in this project&apos;s comic.config.json</span>
+      )}
+    </div>
+  )
+}
+
 interface PanelCardProps {
   spec: ComicPanelSpec
   state: ComicPanelState | undefined
+  status: ComicPanelStatus | undefined
+  plates: boolean
   progress: number | null
   busy: boolean
   onNextSeed: () => void
   onAgain: () => void
 }
 
-const PanelCard = memo(function PanelCard({ spec, state, progress, busy, onNextSeed, onAgain }: PanelCardProps) {
+const PanelCard = memo(function PanelCard({ spec, state, status, plates, progress, busy, onNextSeed, onAgain }: PanelCardProps) {
   const url = state?.path ? `${fileUrl(state.path)}&v=${state.renderedAt ?? 0}` : null
   const verdict = state?.verdict ?? null
   return (
@@ -922,7 +1077,7 @@ const PanelCard = memo(function PanelCard({ spec, state, progress, busy, onNextS
             <ProgressBar done={progress} total={1} />
           </div>
         ) : null}
-        {state?.plate ? (
+        {plates && state?.plate ? (
           <a
             href={`${fileUrl(state.plate)}&v=${state.renderedAt ?? 0}`}
             target="_blank"
@@ -936,6 +1091,22 @@ const PanelCard = memo(function PanelCard({ spec, state, progress, busy, onNextS
         {verdict ? (
           <span className={cn('absolute left-1 top-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium', verdict.ok ? 'bg-emerald-500/80 text-white' : 'bg-red-500/80 text-white')} title={verdict.ok ? 'QA passed' : verdict.failures.join('\n')}>
             {verdict.ok ? 'ok' : verdict.failures.length === 1 ? verdict.failures[0] : `${verdict.failures.length} failures`}
+          </span>
+        ) : null}
+        {/* QA saw something worth saying but not worth re-rendering for.
+            Shown because the alternative is what happened before: a green
+            badge, and the observation left in a file nobody opens. */}
+        {verdict && verdict.notes.length > 0 ? (
+          <span className="absolute left-1 top-7 rounded-full bg-sky-500/80 px-1.5 py-0.5 text-[10px] font-medium text-white" title={verdict.notes.join('\n')}>
+            {verdict.notes.length === 1 ? '1 note' : `${verdict.notes.length} notes`}
+          </span>
+        ) : null}
+        {status?.status === 'stale' ? (
+          <span
+            className="absolute right-1 top-1 rounded-full bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-medium text-black"
+            title={`This picture is not what the script and settings now ask for: ${status.reason ?? 'the request changed'}. Render it again to catch up.`}
+          >
+            changed
           </span>
         ) : null}
       </div>
@@ -1001,6 +1172,14 @@ function PagesView({ project, hasScript, busy, onAssemble }: PagesViewProps) {
               <img src={`${fileUrl(page.path)}&v=${page.renderedAt}`} alt={`Page ${page.number}`} className="w-full" />
               <figcaption className="flex items-center gap-2 p-2 text-xs text-zinc-400">
                 Page {page.number}
+                {page.stale ? (
+                  <span
+                    className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300"
+                    title="One of this page's panels was drawn after the page was laid out, so this image is not showing the panels as they are now."
+                  >
+                    panels newer than this page
+                  </span>
+                ) : null}
                 <a href={`${fileUrl(page.path)}&v=${page.renderedAt}`} download={`page-${String(page.number).padStart(2, '0')}.png`} className="text-indigo-300 hover:text-indigo-200">
                   PNG
                 </a>

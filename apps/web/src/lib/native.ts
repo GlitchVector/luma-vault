@@ -35,11 +35,14 @@ import {
   scanProgressSchema,
   deviantArtAccountSchema,
   patreonAccessRuleSchema,
+  comicInspectionSchema,
   comicProjectSchema,
   comicStatusSchema,
   comicSummarySchema,
+  type ComicInspection,
   type ComicProject,
   type ComicRunOptions,
+  type ComicSettings,
   type ComicStatus,
   type ComicSummary,
   patreonSummarySchema,
@@ -1236,6 +1239,24 @@ export async function comicCreate(name: string): Promise<ComicSummary> {
 /** Write the prose and/or the script. Either may be left out. */
 export async function comicSave(name: string, patch: { prose?: string; script?: unknown }): Promise<void> {
   await invoke('comic_save', { name, prose: patch.prose ?? null, script: patch.script ?? null })
+}
+
+/**
+ * What the pipeline would do with this project as it stands: the settings in
+ * force, and which panels on disk no longer match the script.
+ *
+ * A separate call from `comicRead` because it starts the CLI, which the host
+ * cannot avoid: only the pipeline can build a request and hash it. It needs
+ * no GPU and answers in about the time node takes to start, so the panel
+ * asks after opening a comic and after every run.
+ */
+export async function comicInspect(name: string): Promise<ComicInspection> {
+  return comicInspectionSchema.parse(await invoke('comic_inspect', { name }))
+}
+
+/** Write the editable render settings into the project's comic.config.json. */
+export async function comicSaveSettings(name: string, settings: ComicSettings): Promise<void> {
+  await invoke('comic_save_settings', { name, settings })
 }
 
 /** Start a stage. Returns once the pipeline is running; poll `comicStatus`. */

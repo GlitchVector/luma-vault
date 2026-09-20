@@ -758,8 +758,13 @@ pub struct ComicSummary {
 pub struct ComicVerdict {
     pub ok: bool,
     pub attempt: i64,
-    /// Hard failures only, in the pipeline's own words.
+    /// Hard failures only, in the pipeline's own words. These re-render.
     pub failures: Vec<String>,
+    /// Observations for the person: never retried, never a reason to fail.
+    /// Carried because the split put lettering space here, and for two days
+    /// the app showed those panels as a plain "ok" and said nothing.
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -788,6 +793,10 @@ pub struct ComicPage {
     pub number: i64,
     pub path: String,
     pub rendered_at: i64,
+    /// The page was laid out before one of its panels was drawn, so what is
+    /// on screen is not what the panels now say.
+    #[serde(default)]
+    pub stale: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -803,6 +812,49 @@ pub struct ComicProject {
     pub pages: Vec<ComicPage>,
     pub pdf: Option<String>,
     pub cbz: Option<String>,
+}
+
+/// Whether a panel on disk is what the script and config now ask for.
+///
+/// Only the pipeline can answer this: it means building the request and
+/// hashing it, and the prompt is built there. So the host runs
+/// `comic inspect` and passes the answer through unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicPanelStatus {
+    pub id: String,
+    /// `current`, `stale` or `missing`.
+    pub status: String,
+    /// Why it is stale, in words. `None` when it is not.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// The settings that change what comes out of a render.
+///
+/// The first four are editable and are written into the project's own
+/// `comic.config.json`; the rest are shown so the person can see what they
+/// are about to render with. Everything else stays a file edit on purpose.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicSettings {
+    pub checkpoint: String,
+    pub page_scale: f64,
+    pub hires_enabled: bool,
+    pub hires_denoise: f64,
+    pub renderer: String,
+    pub page_width: i64,
+    pub page_height: i64,
+    /// The hosted plate pass. The panel editor's plate fields are hidden when
+    /// this is off, rather than collecting words nothing reads.
+    pub plates: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComicInspection {
+    pub settings: ComicSettings,
+    pub panels: Vec<ComicPanelStatus>,
 }
 
 /// Which stage to run, and on what. Every field but `stage` is optional and

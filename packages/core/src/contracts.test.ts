@@ -7,6 +7,7 @@ import {
   characterCountSchema,
   comicProjectSchema,
   comicRunOptionsSchema,
+  comicInspectionSchema,
   comicStatusSchema,
   comicSummarySchema,
   deviantArtAccountSchema,
@@ -64,6 +65,7 @@ const CASES: Array<[file: string, schema: z.ZodType]> = [
   ['comic-project.json', comicProjectSchema],
   ['comic-run-options.json', z.array(comicRunOptionsSchema)],
   ['comic-status.json', z.array(comicStatusSchema)],
+  ['comic-inspection.json', comicInspectionSchema],
   ['source-origin.json', z.array(sourceOriginSchema)],
 ]
 

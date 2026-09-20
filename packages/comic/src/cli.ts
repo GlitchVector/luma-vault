@@ -14,6 +14,7 @@
  *   assemble  <project> [--page N] [--format png,pdf,cbz]
  *                                             stage 3: pages, book.pdf, book.cbz
  *   all       <project>                       script -> panels -> qa -> assemble
+ *   inspect   <project>                       settings in force, and which panels are out of date
  *   doctor    [project]                       what is reachable: Forge, LoRAs, tagger, Chrome
  *   layouts                                   the layout presets
  *
@@ -31,6 +32,7 @@ import { PythonTagger } from './qa/tagger.ts'
 import { runAssemble } from './stages/assemble.ts'
 import { loraNames, runPanels } from './stages/panels.ts'
 import { runQa } from './stages/qa.ts'
+import { inspect } from './stages/inspect.ts'
 import { runScript } from './stages/script.ts'
 import { plateBackendFor, platesEnabled, runPlates } from './stages/plates.ts'
 
@@ -58,7 +60,7 @@ const report = new Reporter(values.json)
 
 function usage(): never {
   console.error(
-    `usage: comic <init|script|plates|panels|render|qa|assemble|all|doctor|layouts> <project> [flags]
+    `usage: comic <init|script|plates|panels|render|qa|assemble|all|inspect|doctor|layouts> <project> [flags]
   --page N        1-based page          --panel ID|N   a panel id (p2-3) or its number on --page
   --seed S        exact seed (render)   --attempt N    plan at this retry slot
   --prose FILE    story file (script)   --format LIST  png,pdf,cbz (assemble)
@@ -139,6 +141,22 @@ async function main(): Promise<void> {
       const verdicts = await runQa(p, report, {}, { tagger: values['no-tagger'] ? null : undefined })
       await runAssemble(p, report)
       if (verdicts.some((v) => !v.ok)) process.exitCode = 1
+      return
+    }
+    case 'inspect': {
+      // One JSON object on stdout rather than the event stream: this is a
+      // question with an answer, not a stage with a running commentary.
+      const result = inspect(project())
+      if (values.json) console.log(JSON.stringify(result))
+      else {
+        const { settings } = result
+        console.log(`renderer ${settings.renderer}, checkpoint ${settings.checkpoint}`)
+        console.log(`page ${settings.pageWidth}x${settings.pageHeight} at scale ${settings.pageScale}`)
+        console.log(`hires ${settings.hiresEnabled ? `on, denoise ${settings.hiresDenoise}` : 'off'}; plates ${settings.plates ? 'on' : 'off'}`)
+        for (const panel of result.panels) {
+          console.log(`${panel.id.padEnd(8)} ${panel.status}${panel.reason ? ` — ${panel.reason}` : ''}`)
+        }
+      }
       return
     }
     case 'doctor': {

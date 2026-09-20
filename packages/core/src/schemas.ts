@@ -873,8 +873,14 @@ export type ComicSummary = z.infer<typeof comicSummarySchema>
 export const comicVerdictSchema = z.object({
   ok: z.boolean(),
   attempt: z.number(),
-  /** Hard failures only, in the pipeline's own words. */
+  /** Hard failures only, in the pipeline's own words. These re-render. */
   failures: z.array(z.string()),
+  /**
+   * Observations for the person: never retried, never a reason to fail.
+   * Carried because the split put lettering space here, and for two days
+   * the app showed those panels as a plain "ok" and said nothing.
+   */
+  notes: z.array(z.string()).default([]),
 })
 export type ComicVerdict = z.infer<typeof comicVerdictSchema>
 
@@ -898,6 +904,9 @@ export const comicPageStateSchema = z.object({
   number: z.number(),
   path: z.string(),
   renderedAt: z.number(),
+  /** The page was laid out before one of its panels was drawn, so what is
+   *  on screen is not what the panels now say. */
+  stale: z.boolean().default(false),
 })
 export type ComicPageState = z.infer<typeof comicPageStateSchema>
 
@@ -913,6 +922,48 @@ export const comicProjectSchema = z.object({
   cbz: z.string().nullable(),
 })
 export type ComicProject = z.infer<typeof comicProjectSchema>
+
+/**
+ * Whether a panel on disk is what the script and config now ask for.
+ *
+ * Only the pipeline can answer this: it means building the request and
+ * hashing it, and the prompt is built there. The host asks `comic inspect`
+ * and passes the answer through.
+ */
+export const comicPanelStatusSchema = z.object({
+  id: z.string(),
+  status: z.enum(['current', 'stale', 'missing']),
+  /** Why it is stale, in words. Null when it is not. */
+  reason: z.string().nullable().default(null),
+})
+export type ComicPanelStatus = z.infer<typeof comicPanelStatusSchema>
+
+/**
+ * The settings that change what comes out of a render.
+ *
+ * The first four are editable and are written into the project's own
+ * `comic.config.json`; the rest are shown so the person can see what they
+ * are about to render with. Everything else stays a file edit on purpose.
+ */
+export const comicSettingsSchema = z.object({
+  checkpoint: z.string(),
+  pageScale: z.number(),
+  hiresEnabled: z.boolean(),
+  hiresDenoise: z.number(),
+  renderer: z.string(),
+  pageWidth: z.number(),
+  pageHeight: z.number(),
+  /** The hosted plate pass. The panel editor's plate fields are hidden when
+   *  this is off, rather than collecting words nothing reads. */
+  plates: z.boolean(),
+})
+export type ComicSettings = z.infer<typeof comicSettingsSchema>
+
+export const comicInspectionSchema = z.object({
+  settings: comicSettingsSchema,
+  panels: z.array(comicPanelStatusSchema),
+})
+export type ComicInspection = z.infer<typeof comicInspectionSchema>
 
 /** Which stage to run, and on what. Each field maps onto one CLI flag. */
 export const comicRunOptionsSchema = z.object({

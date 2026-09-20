@@ -178,12 +178,30 @@ pnpm comic render    <project> --page N --panel N [--seed S]
 pnpm comic qa        <project> [--page N] [--panel ID|N] [--no-retry] [--no-tagger]
 pnpm comic assemble  <project> [--page N] [--format png,pdf,cbz]
 pnpm comic all       <project>
+pnpm comic inspect   <project>      settings in force, and which panels no longer match the script
 pnpm comic doctor    [project]      Forge reachable? checkpoint and LoRAs present? tagger? Chrome?
 pnpm comic layouts
 ```
 
 `<project>` is a folder, relative to where you typed the command. `--json`
 turns every line into a JSON event on stdout; that is what the app reads.
+
+## Knowing what is out of date
+
+`comic inspect` answers two questions the app could not: what settings a
+render would use, and which panels on disk are no longer what the script asks
+for. It plans each panel again and compares the hash with the one its sidecar
+recorded, so it sees a changed scene but not a changed line of dialogue,
+which is the same rule the cache uses.
+
+It touches no GPU and no network. The checkpoint in a request is the title
+Forge resolved at render time, so rather than resolving it again this reuses
+the sidecar's and separately checks that the configured name still matches
+it. That keeps the answer instant and correct while the card is off.
+
+It also compares the renderer that drew each panel against the configured
+one, which is how a folder of `mock` placeholders stops looking like
+finished work.
 
 ## The writer
 

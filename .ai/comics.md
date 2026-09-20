@@ -305,17 +305,52 @@ Known, still open:
   there are no Tauri events.
 - `ProtocolRoots.comic_root` puts the comics folder on the `luma://`
   allowlist so panel and page PNGs render in the grid.
+- `comic_inspect` is the exception to all of that: it runs the CLI
+  **synchronously**, outside the `Runner`, and returns one JSON object. It
+  answers while a render is in progress on purpose, and needs neither Forge
+  nor the GPU. `comic_save_settings` writes the four editable settings into
+  the project's own `comic.config.json`.
 - Wire types: `ComicSummary`, `ComicProject` (script as an opaque value),
-  `ComicRunOptions`, `ComicEvent`, `ComicStatus` — types.rs, schemas.ts,
-  `contracts/comic-*.json`, both contract test tables.
+  `ComicRunOptions`, `ComicEvent`, `ComicStatus`, `ComicInspection` —
+  types.rs, schemas.ts, `contracts/comic-*.json`, both contract test tables.
 - SPA: `apps/web/src/components/ComicsPanel.tsx`, opened by the **Comics**
   pill in the filter bar. Four steps (story, script form or raw JSON, panel
-  grid with QA badges / next-seed / plate chip, pages with PDF and CBZ).
-  Errors go to `showMessage`, confirmations to `toast`. The LAN serves
-  `apps/web/dist` from disk: `pnpm build` after a UI change, then reload the
-  iPad tab.
-- The app's demo comic `first-light` is a copy of the example with mock
-  panels; "Render all again" turns it real once Forge is up.
+  grid, pages with PDF and CBZ). Errors go to `showMessage`, confirmations to
+  `toast`. The LAN serves `apps/web/dist` from disk: `pnpm build` after a UI
+  change, then reload the iPad tab.
+
+### What step 3 is for, and what it now tells you
+
+The panel grid is the only place the **art** can be changed. Step 4 lays
+panels out and letters them; it never redraws one. So step 3 is where a bad
+panel is reseeded or redrawn, one at a time, against its QA verdict and its
+seed — not a preview of a later render, because there is no later render.
+
+Four things were added on 2026-09-20 after the owner found the app claiming
+more than the pipeline's files supported:
+
+- **QA notes reach the person.** `ComicVerdict` carries `notes` beside
+  `failures` now. Since lettering space moved to notes, a panel with nowhere
+  to put its balloon passed with a plain green tick and the observation died
+  in `qa/<id>.json`. The card shows a blue note chip.
+- **A stale panel says so.** Every read also calls `comic inspect`, and a
+  panel whose picture no longer matches the script or the settings gets an
+  amber "changed" badge whose tooltip names the reason. This is what caught
+  the app's demo comic: all eleven panels were `mock` placeholders from the
+  plate experiment on 2026-09-17, which is where the magenta blobs came from,
+  and nothing had ever said so.
+- **A stale page says so.** `ComicPage.stale` is pure mtime on the host: a
+  page laid out before one of its own panels was drawn.
+- **The settings that change output are on screen**, above the panel grid:
+  checkpoint, page scale, the hires pass and its denoise are editable, and
+  the renderer, page size and plate state are shown. Everything else is still
+  a file edit, deliberately.
+
+The plate fields in the panel editor (`setting`, the per-character `pose`
+lines) and the plate chip on a card are now hidden unless
+`plates.backend` is on. They were collecting words nothing read. `figures`,
+which is what QA counts against, is editable in the form at last rather than
+only in the JSON view.
 
 ## packages/studio — the creative side
 

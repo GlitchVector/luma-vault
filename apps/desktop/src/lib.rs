@@ -446,6 +446,20 @@ async fn comic_run(
 }
 
 #[tauri::command(async)]
+async fn comic_inspect(state: State<'_, AppState>, name: String) -> Result<types::ComicInspection, String> {
+    api::comic_inspect(&state, name)
+}
+
+#[tauri::command(async)]
+async fn comic_save_settings(
+    state: State<'_, AppState>,
+    name: String,
+    settings: types::ComicSettings,
+) -> Result<(), String> {
+    api::comic_save_settings(&state, name, settings)
+}
+
+#[tauri::command(async)]
 async fn comic_status(state: State<'_, AppState>, since: i64) -> Result<types::ComicStatus, String> {
     api::comic_status(&state, since)
 }
@@ -985,6 +999,8 @@ pub fn run() {
             comic_create,
             comic_save,
             comic_run,
+            comic_inspect,
+            comic_save_settings,
             comic_status,
             comic_cancel,
             deviantart_mark,

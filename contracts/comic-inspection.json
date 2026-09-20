@@ -1,0 +1,34 @@
+{
+  "settings": {
+    "checkpoint": "delburry75",
+    "pageScale": 1.5,
+    "hiresEnabled": true,
+    "hiresDenoise": 0.45,
+    "renderer": "forge",
+    "pageWidth": 2000,
+    "pageHeight": 3000,
+    "plates": false
+  },
+  "panels": [
+    {
+      "id": "p1-1",
+      "status": "current",
+      "reason": null
+    },
+    {
+      "id": "p1-2",
+      "status": "stale",
+      "reason": "a second pass was added"
+    },
+    {
+      "id": "p1-3",
+      "status": "stale",
+      "reason": "drawn by the mock renderer, not forge"
+    },
+    {
+      "id": "p1-4",
+      "status": "missing",
+      "reason": null
+    }
+  ]
+}

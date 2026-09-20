@@ -1034,6 +1034,26 @@ pub fn comic_run(state: &AppState, name: String, options: crate::types::ComicRun
     .map_err(stringify)
 }
 
+/// What the pipeline would do with this project as it stands: the settings
+/// in force, and which panels on disk no longer match the script. Runs the
+/// CLI, which is the only thing that can answer the second part, and needs
+/// neither Forge nor the GPU to do it.
+pub fn comic_inspect(state: &AppState, name: String) -> Result<crate::types::ComicInspection, String> {
+    let Some(cli) = state.comic.as_deref() else {
+        return Err("the comic pipeline is not here: packages/comic/src/cli.ts was not found beside the app".to_string());
+    };
+    crate::comic::inspect(cli, &state.repo_root, &comics_root(state), &name).map_err(stringify)
+}
+
+/// Write the editable render settings into the project's `comic.config.json`.
+pub fn comic_save_settings(
+    state: &AppState,
+    name: String,
+    settings: crate::types::ComicSettings,
+) -> Result<(), String> {
+    crate::comic::save_settings(&comics_root(state), &name, &settings).map_err(stringify)
+}
+
 pub fn comic_status(_state: &AppState, since: i64) -> Result<crate::types::ComicStatus, String> {
     Ok(crate::comic::runner().status(since))
 }
@@ -1359,6 +1379,12 @@ pub async fn dispatch(
             arg(args, "script")?,
         )?),
         "comic_run" => ok(comic_run(state, arg(args, "name")?, arg(args, "options")?)?),
+        "comic_inspect" => ok(comic_inspect(state, arg(args, "name")?)?),
+        "comic_save_settings" => ok(comic_save_settings(
+            state,
+            arg(args, "name")?,
+            arg(args, "settings")?,
+        )?),
         "comic_status" => ok(comic_status(state, arg(args, "since")?)?),
         "comic_cancel" => ok(comic_cancel(state)?),
         "deviantart_send" => ok(deviantart_send(
