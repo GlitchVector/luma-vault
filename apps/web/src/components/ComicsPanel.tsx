@@ -1065,7 +1065,7 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, ne
   const mismatch = cells !== undefined && cells !== page.panels.length
 
   return (
-    <div className="rounded-xl border border-l-4 border-white/10 border-l-indigo-500/70 bg-zinc-900/70 p-4">
+    <div className="rounded-xl border border-l-4 border-white/10 border-l-teal-300 bg-zinc-900/70 p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="text-base font-semibold">Page {pageNumber}</span>
         <select
@@ -1773,7 +1773,7 @@ function PagesView({ project, hasScript, busy, onAssemble, onView }: PagesViewPr
       {project && project.pages.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {project.pages.map((page) => (
-            <figure key={page.number} className="overflow-hidden rounded-md border border-white/10 bg-black/30">
+            <figure key={page.number} className="overflow-hidden rounded-md border border-l-4 border-white/10 border-l-teal-300 bg-zinc-800/40">
               <img
                 src={`${fileUrl(page.path)}&v=${page.renderedAt}`}
                 alt={`Page ${page.number}`}

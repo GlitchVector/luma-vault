@@ -364,9 +364,12 @@ controls inside it.** The first pass had panel cards at `bg-black/30` and
 every input at `bg-black/40`, so the card and its fields were the same value
 and nothing had an edge. Cards now sit on zinc-800 tints, alternating down a
 page (`PANEL_BEAT`) so two panels never run together, each with an indigo
-stripe down its left edge. Page cards take a heavier stripe, the selected
-comic in the list takes one too, and step 3's render cards take the same
-stripe without the alternation, because there the picture is the content.
+stripe down its left edge. A page takes a heavier stripe in TEAL rather than
+indigo, in step 2 and again on the finished pages in step 4, so the two
+levels of a script are told apart by hue and not by stripe width. The
+selected comic in the list takes an indigo stripe too, and step 3's render
+cards take the panel stripe without the alternation, because there the
+picture is the content.
 
 A panel card in step 2 is laid out as the mockup draws it: the id, the camera
 and the lettering anchor across one header row with a kebab menu, then the
