@@ -1,6 +1,6 @@
 # Comics
 
-Everything built for comics, 2026-09-17 to 2026-09-19, in two packages and one
+Everything built for comics, 2026-09-17 to 2026-09-20, in two packages and one
 panel of the app. Read this before touching any of it; each package has its
 own README for the command reference.
 
@@ -208,17 +208,49 @@ of it is taste, and re-deriving any of it costs an afternoon.
   floor rather than a head.
 - **`page.scale: 2` is a retina page**: the layout is unchanged and the
   screenshot is taken at twice the density, so lettering is redrawn sharp
-  rather than enlarged. 4000x6000, about 600 DPI across a comic trim. Panels
-  are enlarged first with `forge.upscaler` (an anime ESRGAN, through
-  `/sdapi/v1/extra-single-image`) by the factor the CELL needs — not by the
-  device scale, which leaves them 13% short — plus 1% because Forge rounds the
-  resize to whole pixels. Cached in `build/retina` by the panel's request
-  hash. An upscaler rather than a second sampler pass on purpose: no prompt,
-  no seed, no second head.
-- Cost: assembling the 11-panel example is 6 s at scale 1 and about 40 s at
-  scale 2, and a page PNG goes from 5 MB to 15 MB, a PDF from 26 MB to 60 MB.
-  300 DPI is already more than a screen shows, so scale 1 is right for
-  anything posted and scale 2 for a print master.
+  rather than enlarged. 4000x6000, about 600 DPI across a comic trim.
+- **A panel is RENDERED at the size its cell will show it at**
+  (`forge.hires`, `targetForCell`). It composes at the checkpoint's
+  comfortable megapixel and is re-sampled up to the cell's device pixels in
+  the same `txt2img` call: `enable_hr` with `hr_resize_x/y` set to the exact
+  target, which A1111 honours to the pixel when the two sizes share an
+  aspect, as these do. Nothing is left for the page to stretch.
+- This matters at **`scale: 1` too**, which was missed for two days. The
+  assembler only ever enlarged panels when `scale > 1`, so at scale 1 the
+  browser was quietly stretching every one of them. Measured, on a 2000x3000
+  page:
+
+  | cell | its size | composed at | stretch |
+  |---|---|---|---|
+  | half-width (2x2, hero-top's lower row) | 926x1426 | 816x1256 | 1.14x |
+  | full-width hero | 1880x1426 | 1160x880 | 1.62x |
+  | splash | 1880x2880 | 816x1248 | 2.30x |
+
+  `hires.min_factor` is 1.15, so the half-width cell at scale 1 is the one
+  case left alone — 14% is under the bar and a second pass on every small
+  panel of every page is not worth the minutes.
+- **The ceiling bites on big cells.** `hires.max_megapixels` is 6, and a
+  splash cell at `scale: 1.5` wants 12.2 MP. It is capped to 5.99 and the
+  assembler's upscaler covers the remainder, which is the one place an
+  ESRGAN pass still touches a face. Raise the ceiling if the card can take
+  it, or accept that full-page splashes are the weak case.
+- **The second pass has to be the sampler, not the extras endpoint.**
+  Enlarging finished panels with an anime ESRGAN was the first attempt and it
+  is what the owner rejected: an upscaler sharpens the face that is there and
+  cannot draw the one that isn't, so at scale 1.5 the eyes and mouths came
+  back crisp and wrong, and worse the bigger the page got. The sampler
+  redraws at the target size. `hires.denoise` 0.45 is the dial — below about
+  0.35 it only sharpens, above about 0.55 it starts changing the picture QA
+  already passed.
+- The ESRGAN path is still in `assemble.ts` and now runs only for a panel
+  that is *still* short of its cell: one rendered before this change, or one
+  capped by `hires.max_megapixels` (6). A panel already at size is skipped,
+  so a re-assemble of a hires page touches the GPU not at all.
+- Cost: not measured yet — the change was made on a day the GPU was not to be
+  used. The second pass is an img2img at the target size for `hires.steps`
+  (14) on top of the 28 that compose it, so expect a panel to cost something
+  like half again to double what it did, and `build/retina` to stay empty.
+  Measure it on the next full run and replace this sentence.
 
 ### State of verification (2026-09-19)
 
@@ -228,7 +260,7 @@ Forge, live, on the worked example `packages/comic/examples/first-light`:
 |---|---|
 | 11 panels, all at their first seed | 2 min 10 s |
 | QA, tagger included | 10 s |
-| Assemble at `page.scale: 2` | 40 s |
+| Assemble at `page.scale: 2` | 40 s, all of it the upscaler that is now gone |
 
 Identity and outfit hold on every panel; the lettering reads; the tails point
 at the right person; QA passes all eleven with notes and no re-renders. Stage
@@ -242,6 +274,11 @@ OpenAI: called live, and the plate pass failed as described above. The API
 shapes in `plates/openai.ts` are correct; the *method* is what failed.
 
 Known, still open:
+
+- **`forge.hires` has not been run on Forge.** It is written, typechecked and
+  unit-tested against the payload, and the owner asked for it on a day the
+  card was off limits. The first run will re-render every panel, because the
+  hires block is part of the request hash.
 
 - The checkpoint renders her considerably bustier than her references,
   because these prompts carry no body block. Creative, not technical.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LAYOUTS, bucketFor, cellAspect, coverage, defaultLayoutFor, lineRange, resolveGrid, resolveSpans, sizeForCell, trackFractions } from './layouts.ts'
+import { LAYOUTS, bucketFor, cellAspect, cellPixels, coverage, defaultLayoutFor, lineRange, resolveGrid, resolveSpans, sizeForCell, targetForCell, trackFractions } from './layouts.ts'
 import type { Page } from './schema.ts'
 
 const panel = (id: string) => ({
@@ -127,5 +127,34 @@ describe('render size', () => {
     const sizeError = Math.abs(size.width / size.height - aspect) / aspect
     expect(bucketError).toBeGreaterThan(0.03)
     expect(sizeError).toBeLessThan(bucketError / 3)
+  })
+})
+
+describe('the size a panel has to be', () => {
+  const box = { width: 2000, height: 3000, margin: 60, gutter: 28 }
+  const page: Page = { layout: 'grid-2x2', panels: [panel('p1-1'), panel('p1-2'), panel('p1-3'), panel('p1-4')] }
+
+  it('is the cell in device pixels, so the page never stretches it', () => {
+    const cell = cellPixels(page, 0, { page: box })
+    for (const scale of [1, 1.5, 2]) {
+      const target = targetForCell(page, 0, box, scale, 99)
+      expect(target.width, `scale ${scale}`).toBeCloseTo(cell.width * scale, -1)
+      expect(target.height, `scale ${scale}`).toBeCloseTo(cell.height * scale, -1)
+      expect(target.width % 8, `scale ${scale}`).toBe(0)
+      expect(target.height % 8, `scale ${scale}`).toBe(0)
+    }
+  })
+
+  it('keeps the cell aspect, which is what stops a crop', () => {
+    const cell = cellPixels(page, 0, { page: box })
+    const target = targetForCell(page, 0, box, 2, 99)
+    expect(target.width / target.height).toBeCloseTo(cell.width / cell.height, 2)
+  })
+
+  it('gives up size rather than shape when it hits the megapixel ceiling', () => {
+    const cell = cellPixels(page, 0, { page: box })
+    const target = targetForCell(page, 0, box, 2, 2)
+    expect(target.width * target.height).toBeLessThanOrEqual(2.05e6)
+    expect(target.width / target.height).toBeCloseTo(cell.width / cell.height, 2)
   })
 })

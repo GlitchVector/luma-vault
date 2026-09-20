@@ -174,6 +174,43 @@ export function sizeForCellBox(page: Page, index: number, box: PageBox): { width
   return sizeForCell(cell.width / cell.height)
 }
 
+/**
+ * The size a panel has to BE for the page never to enlarge it: its own cell,
+ * in device pixels.
+ *
+ * `sizeForCellBox` gives the size the checkpoint composes well at, which is
+ * smaller than any cell on a retina page. The difference used to be made up
+ * afterwards by an ESRGAN pass, and an ESRGAN pass cannot draw what it
+ * cannot see: a face came back sharp and wrong. So the panel is asked for at
+ * this size to begin with, as the second pass of its own render.
+ */
+export function targetForCell(
+  page: Page,
+  index: number,
+  box: PageBox,
+  scale: number,
+  maxMegapixels: number,
+): { width: number; height: number } {
+  const cell = cellPixels(page, index, { page: box })
+  let width = cell.width * scale
+  let height = cell.height * scale
+  const cap = maxMegapixels * 1e6
+  if (width * height > cap) {
+    // Keep the shape, give up the size. What is lost here the assembler's
+    // upscaler makes up, badly but finitely.
+    const shrink = Math.sqrt(cap / (width * height))
+    width *= shrink
+    height *= shrink
+  }
+  return { width: eight(width), height: eight(height) }
+}
+
+/** The sampler works in units of 8 pixels. Rounding each side on its own
+ *  moves the aspect by under a tenth of a percent at these sizes. */
+function eight(value: number): number {
+  return Math.max(256, Math.round(value / 8) * 8)
+}
+
 export function sizeForCell(aspect: number): { width: number; height: number } {
   const bucket = bucketFor(aspect)
   const budget = bucket.width * bucket.height

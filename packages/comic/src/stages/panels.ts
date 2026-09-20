@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { requestHash, type RenderRequest, type Sidecar } from '../cache.ts'
-import { bucketFor, sizeForCellBox } from '../layouts.ts'
+import { bucketFor, sizeForCellBox, targetForCell } from '../layouts.ts'
 import { buildPrompt } from '../prompt.ts'
 import { DUMMIES, plateSizeFor, type PlateBackend } from '../plates/plate.ts'
 import { maskForColour, maskPng } from '../plates/mask.ts'
@@ -112,6 +112,7 @@ export function planPanel(
     seed,
     width,
     height,
+    hires: platesEnabled(project) ? undefined : hiresFor(project, page, where.panelIndex, width),
     steps: forge.steps,
     cfg: forge.cfg,
     sampler: forge.sampler,
@@ -134,6 +135,21 @@ export function planPanel(
     pngPath,
     sidecarPath,
   }
+}
+
+/**
+ * The second pass, when the cell is meaningfully bigger than the composed
+ * panel — which on any retina page it is.
+ *
+ * Skipped with plates on: that path inpaints into a hosted picture at the
+ * hosted picture's size, and a hires pass would fight it.
+ */
+function hiresFor(project: Project, page: Page, index: number, width: number): RenderRequest['hires'] {
+  const { hires, upscaler } = project.config.forge
+  if (!hires.enabled) return undefined
+  const target = targetForCell(page, index, project.config.page, project.config.page.scale, hires.max_megapixels)
+  if (target.width <= width * hires.min_factor) return undefined
+  return { width: target.width, height: target.height, upscaler, denoise: hires.denoise, steps: hires.steps }
 }
 
 /** What a run needs besides the plan: the renderer, and the plate backend
@@ -269,6 +285,12 @@ async function paintCharacters(
   return { png: current, info: infos }
 }
 
+/** What a panel will actually come out at, and how it gets there. */
+function sizeOf(request: RenderRequest): string {
+  const composed = `${request.width}x${request.height}`
+  return request.hires ? `${composed} then ${request.hires.width}x${request.hires.height}` : composed
+}
+
 export async function runPanels(
   project: Project,
   report: Reporter,
@@ -297,7 +319,7 @@ export async function runPanels(
         status: isCached(plan) ? 'cached' : 'planned',
         seed: plan.seed,
         attempt: plan.attempt,
-        message: `${plan.request.width}x${plan.request.height} — ${plan.request.prompt}`,
+        message: `${sizeOf(plan.request)} — ${plan.request.prompt}`,
       })
     }
     return plans

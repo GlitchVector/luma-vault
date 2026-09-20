@@ -68,9 +68,16 @@ placeholder so layouts, lettering and QA can be worked on without a GPU
 (`"renderer": "mock"` in a project's `comic.config.json`, or
 `COMIC_RENDERER=mock`). A hosted API would be a third file and nothing else.
 
-Panel sizes come from the layout: the grid cell's aspect picks the nearest
-SDXL bucket (`src/layouts.ts`), so a wide establishing panel renders
-landscape and a tall one portrait.
+A panel has two sizes, both from the layout (`src/layouts.ts`). It is
+**composed** at the checkpoint's comfortable megapixel at its cell's exact
+aspect, so a wide establishing panel composes landscape and a tall one
+portrait. Then, in the same `txt2img` call, it is **re-sampled up to the size
+its cell will display it at** — `enable_hr` with `hr_resize_x/y` set to the
+target, governed by `forge.hires`. That is why nothing is enlarged afterwards:
+an ESRGAN pass over a finished panel sharpens the face that is there and
+cannot draw the one that isn't, which made every face worse the bigger the
+page got. Turn it off with `"forge": {"hires": {"enabled": false}}` and the
+assembler's upscaler takes over again.
 
 ## Plates: tried, failed, switched off
 

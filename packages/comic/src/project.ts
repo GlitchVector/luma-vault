@@ -58,13 +58,13 @@ export function loadConfig(projectDir: string): Config {
       ...((base['characters'] as Record<string, unknown> | undefined) ?? {}),
       ...((override['characters'] as Record<string, unknown> | undefined) ?? {}),
     }
-    // Every nested section, or a project that overrides one field of a
-    // section silently loses the rest of it — `{"plates":{"style":"…"}}`
-    // dropped `backend` and rendered with no plates at all, saying nothing.
+    // Every nested section, at every depth, or a project that overrides one
+    // field of a section silently loses the rest of it — `{"plates":{"style":
+    // "…"}}` dropped `backend` and rendered with no plates at all, saying
+    // nothing. Depth matters since `forge.hires`: `{"forge":{"hires":{
+    // "denoise":0.5}}}` must not throw away the checkpoint.
     for (const key of ['forge', 'prompt', 'page', 'qa', 'writer', 'plates'] as const) {
-      if (base[key] && override[key] && typeof override[key] === 'object') {
-        merged[key] = { ...(base[key] as object), ...(override[key] as object) }
-      }
+      if (isPlain(base[key]) && isPlain(override[key])) merged[key] = deepMerge(base[key], override[key])
     }
   }
   const parsed = configSchema.safeParse(merged)
@@ -72,6 +72,22 @@ export function loadConfig(projectDir: string): Config {
     throw new Error(`comic.config.json is not valid:\n${formatIssues(parsed.error.issues)}`)
   }
   return parsed.data
+}
+
+function isPlain(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Objects merge key by key at every depth; everything else replaces. An
+ *  array is a value, not something to append to: a project that names its
+ *  own negative terms means those instead of the house ones. */
+function deepMerge(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base }
+  for (const [key, value] of Object.entries(override)) {
+    const mine = out[key]
+    out[key] = isPlain(mine) && isPlain(value) ? deepMerge(mine, value) : value
+  }
+  return out
 }
 
 export function formatIssues(issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>): string {

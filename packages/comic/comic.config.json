@@ -10,7 +10,14 @@
     "cfg": 5,
     "save_to_forge": true,
     "timeout_s": 900,
-    "upscaler": "R-ESRGAN 4x+ Anime6B"
+    "upscaler": "R-ESRGAN 4x+ Anime6B",
+    "hires": {
+      "enabled": true,
+      "denoise": 0.45,
+      "steps": 14,
+      "min_factor": 1.15,
+      "max_megapixels": 6
+    }
   },
   "prompt": {
     "quality": "masterpiece, best quality",
@@ -21,7 +28,7 @@
   "page": {
     "width": 2000,
     "height": 3000,
-    "scale": 2
+    "scale": 1.5
   },
   "qa": {
     "max_attempts": 3,

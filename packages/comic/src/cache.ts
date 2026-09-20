@@ -23,6 +23,12 @@ export interface RenderRequest {
   checkpoint: string
   clip_skip?: number
   backend: string
+  /**
+   * The second pass that brings the panel up to its cell's size. Hashed
+   * like everything else, so a page rendered at another `page.scale` is
+   * another picture rather than the same one stretched.
+   */
+  hires?: { width: number; height: number; upscaler: string; denoise: number; steps: number }
   /** Set when the panel is painted into a plate: the plate's hash and the
    *  inpaint settings, so a new plate or a new strength is a new picture. */
   plate?: { hash: string; denoise: number; mask_grow: number; mask_tolerance: number; mask_blur: number; padding: number }

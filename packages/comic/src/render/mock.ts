@@ -86,8 +86,12 @@ function reservedRegion(prompt: string): { x0: number; y0: number; x1: number; y
   return { x0, y0, x1, y1 }
 }
 
-export function drawPlaceholder(request: Pick<RenderRequest, 'width' | 'height' | 'seed' | 'prompt'>): Buffer {
-  const { width, height, seed } = request
+export function drawPlaceholder(request: Pick<RenderRequest, 'width' | 'height' | 'seed' | 'prompt' | 'hires'>): Buffer {
+  // The hires pass is part of the render, so the mock has to come out at the
+  // same size Forge would — otherwise the assembler's "is this panel already
+  // big enough" test cannot be exercised without a GPU.
+  const { width, height } = request.hires ?? request
+  const { seed } = request
   const png = new PNG({ width, height })
   const base = [120 + (seed % 90), 110 + ((seed >> 3) % 90), 130 + ((seed >> 6) % 90)] as const
   // `MOCK_BUSY` in a scene hatches the whole frame, reserved corner included,

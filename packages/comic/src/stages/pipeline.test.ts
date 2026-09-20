@@ -59,7 +59,19 @@ const report = new Proxy(new Reporter(true), {
 beforeEach(() => {
   events.length = 0
   dir = mkdtempSync(join(tmpdir(), 'comic-pipe-'))
-  writeFileSync(join(dir, 'comic.config.json'), JSON.stringify({ renderer: 'mock', plates: { backend: 'none' }, qa: { max_attempts: 2 } }))
+  // `hires` off and `scale` pinned: this suite is about the stages, and a
+  // second pass would have the mock allocating six-megapixel placeholders
+  // for every panel of every case. `hires.test.ts` covers the pass itself.
+  writeFileSync(
+    join(dir, 'comic.config.json'),
+    JSON.stringify({
+      renderer: 'mock',
+      plates: { backend: 'none' },
+      qa: { max_attempts: 2 },
+      page: { scale: 1 },
+      forge: { hires: { enabled: false } },
+    }),
+  )
   writeFileSync(join(dir, 'script.json'), JSON.stringify(script))
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))

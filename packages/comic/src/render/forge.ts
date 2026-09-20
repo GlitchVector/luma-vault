@@ -182,7 +182,22 @@ export function resolveCheckpoint(models: SdModel[], wanted: string): string {
 export function toPayload(request: RenderRequest, config: Pick<ForgeConfig, 'save_to_forge'>): Record<string, unknown> {
   const overrides: Record<string, unknown> = { sd_model_checkpoint: request.checkpoint }
   if (request.clip_skip !== undefined) overrides['CLIP_stop_at_last_layers'] = request.clip_skip
+  // `hr_resize_x/y` rather than `hr_scale`, because the panel has to come
+  // back at exactly the size the cell wants: A1111 derives the scale from
+  // these and trims the remainder, which is nothing when the two sizes share
+  // an aspect, as they do here.
+  const hires = request.hires
+    ? {
+        enable_hr: true,
+        hr_resize_x: request.hires.width,
+        hr_resize_y: request.hires.height,
+        hr_upscaler: request.hires.upscaler,
+        hr_second_pass_steps: request.hires.steps,
+        denoising_strength: request.hires.denoise,
+      }
+    : {}
   return {
+    ...hires,
     prompt: request.prompt,
     negative_prompt: request.negative,
     seed: request.seed,
@@ -211,7 +226,9 @@ export function toPayload(request: RenderRequest, config: Pick<ForgeConfig, 'sav
  */
 export function toInpaintPayload(request: InpaintRequest, config: Pick<ForgeConfig, 'save_to_forge'>): Record<string, unknown> {
   return {
-    ...toPayload(request, config),
+    // Without `hires`: this pass is already an img2img at the plate's size,
+    // and the hires fields would only fight its denoising strength.
+    ...toPayload({ ...request, hires: undefined }, config),
     init_images: [request.init.toString('base64')],
     mask: request.mask.toString('base64'),
     denoising_strength: request.denoise,

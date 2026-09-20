@@ -58,9 +58,38 @@ export const forgeConfigSchema = z.object({
   save_to_forge: z.boolean().default(true),
   /** Seconds a single txt2img may take before the run gives up on it. */
   timeout_s: z.number().min(10).default(900),
-  /** Which of Forge's upscalers enlarges a panel for a retina page. The
-   *  anime models are the right ones for this art; see `/sdapi/v1/upscalers`. */
+  /** Which of Forge's upscalers enlarges a panel. Used by the second pass
+   *  below, and by the assembler when a panel is still short of its cell.
+   *  The anime models are right for this art; see `/sdapi/v1/upscalers`. */
   upscaler: z.string().default('R-ESRGAN 4x+ Anime6B'),
+  /**
+   * The second pass that brings a panel up to the size its cell will show
+   * it at, inside the same txt2img call.
+   *
+   * It has to be the sampler and not the extras endpoint, because only the
+   * sampler can DRAW at the larger size. An ESRGAN pass can sharpen a face
+   * it can already see; it cannot add an eye to a head that was two hundred
+   * pixels across, which is why enlarging finished panels made every face
+   * worse the bigger the page got.
+   */
+  hires: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** How much the second pass may redraw. Below about 0.35 it only
+       *  sharpens; above about 0.55 it starts changing the picture, which
+       *  would break the panel QA already passed. */
+      denoise: z.number().min(0).max(1).default(0.45),
+      /** Steps for the second pass. 0 means as many as the first pass. */
+      steps: z.number().int().min(0).default(14),
+      /** Not worth a pass below this: the panel is within a few percent of
+       *  its cell already, and the browser's downsample is sharp. */
+      min_factor: z.number().min(1).default(1.15),
+      /** The ceiling, in megapixels. Past it the panel stays smaller and
+       *  the assembler's upscaler makes up the rest — the fallback, not the
+       *  plan. */
+      max_megapixels: z.number().min(1).default(6),
+    })
+    .prefault({}),
 })
 
 export const promptConfigSchema = z.object({

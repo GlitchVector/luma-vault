@@ -15,6 +15,7 @@ import { chromium, type Browser, type Page as BrowserPage } from 'playwright-cor
 import { ORIGIN, bookHtml, cellPixels, pageHtml, type PanelEnergy, type PanelSources } from '../assemble/page.ts'
 import { energyMap } from '../assemble/energy.ts'
 import { readSidecar, rendererFor } from './panels.ts'
+import type { Renderer } from '../render/renderer.ts'
 import { ASSETS_DIR, loadScript, type Project } from '../project.ts'
 import type { Reporter } from '../report.ts'
 import type { Page as PageSpec } from '../schema.ts'
@@ -76,30 +77,34 @@ async function upscalePanels(project: Project, page: PageSpec, report: Reporter)
   const scale = project.config.page.scale
   if (scale <= 1) return sources
 
-  const renderer = rendererFor(project)
-  if (!renderer.upscale) {
-    report.emit({ event: 'note', message: `${renderer.name} cannot upscale, so the page will stretch the panels instead` })
-    return sources
-  }
-
   const dir = join(project.buildDir, 'retina')
-  mkdirSync(dir, { recursive: true })
+  let renderer: Renderer | undefined
   for (const [index, panel] of page.panels.entries()) {
     const source = join(project.panelsDir, `${panel.id}.png`)
     const drawn = PNG.sync.read(readFileSync(source))
     const cell = cellPixels(page, index, project.config)
-    // What the cell actually needs, not the device scale: a panel is drawn
-    // at the sampler's comfortable size, which is smaller than its cell, so
+    // What the cell actually needs, not the device scale: a panel composed
+    // at the sampler's comfortable size is smaller than its cell, so
     // doubling it would still leave the browser stretching it.
+    const needed = (cell.width * scale) / drawn.width
+    // Nothing to do, because `forge.hires` already rendered the panel at
+    // this size. That is the good case and the one to keep: an ESRGAN pass
+    // over a finished face sharpens whatever is wrong with it.
+    if (needed <= 1.01) continue
+    renderer ??= rendererFor(project)
+    if (!renderer.upscale) {
+      report.emit({ event: 'note', message: `${renderer.name} cannot upscale, so the page will stretch the panels instead` })
+      return sources
+    }
     // A whisker of headroom: Forge rounds the resize to whole pixels, and
     // landing four pixels short means the page stretches the panel after
     // all the trouble taken not to. Overshoot is free; the browser
     // downsamples, which is sharp.
-    const needed = (cell.width * scale) / drawn.width
     const factor = Math.min(4, Math.max(1, needed * 1.01))
     const name = `${panel.id}-${readSidecar(join(project.panelsDir, `${panel.id}.json`))?.hash ?? 'nohash'}@${factor.toFixed(2)}x.png`
     const target = join(dir, name)
     if (!existsSync(target)) {
+      mkdirSync(dir, { recursive: true })
       report.emit({ event: 'panel', id: panel.id, status: 'rendering', message: `upscaling ${factor.toFixed(2)}x for the retina page` })
       // eslint-disable-next-line no-await-in-loop
       const big = await renderer.upscale(readFileSync(source), factor, project.config.forge.upscaler)

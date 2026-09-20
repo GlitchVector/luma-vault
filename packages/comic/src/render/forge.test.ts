@@ -53,3 +53,40 @@ describe('the txt2img payload', () => {
     })
   })
 })
+
+describe('the hires pass', () => {
+  const request = {
+    prompt: 'p',
+    negative: 'n',
+    seed: 1,
+    width: 832,
+    height: 1280,
+    steps: 28,
+    cfg: 5,
+    sampler: 'Euler a',
+    scheduler: 'Automatic',
+    checkpoint: 'delburry75.safetensors [abc]',
+    backend: 'forge',
+  }
+
+  it('asks for the exact target size, not a scale factor', () => {
+    const payload = toPayload(
+      { ...request, hires: { width: 1856, height: 2856, upscaler: 'R-ESRGAN 4x+ Anime6B', denoise: 0.45, steps: 14 } },
+      { save_to_forge: true },
+    )
+    expect(payload['enable_hr']).toBe(true)
+    expect(payload['hr_resize_x']).toBe(1856)
+    expect(payload['hr_resize_y']).toBe(2856)
+    expect(payload['hr_upscaler']).toBe('R-ESRGAN 4x+ Anime6B')
+    expect(payload['hr_second_pass_steps']).toBe(14)
+    expect(payload['denoising_strength']).toBe(0.45)
+    // The first pass still composes at the size the checkpoint likes.
+    expect(payload['width']).toBe(832)
+  })
+
+  it('says nothing about hires when there is no second pass', () => {
+    const payload = toPayload(request, { save_to_forge: true })
+    expect(payload).not.toHaveProperty('enable_hr')
+    expect(payload).not.toHaveProperty('denoising_strength')
+  })
+})
