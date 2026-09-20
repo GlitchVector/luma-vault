@@ -2,9 +2,10 @@
  * The Comics panel's pure parts: the rules that decide what the person is
  * told, separated from the markup that tells them.
  */
-import { describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ComicSummary } from '@luma/core'
-import { blankPanel, describeEvent, layoutLabel, parseScript, renumber, standing } from './ComicsPanel.tsx'
+import { Viewer, blankPanel, describeEvent, layoutLabel, parseScript, renumber, standing, titleCase } from './ComicsPanel.tsx'
 
 const summary = (patch: Partial<ComicSummary> = {}): ComicSummary => ({
   name: 'first-light',
@@ -88,5 +89,46 @@ describe('the one line about what the pipeline is doing', () => {
       failures: null,
     })
     expect(said).toBe('p1-2: rendering 50% (12s left) · seed 8812')
+  })
+})
+
+describe('a cast id read as a name', () => {
+  it('capitalises words without touching the id itself', () => {
+    expect(titleCase('ari')).toBe('Ari')
+    expect(titleCase('kira_voss')).toBe('Kira_Voss')
+    expect(titleCase('sable-thorne')).toBe('Sable-Thorne')
+  })
+})
+
+describe('the full-size viewer', () => {
+  /**
+   * This is the bug it was written for: the page PNG was an `<a href>` to a
+   * luma:// file, so clicking it navigated the webview to the image and the
+   * app was gone until it was restarted. There is no back button in a shell.
+   */
+  afterEach(cleanup)
+
+  it('closes on Escape', () => {
+    const onClose = vi.fn()
+    render(<Viewer src="luma://x" caption="Page 1" onClose={onClose} />)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('closes on a click outside the picture, and not on the picture', () => {
+    const onClose = vi.fn()
+    render(<Viewer src="luma://x" caption="Page 1" onClose={onClose} />)
+    fireEvent.click(screen.getByRole('img'))
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId("viewer-backdrop"))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('stops listening once it is gone, so a later Escape is not its business', () => {
+    const onClose = vi.fn()
+    const { unmount } = render(<Viewer src="luma://x" caption="Page 1" onClose={onClose} />)
+    unmount()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onClose).not.toHaveBeenCalled()
   })
 })

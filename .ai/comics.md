@@ -351,9 +351,28 @@ the thing this whole day was spent removing. **Pose / Action** is in the
 mockup and is in the code, but only appears when the plate pass is on — it
 is read by `plates/prompt.ts` and by nothing else.
 
-The camera field is free text with a datalist of framings that are known to
-work, not a dropdown: the words reach the prompt as words, and the right one
-is sometimes not on any list.
+**Nothing in this panel links straight at a file.** An `<a href>` to a
+`luma://` image NAVIGATES the webview to it, and the shell has no back
+button, so the app was gone until it was restarted — which is what the page
+PNG link did. Pages and panels open in a `Viewer` overlay that closes on Esc
+or a click on the backdrop, and the PDF, CBZ and page files are revealed in
+Explorer through `reveal_item` instead, falling back to a real download only
+in a LAN browser where there is no file manager to reveal them in.
+
+A panel card in step 2 is laid out as the mockup draws it: the id, the camera
+and the lettering anchor across one header row with a kebab menu, then the
+scene description, then two label-and-field rows for the cast and the pose,
+then a row per balloon and per sound effect. The camera field is free text
+with a datalist of framings that are known to work, not a dropdown: the words
+reach the prompt as words, and the right one is sometimes not on any list.
+
+The Pose / Action row is SHOWN with the plate pass off but disabled, rather
+than hidden as the plate fields are. The difference is that poses already
+exist in every script the writer produced, and a row that vanishes reads as
+data loss; disabled with a reason does not. Nothing reads them while plates
+are off, and they must not be fed to the local prompt — the poses in the
+existing scripts are plate prose (one of them describes a street seen from a
+rooftop), which is exactly what the vocabulary filter exists to keep out.
 
 ### What step 3 is for, and what it now tells you
 

@@ -18,7 +18,7 @@ import {
   type ComicStatus,
   type ComicSummary,
 } from '@luma/core'
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   comicCancel,
   comicCreate,
@@ -31,6 +31,8 @@ import {
   comicStatus,
   fileUrl,
   forgeStatus,
+  isTauri,
+  revealInFileManager,
   type ForgeStatus,
 } from '#/lib/native.ts'
 import { showMessage } from '#/lib/dialogs.ts'
@@ -49,6 +51,134 @@ const STEPS: Array<{ key: Step; label: string; caption: string; hint: string }> 
   { key: 'panels', label: 'Panels', caption: 'Generate images', hint: 'One picture per panel, from Forge, checked by QA.' },
   { key: 'pages', label: 'Pages', caption: 'Arrange & letter', hint: 'Lettered pages, a PDF and a CBZ.' },
 ]
+
+/** The camera field's leading mark, so it reads as a control rather than a
+ *  box of words. */
+function FrameIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-zinc-500" aria-hidden>
+      <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  )
+}
+
+/**
+ * The ⋮ menu on a card header.
+ *
+ * `<details>` rather than state and a click-away listener: the browser
+ * already closes one when another opens inside the same tree, and a menu
+ * that survives a re-render of the list it sits in is one less thing to get
+ * wrong.
+ */
+function Kebab({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <details className="relative shrink-0">
+      <summary
+        aria-label={`${label} menu`}
+        className="cursor-pointer list-none rounded px-1 py-0.5 text-zinc-500 hover:text-zinc-200 [&::-webkit-details-marker]:hidden"
+      >
+        ⋮
+      </summary>
+      <div className="absolute right-0 z-20 mt-1 min-w-36 rounded-md border border-white/10 bg-zinc-900 p-1 shadow-xl">{children}</div>
+    </details>
+  )
+}
+
+function MenuItem({ onClick, danger, children }: { onClick: () => void; danger?: boolean; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.currentTarget.closest('details')?.removeAttribute('open')
+        onClick()
+      }}
+      className={cn(
+        'block w-full rounded px-2 py-1 text-left text-xs hover:bg-white/10',
+        danger ? 'text-red-300' : 'text-zinc-300',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+/** An id from the config read as a name: `ari` is Ari on screen and stays
+ *  `ari` everywhere the pipeline touches it. */
+export function titleCase(id: string): string {
+  return id.replace(/(^|[\s_-])(\w)/g, (_, lead: string, letter: string) => lead + letter.toUpperCase())
+}
+
+/**
+ * A page or a panel at full size, over the panel.
+ *
+ * It exists because the obvious markup does the wrong thing here: an
+ * `<a href>` to a `luma://` file NAVIGATES the webview to the image, and the
+ * shell has no back button, so the app was simply gone until it was
+ * restarted. Nothing in this panel links straight at a file any more.
+ */
+export function Viewer({ src, caption, onClose }: { src: string; caption: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div
+      role="presentation"
+      data-testid="viewer-backdrop"
+      // Only a click on the backdrop itself closes, so the picture needs no
+      // handler of its own and stays an ordinary image to a screen reader.
+      onClick={(event) => event.target === event.currentTarget && onClose()}
+      className="fixed inset-0 z-[120] flex flex-col items-center justify-center gap-3 bg-black/85 p-8"
+    >
+      <img
+        src={src}
+        alt={caption}
+        className="min-h-0 max-w-full flex-1 object-contain"
+      />
+      <p className="text-xs text-zinc-400">
+        {caption}
+        <span className="ml-3 text-zinc-600">Esc, or click outside, to close</span>
+      </p>
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute right-5 top-5 rounded-md bg-white/10 px-3 py-1 text-sm hover:bg-white/20"
+      >
+        Close
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Put a finished file in front of the person without leaving the app: the
+ * file manager in the desktop shell, an ordinary download in a browser on
+ * the LAN, where there is no file manager to reveal anything in.
+ */
+function FileLink({ path, label }: { path: string; label: string }) {
+  if (isTauri()) {
+    return (
+      <button
+        type="button"
+        onClick={() => void revealInFileManager(path)}
+        className="rounded-md bg-white/5 px-3 py-1.5 text-sm hover:bg-white/10"
+        title={path}
+      >
+        {label}
+      </button>
+    )
+  }
+  return (
+    <a href={fileUrl(path)} download className="rounded-md bg-white/5 px-3 py-1.5 text-sm hover:bg-white/10">
+      {label}
+    </a>
+  )
+}
 
 function Tick() {
   return (
@@ -208,6 +338,7 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
   const [search, setSearch] = useState('')
   const [showSettings, setShowSettings] = useState(true)
   const [renaming, setRenaming] = useState(false)
+  const [viewing, setViewing] = useState<{ src: string; caption: string } | null>(null)
   /** Where a newly added panel reserves its lettering space. A preference
    *  for this editor, not a setting the pipeline reads — which is why it is
    *  state here and not in `comic.config.json`. */
@@ -681,7 +812,7 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
                 </div>
 
                 <div className="ml-auto flex items-center gap-2">
-                  <span className="text-xs text-zinc-500">Cast: {cast.length ? cast.join(', ') : 'nobody'}</span>
+                  <span className="text-xs text-zinc-500">Cast: {cast.length ? cast.map(titleCase).join(', ') : 'nobody'}</span>
                   {proseDirty || scriptDirty ? (
                     <Button size="sm" onClick={() => void saveAll().then((ok) => ok && toast('saved'))}>
                       Save
@@ -707,7 +838,7 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
 
               {loadError ? <div className="m-3 rounded-md bg-red-500/10 p-3 text-xs text-red-300">{loadError}</div> : null}
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
                 {step === 'story' ? (
                   <section className="flex h-full flex-col gap-3">
                     <textarea
@@ -773,12 +904,19 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
                       rendering={rendering}
                       busy={busy}
                       onRender={(options) => void run(options)}
+                      onView={(src, caption) => setViewing({ src, caption })}
                     />
                   )
                 ) : null}
 
                 {step === 'pages' ? (
-                  <PagesView project={project} busy={busy} hasScript={hasScript} onAssemble={(page) => void run({ stage: 'assemble', page, panel: null, seed: null, attempt: null, force: false, noTagger: false })} />
+                  <PagesView
+                    project={project}
+                    busy={busy}
+                    hasScript={hasScript}
+                    onAssemble={(page) => void run({ stage: 'assemble', page, panel: null, seed: null, attempt: null, force: false, noTagger: false })}
+                    onView={(src, caption) => setViewing({ src, caption })}
+                  />
                 ) : null}
               </div>
 
@@ -803,6 +941,8 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
             </>
           )}
         </main>
+
+        {viewing ? <Viewer src={viewing.src} caption={viewing.caption} onClose={() => setViewing(null)} /> : null}
 
         {selected && showSettings ? (
           <ComicSettingsPanel
@@ -933,9 +1073,11 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, ne
         <Button size="sm" className="ml-auto" onClick={() => onChange((previous) => ({ ...previous, panels: [...previous.panels, blankPanel(pageNumber, previous.panels.length + 1, newPanelAnchor)] }))}>
           + Add panel
         </Button>
-        <Button size="sm" variant="danger" onClick={onRemove} title="Remove this page and its panels from the script">
-          Remove page
-        </Button>
+        <Kebab label={`Page ${pageNumber}`}>
+          <MenuItem onClick={onRemove} danger>
+            Remove page
+          </MenuItem>
+        </Kebab>
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
         {page.panels.map((panel, index) => (
@@ -964,168 +1106,219 @@ interface PanelEditorProps {
 const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, onRemove }: PanelEditorProps) {
   const setLine = (index: number, patch: Partial<ComicDialogue>) =>
     onChange((previous) => ({ ...previous, dialogue: previous.dialogue.map((line, i) => (i === index ? { ...line, ...patch } : line)) }))
+  const setPose = (index: number, value: string) =>
+    onChange((previous) => {
+      const pose = [...previous.pose]
+      while (pose.length <= index) pose.push('')
+      pose[index] = value
+      return { ...previous, pose }
+    })
 
   return (
     <div className="rounded-lg border border-white/10 bg-black/30 p-3 text-xs">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="rounded-md bg-white/10 px-2 py-0.5 font-mono text-[11px] text-zinc-300" title={panel.id}>
+      <div className="mb-2.5 flex items-center gap-2">
+        <span className="shrink-0 rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] text-zinc-300" title={panel.id}>
           {panel.id.replace(/^p/, '')}
         </span>
-        <label
-          className="ml-auto flex items-center gap-1 text-zinc-500"
-          title="How many people QA should expect to see. Blank means as many as there are characters; set it when the shot has extras, or a crowd, or nobody."
-        >
-          figures
+        <span className="relative min-w-0 flex-1">
+          <FrameIcon />
           <input
-            type="number"
-            min={0}
-            value={panel.figures ?? ''}
-            placeholder={String(panel.characters.length)}
-            onChange={(event) =>
-              onChange((previous: ComicPanelSpec) => ({
-                ...previous,
-                figures: event.target.value === '' ? undefined : Math.max(0, Number(event.target.value)),
-              }))
-            }
-            className={cn(inputClass, 'w-14')}
+            value={panel.camera}
+            list="comic-cameras"
+            onChange={(event) => onChange((previous) => ({ ...previous, camera: event.target.value }))}
+            className={cn(inputClass, 'pl-7')}
+            placeholder="close-up, from below, cowboy shot…"
+            title="Framing first, then the angle. Weighted into the prompt; the list offers what has been seen to work on this checkpoint, and anything else you type is used as written."
           />
-        </label>
-        <label className="flex items-center gap-1 text-zinc-500">
-          space for lettering
-          <select value={panel.reserve_space} onChange={(event) => onChange((previous) => ({ ...previous, reserve_space: event.target.value as ComicPanelSpec['reserve_space'] }))} className={selectClass}>
-            <option value="none">none</option>
-            {COMIC_ANCHORS.map((anchor) => (
-              <option key={anchor} value={anchor}>
-                {anchor}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="button" onClick={onRemove} className="text-zinc-500 hover:text-red-300" title="Remove this panel">
-          ✕
-        </button>
+        </span>
+        <select
+          value={panel.reserve_space}
+          onChange={(event) => onChange((previous) => ({ ...previous, reserve_space: event.target.value as ComicPanelSpec['reserve_space'] }))}
+          className={cn(selectClass, 'shrink-0')}
+          title="Where this panel keeps room clear for its lettering."
+        >
+          <option value="none">Text anywhere</option>
+          {COMIC_ANCHORS.map((anchor) => (
+            <option key={anchor} value={anchor}>
+              Text {anchor}
+            </option>
+          ))}
+        </select>
+        <Kebab label={`Panel ${panel.id}`}>
+          <MenuItem onClick={onRemove} danger>
+            Remove panel
+          </MenuItem>
+        </Kebab>
       </div>
-      <label className="mb-1 block">
-        <span className="mb-0.5 block text-[11px] text-zinc-500">Camera</span>
-        <input
-          value={panel.camera}
-          list="comic-cameras"
-          onChange={(event) => onChange((previous) => ({ ...previous, camera: event.target.value }))}
-          className={inputClass}
-          placeholder="close-up, from below, cowboy shot…"
-          title="Framing first, then the angle. Weighted into the prompt; the list is what has been seen to work on this checkpoint."
-        />
-      </label>
-      <label className="mb-1 block">
-        <span className="mb-0.5 block text-[11px] text-zinc-500">Scene description</span>
+
+      <label className="mb-2 block">
+        <span className="mb-1 block text-[11px] text-zinc-500">Scene description</span>
         <textarea
           value={panel.scene}
           onChange={(event) => onChange((previous) => ({ ...previous, scene: event.target.value }))}
-          className={cn(inputClass, 'min-h-16 resize-y')}
+          className={cn(inputClass, 'min-h-16 resize-y leading-relaxed')}
           placeholder="setting, action, light — no names, no words spoken (only the local model reads this)"
         />
       </label>
+
       {plates ? (
-      <input
-        value={panel.setting ?? ''}
-        onChange={(event) => onChange((previous) => ({ ...previous, setting: event.target.value || undefined }))}
-        className={cn(inputClass, 'mb-1')}
-        placeholder="setting for the plate: the place and light in this shot, nobody in it (a hosted model reads this — keep it clean)"
-        title="Sent to the hosted image model that draws the plate. The place, the light, the props. No nudity, no sexual content, no names."
-      />
-      ) : null}
-      <div className="mb-1 flex flex-wrap items-center gap-1">
-        <span className="text-[11px] text-zinc-500">In the picture</span>
-        {cast.map((id) => {
-          const on = panel.characters.includes(id)
-          return (
-            <button
-              key={id}
-              type="button"
-              onClick={() => onChange((previous) => ({ ...previous, characters: on ? previous.characters.filter((c) => c !== id) : [...previous.characters, id] }))}
-              className={cn('rounded-full px-2 py-0.5', on ? 'bg-indigo-500 text-white' : 'bg-white/5 text-zinc-400 hover:bg-white/10')}
-            >
-              {id}
-            </button>
-          )
-        })}
-        {cast.length === 0 ? <span className="text-zinc-600">nobody</span> : null}
-      </div>
-      {(plates ? panel.characters : []).map((id, index) => (
-        <div key={id} className="mb-1 flex items-center gap-1">
-          <span className="w-20 shrink-0 truncate text-[11px] text-zinc-500" title={`${id}'s stand-in in the plate: posture and gesture only, a hosted model reads it`}>
-            Pose · {id}
-          </span>
+        <label className="mb-2 block">
+          <span className="mb-1 block text-[11px] text-zinc-500">Setting for the plate</span>
           <input
-            value={panel.pose[index] ?? ''}
-            onChange={(event) =>
-              onChange((previous) => {
-                const pose = [...previous.pose]
-                while (pose.length <= index) pose.push('')
-                pose[index] = event.target.value
-                return { ...previous, pose }
-              })
-            }
+            value={panel.setting ?? ''}
+            onChange={(event) => onChange((previous) => ({ ...previous, setting: event.target.value || undefined }))}
             className={inputClass}
-            placeholder="standing at the rail, one hand raised"
+            placeholder="the place and light in this shot, nobody in it"
+            title="Sent to the hosted image model that draws the plate. The place, the light, the props. No nudity, no sexual content, no names."
           />
+        </label>
+      ) : null}
+
+      <div className="mb-2 space-y-1.5">
+        <div className="flex items-start gap-2">
+          <span className="mt-1 w-20 shrink-0 text-[11px] text-zinc-500">In the picture</span>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+            {cast.map((id) => {
+              const on = panel.characters.includes(id)
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onChange((previous) => ({ ...previous, characters: on ? previous.characters.filter((c) => c !== id) : [...previous.characters, id] }))}
+                  className={cn('rounded-full px-2 py-0.5', on ? 'bg-indigo-500 text-white' : 'bg-white/5 text-zinc-400 hover:bg-white/10')}
+                >
+                  {id}
+                </button>
+              )
+            })}
+            {cast.length === 0 ? <span className="text-zinc-600">nobody</span> : null}
+            <label
+              className="ml-auto flex items-center gap-1 text-zinc-500"
+              title="How many people QA should expect to see. Blank means as many as there are characters; set it when the shot has extras, a crowd, or nobody."
+            >
+              figures
+              <input
+                type="number"
+                min={0}
+                value={panel.figures ?? ''}
+                placeholder={String(panel.characters.length)}
+                onChange={(event) =>
+                  onChange((previous: ComicPanelSpec) => ({
+                    ...previous,
+                    figures: event.target.value === '' ? undefined : Math.max(0, Number(event.target.value)),
+                  }))
+                }
+                className={cn(inputClass, 'w-12')}
+              />
+            </label>
+          </div>
         </div>
-      ))}
-      {panel.dialogue.map((line, index) => (
-        <div
-          // eslint-disable-next-line react/no-array-index-key
-          key={index}
-          className="mb-1 flex items-center gap-1"
-        >
-          <select value={line.speaker} onChange={(event) => setLine(index, { speaker: event.target.value })} className={selectClass}>
-            <option value="narrator">narrator</option>
-            {cast.map((id) => (
-              <option key={id} value={id}>
-                {id}
-              </option>
-            ))}
-          </select>
-          <select value={line.kind} onChange={(event) => setLine(index, { kind: event.target.value as ComicDialogue['kind'] })} className={selectClass}>
-            {COMIC_BALLOON_KINDS.map((kind) => (
-              <option key={kind} value={kind}>
-                {kind}
-              </option>
-            ))}
-          </select>
-          <select value={line.anchor} onChange={(event) => setLine(index, { anchor: event.target.value as ComicDialogue['anchor'] })} className={selectClass}>
-            {COMIC_ANCHORS.map((anchor) => (
-              <option key={anchor} value={anchor}>
-                {anchor}
-              </option>
-            ))}
-          </select>
-          <input value={line.text} onChange={(event) => setLine(index, { text: event.target.value })} className={inputClass} placeholder="what is said" />
-          <button type="button" onClick={() => onChange((previous) => ({ ...previous, dialogue: previous.dialogue.filter((_, i) => i !== index) }))} className="text-zinc-500 hover:text-red-300" title="Remove this balloon">
-            ✕
-          </button>
+
+        <div className="flex items-start gap-2">
+          <span className="mt-1.5 w-20 shrink-0 text-[11px] text-zinc-500">Pose / Action</span>
+          <div className="min-w-0 flex-1 space-y-1">
+            {plates ? (
+              panel.characters.length > 0 ? (
+                panel.characters.map((id, index) => (
+                  <input
+                    key={id}
+                    value={panel.pose[index] ?? ''}
+                    onChange={(event) => setPose(index, event.target.value)}
+                    className={inputClass}
+                    placeholder={`${id}: standing at the rail, one hand raised`}
+                    title={`${id}'s stand-in in the plate: posture and gesture only, and a hosted model reads it.`}
+                  />
+                ))
+              ) : (
+                <span className="text-[11px] text-zinc-600">nobody in this panel</span>
+              )
+            ) : (
+              // Shown rather than hidden, because the words are still in the
+              // script and their absence would read as data loss. Disabled,
+              // because `plates/prompt.ts` is the only thing that reads them
+              // and the plate pass is off.
+              <input
+                value={panel.pose.filter(Boolean).join(' · ')}
+                readOnly
+                disabled
+                className={cn(inputClass, 'cursor-not-allowed opacity-50')}
+                placeholder="read only by the hosted plate pass, which is off"
+                title="The plate pass is off, so nothing reads this. Put what she is doing in the scene description instead."
+              />
+            )}
+          </div>
         </div>
-      ))}
-      {panel.sfx.map((sfx, index) => (
-        <div
-          // eslint-disable-next-line react/no-array-index-key
-          key={`sfx-${index}`}
-          className="mb-1 flex items-center gap-1"
-        >
-          <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">sfx</span>
-          <select value={sfx.anchor} onChange={(event) => onChange((previous) => ({ ...previous, sfx: previous.sfx.map((s, i) => (i === index ? { ...s, anchor: event.target.value as ComicDialogue['anchor'] } : s)) }))} className={selectClass}>
-            {COMIC_ANCHORS.map((anchor) => (
-              <option key={anchor} value={anchor}>
-                {anchor}
-              </option>
-            ))}
-          </select>
-          <input value={sfx.text} onChange={(event) => onChange((previous) => ({ ...previous, sfx: previous.sfx.map((s, i) => (i === index ? { ...s, text: event.target.value } : s)) }))} className={inputClass} placeholder="WHAM" />
-          <button type="button" onClick={() => onChange((previous) => ({ ...previous, sfx: previous.sfx.filter((_, i) => i !== index) }))} className="text-zinc-500 hover:text-red-300" title="Remove this sound effect">
-            ✕
-          </button>
-        </div>
-      ))}
-      <div className="mt-1.5 flex gap-3 border-t border-white/5 pt-1.5">
+      </div>
+
+      <div className="space-y-1">
+        {panel.dialogue.map((line, index) => (
+          <div
+            // eslint-disable-next-line react/no-array-index-key
+            key={index}
+            className="flex items-center gap-1"
+          >
+            <select value={line.speaker} onChange={(event) => setLine(index, { speaker: event.target.value })} className={selectClass}>
+              <option value="narrator">narrator</option>
+              {cast.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+            <select value={line.kind} onChange={(event) => setLine(index, { kind: event.target.value as ComicDialogue['kind'] })} className={selectClass}>
+              {COMIC_BALLOON_KINDS.map((kind) => (
+                <option key={kind} value={kind}>
+                  {kind}
+                </option>
+              ))}
+            </select>
+            <select value={line.anchor} onChange={(event) => setLine(index, { anchor: event.target.value as ComicDialogue['anchor'] })} className={selectClass}>
+              {COMIC_ANCHORS.map((anchor) => (
+                <option key={anchor} value={anchor}>
+                  {anchor}
+                </option>
+              ))}
+            </select>
+            <input
+              value={line.text}
+              onChange={(event) => setLine(index, { text: event.target.value })}
+              className={cn(inputClass, 'rounded-full border-indigo-400/30 bg-indigo-500/10')}
+              placeholder="what is said"
+            />
+            <button type="button" onClick={() => onChange((previous) => ({ ...previous, dialogue: previous.dialogue.filter((_, i) => i !== index) }))} className="shrink-0 text-zinc-500 hover:text-red-300" title="Remove this balloon">
+              ✕
+            </button>
+          </div>
+        ))}
+
+        {panel.sfx.map((sfx, index) => (
+          <div
+            // eslint-disable-next-line react/no-array-index-key
+            key={`sfx-${index}`}
+            className="flex items-center gap-1"
+          >
+            <span className="shrink-0 rounded bg-amber-500/20 px-1.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-300">sfx</span>
+            <select value={sfx.anchor} onChange={(event) => onChange((previous) => ({ ...previous, sfx: previous.sfx.map((entry, i) => (i === index ? { ...entry, anchor: event.target.value as ComicDialogue['anchor'] } : entry)) }))} className={selectClass}>
+              {COMIC_ANCHORS.map((anchor) => (
+                <option key={anchor} value={anchor}>
+                  {anchor}
+                </option>
+              ))}
+            </select>
+            <input
+              value={sfx.text}
+              onChange={(event) => onChange((previous) => ({ ...previous, sfx: previous.sfx.map((entry, i) => (i === index ? { ...entry, text: event.target.value } : entry)) }))}
+              className={cn(inputClass, 'font-semibold uppercase tracking-wide text-amber-200')}
+              placeholder="WHAM"
+            />
+            <button type="button" onClick={() => onChange((previous) => ({ ...previous, sfx: previous.sfx.filter((_, i) => i !== index) }))} className="shrink-0 text-zinc-500 hover:text-red-300" title="Remove this sound effect">
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-2 flex gap-4 border-t border-white/5 pt-2">
         <button
           type="button"
           onClick={() =>
@@ -1140,10 +1333,10 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, o
           }
           className="text-indigo-300 hover:text-indigo-200"
         >
-          + balloon
+          + Balloon
         </button>
         <button type="button" onClick={() => onChange((previous) => ({ ...previous, sfx: [...previous.sfx, { text: '', anchor: 'bottom-right', rotate: -8 }] }))} className="text-indigo-300 hover:text-indigo-200">
-          + sound effect
+          + Sound effect
         </button>
       </div>
     </div>
@@ -1165,11 +1358,12 @@ interface PanelsViewProps {
   rendering: ComicEvent | null
   busy: boolean
   onRender: (options: ComicRunOptions) => void
+  onView: (src: string, caption: string) => void
 }
 
 const baseRun: ComicRunOptions = { stage: 'panels', page: null, panel: null, seed: null, attempt: null, force: false, noTagger: false }
 
-function PanelsView({ script, state, status, settings, rendering, busy, onRender }: PanelsViewProps) {
+function PanelsView({ script, state, status, settings, rendering, busy, onRender, onView }: PanelsViewProps) {
   const total = script.pages.reduce((n, page) => n + page.panels.length, 0)
   const done = script.pages.reduce((n, page) => n + page.panels.filter((panel) => state.get(panel.id)?.path).length, 0)
   const checked = [...state.values()].filter((panel) => panel.verdict).length
@@ -1218,6 +1412,7 @@ function PanelsView({ script, state, status, settings, rendering, busy, onRender
                 state={state.get(panel.id)}
                 status={status.get(panel.id)}
                 plates={settings?.plates ?? false}
+                onView={onView}
                 progress={rendering?.id === panel.id ? (rendering.progress ?? 0) : null}
                 busy={busy}
                 onNextSeed={() => onRender({ ...baseRun, page: pageIndex + 1, panel: panel.id, attempt: (state.get(panel.id)?.attempt ?? 0) + 1, force: true })}
@@ -1451,30 +1646,40 @@ interface PanelCardProps {
   busy: boolean
   onNextSeed: () => void
   onAgain: () => void
+  onView: (src: string, caption: string) => void
 }
 
-const PanelCard = memo(function PanelCard({ spec, state, status, plates, progress, busy, onNextSeed, onAgain }: PanelCardProps) {
+const PanelCard = memo(function PanelCard({ spec, state, status, plates, progress, busy, onNextSeed, onAgain, onView }: PanelCardProps) {
   const url = state?.path ? `${fileUrl(state.path)}&v=${state.renderedAt ?? 0}` : null
   const verdict = state?.verdict ?? null
   return (
     <div className="flex flex-col overflow-hidden rounded-md border border-white/10 bg-black/30">
       <div className="relative aspect-[3/4] bg-zinc-900">
-        {url ? <img src={url} alt={spec.id} className="size-full object-cover" /> : <div className="flex size-full items-center justify-center text-xs text-zinc-600">not rendered</div>}
+        {url ? (
+          <img
+            src={url}
+            alt={spec.id}
+            role="presentation"
+            onClick={() => onView(url, `${spec.id} · ${spec.camera}`)}
+            className="size-full cursor-zoom-in object-cover"
+          />
+        ) : (
+          <div className="flex size-full items-center justify-center text-xs text-zinc-600">not rendered</div>
+        )}
         {progress !== null ? (
           <div className="absolute inset-x-0 bottom-0 bg-black/60 p-1">
             <ProgressBar done={progress} total={1} />
           </div>
         ) : null}
         {plates && state?.plate ? (
-          <a
-            href={`${fileUrl(state.plate)}&v=${state.renderedAt ?? 0}`}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            type="button"
+            onClick={() => onView(`${fileUrl(state.plate!)}&v=${state.renderedAt ?? 0}`, `${spec.id} · the plate`)}
             title="The hosted model's plate this panel was painted into — open it"
             className="absolute bottom-1 right-1 h-12 w-9 overflow-hidden rounded border border-white/40 bg-black/40"
           >
             <img src={`${fileUrl(state.plate)}&v=${state.renderedAt ?? 0}`} alt="plate" className="size-full object-cover" />
-          </a>
+          </button>
         ) : null}
         {verdict ? (
           <span className={cn('absolute left-1 top-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium', verdict.ok ? 'bg-emerald-500/80 text-white' : 'bg-red-500/80 text-white')} title={verdict.ok ? 'QA passed' : verdict.failures.join('\n')}>
@@ -1528,9 +1733,10 @@ interface PagesViewProps {
   hasScript: boolean
   busy: boolean
   onAssemble: (page: number | null) => void
+  onView: (src: string, caption: string) => void
 }
 
-function PagesView({ project, hasScript, busy, onAssemble }: PagesViewProps) {
+function PagesView({ project, hasScript, busy, onAssemble, onView }: PagesViewProps) {
   const rendered = project?.panels.filter((panel) => panel.path).length ?? 0
   const total = project?.panels.length ?? 0
   return (
@@ -1539,16 +1745,8 @@ function PagesView({ project, hasScript, busy, onAssemble }: PagesViewProps) {
         <Button variant="primary" disabled={busy || !hasScript || rendered < total || total === 0} onClick={() => onAssemble(null)} title={rendered < total ? `${total - rendered} panel(s) still need rendering` : 'Lay out every page, letter it, and write the PDF and CBZ'}>
           Assemble the book
         </Button>
-        {project?.pdf ? (
-          <a href={fileUrl(project.pdf)} download="book.pdf" className="rounded-md bg-white/5 px-3 py-1.5 text-sm hover:bg-white/10">
-            PDF
-          </a>
-        ) : null}
-        {project?.cbz ? (
-          <a href={fileUrl(project.cbz)} download="book.cbz" className="rounded-md bg-white/5 px-3 py-1.5 text-sm hover:bg-white/10">
-            CBZ
-          </a>
-        ) : null}
+        {project?.pdf ? <FileLink path={project.pdf} label="PDF" /> : null}
+        {project?.cbz ? <FileLink path={project.cbz} label="CBZ" /> : null}
         <span className="text-xs text-zinc-500">
           {rendered}/{total} panels rendered · {project?.pages.length ?? 0} pages assembled
         </span>
@@ -1557,7 +1755,13 @@ function PagesView({ project, hasScript, busy, onAssemble }: PagesViewProps) {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {project.pages.map((page) => (
             <figure key={page.number} className="overflow-hidden rounded-md border border-white/10 bg-black/30">
-              <img src={`${fileUrl(page.path)}&v=${page.renderedAt}`} alt={`Page ${page.number}`} className="w-full" />
+              <img
+                src={`${fileUrl(page.path)}&v=${page.renderedAt}`}
+                alt={`Page ${page.number}`}
+                role="presentation"
+                onClick={() => onView(`${fileUrl(page.path)}&v=${page.renderedAt}`, `Page ${page.number}`)}
+                className="w-full cursor-zoom-in"
+              />
               <figcaption className="flex items-center gap-2 p-2 text-xs text-zinc-400">
                 Page {page.number}
                 {page.stale ? (
@@ -1568,9 +1772,22 @@ function PagesView({ project, hasScript, busy, onAssemble }: PagesViewProps) {
                     panels newer than this page
                   </span>
                 ) : null}
-                <a href={`${fileUrl(page.path)}&v=${page.renderedAt}`} download={`page-${String(page.number).padStart(2, '0')}.png`} className="text-indigo-300 hover:text-indigo-200">
-                  PNG
-                </a>
+                <button
+                  type="button"
+                  onClick={() => onView(`${fileUrl(page.path)}&v=${page.renderedAt}`, `Page ${page.number}`)}
+                  className="text-indigo-300 hover:text-indigo-200"
+                >
+                  View
+                </button>
+                {isTauri() ? (
+                  <button type="button" onClick={() => void revealInFileManager(page.path)} className="text-indigo-300 hover:text-indigo-200" title={page.path}>
+                    Show file
+                  </button>
+                ) : (
+                  <a href={`${fileUrl(page.path)}&v=${page.renderedAt}`} download={`page-${String(page.number).padStart(2, '0')}.png`} className="text-indigo-300 hover:text-indigo-200">
+                    PNG
+                  </a>
+                )}
                 <Button size="sm" className="ml-auto" disabled={busy} onClick={() => onAssemble(page.number)} title="Lay this page out again with the panels as they are now">
                   Assemble again
                 </Button>
