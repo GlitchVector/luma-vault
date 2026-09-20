@@ -8,7 +8,8 @@
     "assembled": 3,
     "hasProse": true,
     "hasScript": true,
-    "updatedAt": 1789600000000
+    "updatedAt": 1789600000000,
+    "thumb": "C:\\Users\\me\\AppData\\Local\\net.glitchvector.luma-vault\\comics\\first-light\\out\\page-01.png"
   },
   {
     "name": "untitled-2",
@@ -19,6 +20,7 @@
     "assembled": 0,
     "hasProse": true,
     "hasScript": false,
-    "updatedAt": 0
+    "updatedAt": 0,
+    "thumb": null
   }
 ]

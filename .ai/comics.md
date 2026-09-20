@@ -314,10 +314,46 @@ Known, still open:
   `ComicRunOptions`, `ComicEvent`, `ComicStatus`, `ComicInspection` —
   types.rs, schemas.ts, `contracts/comic-*.json`, both contract test tables.
 - SPA: `apps/web/src/components/ComicsPanel.tsx`, opened by the **Comics**
-  pill in the filter bar. Four steps (story, script form or raw JSON, panel
-  grid, pages with PDF and CBZ). Errors go to `showMessage`, confirmations to
+  pill in the filter bar. Errors go to `showMessage`, confirmations to
   `toast`. The LAN serves `apps/web/dist` from disk: `pnpm build` after a UI
   change, then reload the iPad tab.
+
+### The layout, after the owner's mockup (2026-09-20)
+
+Three columns under a step rail, which is what he drew:
+
+- **The rail** across the top is the four stages as numbered pills, each with
+  a caption, and a tick when that stage is finished. Finished means nothing
+  missing AND nothing stale — a page assembled before its panels were
+  redrawn loses its tick, which is the point.
+- **The left column** is the comic list: a thumbnail (`ComicSummary.thumb`,
+  the first assembled page else the first rendered panel), the page and panel
+  counts, and a standing — Draft, In progress, Completed — computed from
+  those counts rather than stored, because a folder is the truth and a stored
+  status is one more thing that can disagree with it. A search box filters
+  it. The bottom three items are Library (closes the panel, back to the
+  vault), Characters (the cast, which comes from `comic.config.json`) and
+  Settings (shows or hides the right column).
+- **The middle** is the comic: title with a rename pencil, the first real
+  line of the prose as a logline, the cast, and the step's own actions.
+  There is no `logline` field in the script and none was added — inventing
+  one would mean the writer stage had to fill it.
+- **The right column** is Comic Settings, and every control in it is a real
+  field: Style is `prompt.style`, Global tags is `prompt.quality`, Aspect
+  ratio is `page.width`/`page.height`, Model is `forge.checkpoint`, and the
+  output block is `page.scale` and `forge.hires`. Saving writes the
+  PROJECT's `comic.config.json`, never the package's.
+
+Two controls in the mockup were deliberately not built, for the same reason
+the plate fields are hidden: **Narrator style** and **Add sound effect
+hints** map to nothing in the pipeline, and a control that reads nothing is
+the thing this whole day was spent removing. **Pose / Action** is in the
+mockup and is in the code, but only appears when the plate pass is on — it
+is read by `plates/prompt.ts` and by nothing else.
+
+The camera field is free text with a datalist of framings that are known to
+work, not a dropdown: the words reach the prompt as words, and the right one
+is sometimes not on any list.
 
 ### What step 3 is for, and what it now tells you
 

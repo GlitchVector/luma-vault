@@ -36,6 +36,11 @@ export interface PanelStatus {
 export interface Settings {
   renderer: string
   checkpoint: string
+  /** `prompt.style`: the style block appended to every panel. The one place
+   *  the look of a book is changed. */
+  style: string
+  /** `prompt.quality`: the words that lead every prompt. */
+  globalTags: string
   pageWidth: number
   pageHeight: number
   pageScale: number
@@ -56,6 +61,8 @@ export function settingsFor(project: Project): Settings {
   return {
     renderer: config.renderer,
     checkpoint: config.forge.checkpoint,
+    style: config.prompt.style,
+    globalTags: config.prompt.quality,
     pageWidth: config.page.width,
     pageHeight: config.page.height,
     pageScale: config.page.scale,

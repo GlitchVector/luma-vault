@@ -749,6 +749,10 @@ pub struct ComicSummary {
     pub assembled: i64,
     pub has_prose: bool,
     pub has_script: bool,
+    /// A picture for the list: the first assembled page, else the first
+    /// rendered panel, else nothing. Served through `luma://`.
+    #[serde(default)]
+    pub thumb: Option<String>,
     pub updated_at: i64,
 }
 
@@ -832,19 +836,24 @@ pub struct ComicPanelStatus {
 
 /// The settings that change what comes out of a render.
 ///
-/// The first four are editable and are written into the project's own
-/// `comic.config.json`; the rest are shown so the person can see what they
-/// are about to render with. Everything else stays a file edit on purpose.
+/// Everything down to `hires_denoise` is editable and is written into the
+/// project's own `comic.config.json`; `renderer` and `plates` are shown so
+/// the person can see what they are about to render with. Everything else
+/// about a render stays a file edit on purpose.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ComicSettings {
     pub checkpoint: String,
+    /// The style block appended to every panel: the look of the book.
+    pub style: String,
+    /// The words that lead every prompt.
+    pub global_tags: String,
     pub page_scale: f64,
+    pub page_width: i64,
+    pub page_height: i64,
     pub hires_enabled: bool,
     pub hires_denoise: f64,
     pub renderer: String,
-    pub page_width: i64,
-    pub page_height: i64,
     /// The hosted plate pass. The panel editor's plate fields are hidden when
     /// this is off, rather than collecting words nothing reads.
     pub plates: bool,

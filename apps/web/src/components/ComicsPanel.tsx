@@ -18,7 +18,7 @@ import {
   type ComicStatus,
   type ComicSummary,
 } from '@luma/core'
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   comicCancel,
   comicCreate,
@@ -42,12 +42,32 @@ interface ComicsPanelProps {
 
 type Step = 'story' | 'script' | 'panels' | 'pages'
 
-const STEPS: Array<{ key: Step; label: string; hint: string }> = [
-  { key: 'story', label: '1 · Story', hint: 'Prose in. Three paragraphs make a page.' },
-  { key: 'script', label: '2 · Script', hint: 'What each panel shows and says. Edit anything.' },
-  { key: 'panels', label: '3 · Panels', hint: 'One picture per panel, from Forge, checked by QA.' },
-  { key: 'pages', label: '4 · Pages', hint: 'Lettered pages, a PDF and a CBZ.' },
+/** `caption` rides under the name in the rail; `hint` is the tooltip. */
+const STEPS: Array<{ key: Step; label: string; caption: string; hint: string }> = [
+  { key: 'story', label: 'Story', caption: 'Idea & setup', hint: 'Prose in. Three paragraphs make a page.' },
+  { key: 'script', label: 'Script', caption: 'Write scenes & prompts', hint: 'What each panel shows and says. Edit anything.' },
+  { key: 'panels', label: 'Panels', caption: 'Generate images', hint: 'One picture per panel, from Forge, checked by QA.' },
+  { key: 'pages', label: 'Pages', caption: 'Arrange & letter', hint: 'Lettered pages, a PDF and a CBZ.' },
 ]
+
+function Tick() {
+  return (
+    <svg viewBox="0 0 16 16" className="size-4 shrink-0 text-emerald-400" aria-hidden>
+      <path d="M3 8.5l3.2 3.2L13 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/**
+ * Where a comic stands, for the list. Read off the counts the host already
+ * gathers rather than stored: a folder is the truth, and a stored status
+ * would be one more thing that can disagree with it.
+ */
+export function standing(comic: ComicSummary): { label: string; dot: string } {
+  if (!comic.hasScript) return { label: 'Draft', dot: 'bg-zinc-500' }
+  if (comic.pages > 0 && comic.assembled >= comic.pages) return { label: 'Completed', dot: 'bg-emerald-400' }
+  return { label: 'In progress', dot: 'bg-indigo-400' }
+}
 
 /** How often the panel asks the host what the pipeline has said. */
 const POLL_MS = 1000
@@ -79,15 +99,45 @@ export function parseScript(raw: unknown): { script: ComicScript | null; error: 
   }
 }
 
+/**
+ * Framings the checkpoint reliably knows, offered as a datalist.
+ *
+ * A list rather than a dropdown: the field is free text on purpose, because
+ * the words go into the prompt as words and the right one is sometimes not
+ * on any list. What IS on the list is only what has been seen to work.
+ */
+const CAMERAS = [
+  'wide shot',
+  'wide shot, from above',
+  'wide shot, from below',
+  'establishing shot',
+  'full body',
+  'full body, from behind',
+  'cowboy shot',
+  'cowboy shot, from side',
+  'upper body',
+  'upper body, looking away',
+  'close-up',
+  'close-up, from above',
+  'close-up, from side',
+  'portrait',
+]
+
+/** `grid-2x2` reads as `Grid 2x2 (4 panels)` in the picker. */
+export function layoutLabel(name: string, cells: number): string {
+  const words = name.replace(/-/g, ' ')
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)} (${cells} panel${cells === 1 ? '' : 's'})`
+}
+
 /** A new panel with the fields the assembler needs and nothing decided. */
-export function blankPanel(pageNumber: number, index: number): ComicPanelSpec {
+export function blankPanel(pageNumber: number, index: number, anchor: ComicPanelSpec['reserve_space'] = 'none'): ComicPanelSpec {
   return {
     id: `p${pageNumber}-${index}`,
     camera: 'cowboy shot',
     scene: '',
     pose: [],
     characters: [],
-    reserve_space: 'none',
+    reserve_space: anchor,
     dialogue: [],
     sfx: [],
   }
@@ -154,6 +204,14 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [step, setStep] = useState<Step>('story')
   const [newName, setNewName] = useState('')
+  const [naming, setNaming] = useState(false)
+  const [search, setSearch] = useState('')
+  const [showSettings, setShowSettings] = useState(true)
+  const [renaming, setRenaming] = useState(false)
+  /** Where a newly added panel reserves its lettering space. A preference
+   *  for this editor, not a setting the pipeline reads — which is why it is
+   *  state here and not in `comic.config.json`. */
+  const [newPanelAnchor, setNewPanelAnchor] = useState<ComicPanelSpec['reserve_space']>('none')
 
   const [prose, setProse] = useState('')
   const [proseDirty, setProseDirty] = useState(false)
@@ -359,7 +417,53 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
     },
     [selected, open],
   )
+  /** The JSON view and the form hold the same script; switching back parses
+   *  what was typed, and refuses rather than losing it. */
+  const toggleRaw = useCallback(() => {
+    if (!rawMode) {
+      setRawText(JSON.stringify(script, null, 2))
+      setRawMode(true)
+      return
+    }
+    try {
+      const parsed = comicScriptSchema.parse(JSON.parse(rawText))
+      setScript(parsed)
+      setScriptError(null)
+      setRawMode(false)
+    } catch (error) {
+      setScriptError(String(error))
+    }
+  }, [rawMode, rawText, script])
+
   const panelState = useMemo(() => new Map((project?.panels ?? []).map((panel) => [panel.id, panel])), [project])
+
+  /** Which steps are finished, for the tick in the rail. A step is done when
+   *  nothing is missing AND nothing has gone out of date behind it. */
+  const finished = useMemo((): Record<Step, boolean> => {
+    const total = script?.pages.reduce((n, page) => n + page.panels.length, 0) ?? 0
+    const drawn = (project?.panels ?? []).filter((panel) => panel.path).length
+    const stale = (inspection?.panels ?? []).filter((panel) => panel.status === 'stale').length
+    const pages = project?.pages ?? []
+    return {
+      story: prose.trim().length > 0,
+      script: !!script,
+      panels: total > 0 && drawn === total && stale === 0,
+      pages: pages.length > 0 && !pages.some((page) => page.stale),
+    }
+  }, [prose, script, project, inspection])
+
+  const shown = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    if (!needle) return comics ?? []
+    return (comics ?? []).filter((comic) => `${comic.title ?? ''} ${comic.name}`.toLowerCase().includes(needle))
+  }, [comics, search])
+
+  /** The first real line of the story, as the subtitle. The script has no
+   *  logline field and inventing one would mean the writer had to fill it. */
+  const logline = useMemo(
+    () => prose.split('\n').map((line) => line.trim()).find((line) => line.length > 0 && !line.startsWith('#')) ?? '',
+    [prose],
+  )
   const lastEvent = events.at(-1)
   const rendering = useMemo(() => {
     const active = [...events].reverse().find((event) => event.event === 'panel' && event.status === 'rendering')
@@ -371,11 +475,55 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
 
   return (
     <div className="fixed inset-0 z-[95] flex flex-col bg-zinc-950 text-zinc-200">
-      <header className="flex items-center gap-3 border-b border-white/10 px-4 py-2">
-        <h1 className="text-sm font-semibold">Comics</h1>
-        <span className="text-xs text-zinc-500">prose in, lettered pages out</span>
-        {forgeNote ? <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300">{forgeNote}</span> : null}
-        <div className="ml-auto flex items-center gap-2">
+      <header className="flex items-center gap-4 border-b border-white/10 bg-zinc-900/50 px-4 py-2">
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="grid size-7 place-items-center rounded-full ring-2 ring-indigo-400">
+            <span className="size-2.5 rounded-full bg-indigo-400" />
+          </span>
+          <span className="text-sm font-semibold">Luma Vault</span>
+        </div>
+
+        <nav className="mx-auto flex min-w-0 items-center gap-0.5">
+          {STEPS.map((entry, index) => {
+            const active = step === entry.key
+            const done = finished[entry.key]
+            return (
+              <Fragment key={entry.key}>
+                {index > 0 ? <span className="px-1 text-zinc-700">&rarr;</span> : null}
+                <button
+                  type="button"
+                  onClick={() => setStep(entry.key)}
+                  title={entry.hint}
+                  className={cn(
+                    'flex items-center gap-2.5 rounded-full py-1 pl-1 pr-3.5 text-left transition',
+                    active ? 'bg-indigo-500/20 ring-1 ring-indigo-400/60' : 'hover:bg-white/5',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'grid size-7 shrink-0 place-items-center rounded-full text-xs font-semibold',
+                      active ? 'bg-indigo-500 text-white' : done ? 'bg-emerald-500/20 text-emerald-300' : 'bg-white/10 text-zinc-400',
+                    )}
+                  >
+                    {index + 1}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-semibold leading-tight">{entry.label}</span>
+                    <span className="block text-[11px] leading-tight text-zinc-500">{entry.caption}</span>
+                  </span>
+                  {done && !active ? <Tick /> : null}
+                </button>
+              </Fragment>
+            )
+          })}
+        </nav>
+
+        <div className="flex shrink-0 items-center gap-2">
+          {forgeNote ? (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300" title={forgeNote}>
+              {forge?.reachable ? 'Forge busy' : 'Forge off'}
+            </span>
+          ) : null}
           {busy ? (
             <Button size="sm" variant="danger" onClick={() => void comicCancel().then(() => toast('stopping…'))}>
               Stop
@@ -388,51 +536,114 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-56 shrink-0 flex-col border-r border-white/10">
-          <div className="flex gap-1 border-b border-white/10 p-2">
+        <aside className="flex w-64 shrink-0 flex-col border-r border-white/10 bg-zinc-900/30">
+          <div className="p-3">
+            {naming ? (
+              <input
+                value={newName}
+                autoFocus
+                onChange={(event) => setNewName(event.target.value)}
+                onBlur={() => !newName.trim() && setNaming(false)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void create().then(() => setNaming(false))
+                  if (event.key === 'Escape') {
+                    setNewName('')
+                    setNaming(false)
+                  }
+                }}
+                placeholder="name it, then Enter"
+                className={cn(inputClass, 'text-sm')}
+              />
+            ) : (
+              <Button variant="primary" className="w-full justify-center" onClick={() => setNaming(true)}>
+                + New Comic
+              </Button>
+            )}
+          </div>
+
+          <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Comics</div>
+          <div className="px-3 pb-2">
             <input
-              value={newName}
-              onChange={(event) => setNewName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') void create()
-              }}
-              placeholder="new comic name"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search…"
               className={cn(inputClass, 'text-xs')}
             />
-            <Button size="sm" variant="primary" onClick={() => void create()} disabled={!newName.trim()}>
-              New
-            </Button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+
+          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-2">
             {comics === null ? (
               <div className="p-3 text-xs text-zinc-500">
                 <Spinner /> reading…
               </div>
-            ) : comics.length === 0 ? (
-              <div className="p-3 text-xs text-zinc-500">No comics yet. Name one above.</div>
+            ) : shown.length === 0 ? (
+              <div className="p-3 text-xs text-zinc-500">
+                {comics.length === 0 ? 'No comics yet. Name one above.' : 'Nothing matches that.'}
+              </div>
             ) : (
-              comics.map((comic) => (
-                <button
-                  key={comic.name}
-                  type="button"
-                  onClick={() => void open(comic.name)}
-                  className={cn(
-                    'block w-full border-b border-white/5 px-3 py-2 text-left hover:bg-white/5',
-                    comic.name === selected && 'bg-indigo-500/15',
-                  )}
-                >
-                  <div className="truncate text-sm">{comic.title ?? comic.name}</div>
-                  <div className="text-[11px] text-zinc-500">
-                    {comic.hasScript
-                      ? `${comic.pages} page${comic.pages === 1 ? '' : 's'} · ${comic.rendered}/${comic.panels} panels · ${comic.assembled} assembled`
-                      : comic.hasProse
-                        ? 'story only'
-                        : 'empty'}
-                  </div>
-                </button>
-              ))
+              shown.map((comic) => {
+                const state = standing(comic)
+                return (
+                  <button
+                    key={comic.name}
+                    type="button"
+                    onClick={() => void open(comic.name)}
+                    className={cn(
+                      'flex w-full gap-2.5 rounded-lg p-2 text-left transition',
+                      comic.name === selected ? 'bg-indigo-500/15 ring-1 ring-indigo-400/40' : 'hover:bg-white/5',
+                    )}
+                  >
+                    <span className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-md bg-zinc-800 text-[10px] text-zinc-600">
+                      {comic.thumb ? (
+                        <img src={fileUrl(comic.thumb)} alt="" className="size-full object-cover" />
+                      ) : (
+                        'no art'
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{comic.title ?? comic.name}</span>
+                      <span className="block truncate text-[11px] text-zinc-500">
+                        {comic.hasScript
+                          ? `${comic.pages} page${comic.pages === 1 ? '' : 's'} · ${comic.rendered}/${comic.panels} panels`
+                          : comic.hasProse
+                            ? 'story only'
+                            : 'empty'}
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-zinc-400">
+                        <span className={cn('size-1.5 rounded-full', state.dot)} />
+                        {state.label}
+                      </span>
+                    </span>
+                  </button>
+                )
+              })
             )}
           </div>
+
+          <nav className="border-t border-white/10 p-2">
+            <button type="button" onClick={onClose} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-400 hover:bg-white/5 hover:text-zinc-200">
+              Library
+            </button>
+            <button
+              type="button"
+              onClick={() => setStep('script')}
+              title={cast.length ? `In this comic: ${cast.join(', ')}. Defined in comic.config.json.` : 'The cast comes from comic.config.json'}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
+            >
+              Characters
+              {cast.length ? <span className="ml-auto text-[11px] text-zinc-600">{cast.length}</span> : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSettings((previous) => !previous)}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-white/5',
+                showSettings ? 'text-zinc-200' : 'text-zinc-400 hover:text-zinc-200',
+              )}
+            >
+              Settings
+            </button>
+          </nav>
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col">
@@ -440,28 +651,59 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
             <div className="p-6 text-sm text-zinc-500">Pick a comic, or name a new one.</div>
           ) : (
             <>
-              <nav className="flex items-center gap-1 border-b border-white/10 px-3 py-2">
-                {STEPS.map((entry) => (
-                  <button
-                    key={entry.key}
-                    type="button"
-                    onClick={() => setStep(entry.key)}
-                    title={entry.hint}
-                    className={cn(
-                      'rounded-full px-3 py-1 text-xs font-medium',
-                      step === entry.key ? 'bg-indigo-500 text-white' : 'bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-zinc-200',
+              <div className="flex flex-wrap items-start gap-3 border-b border-white/10 px-6 py-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    {renaming && script ? (
+                      <input
+                        value={script.title}
+                        autoFocus
+                        onChange={(event) => updateScript((previous) => ({ ...previous, title: event.target.value }))}
+                        onBlur={() => setRenaming(false)}
+                        onKeyDown={(event) => event.key === 'Enter' && setRenaming(false)}
+                        className={cn(inputClass, 'text-2xl font-semibold')}
+                      />
+                    ) : (
+                      <h2 className="truncate text-2xl font-semibold">{script?.title ?? selected}</h2>
                     )}
-                  >
-                    {entry.label}
-                  </button>
-                ))}
-                <span className="ml-3 text-xs text-zinc-500">{STEPS.find((entry) => entry.key === step)?.hint}</span>
-                {proseDirty || scriptDirty ? (
-                  <Button size="sm" className="ml-auto" onClick={() => void saveAll().then((ok) => ok && toast('saved'))}>
-                    Save
-                  </Button>
-                ) : null}
-              </nav>
+                    {script ? (
+                      <button
+                        type="button"
+                        onClick={() => setRenaming((previous) => !previous)}
+                        title="Rename the comic"
+                        className="text-zinc-500 hover:text-zinc-200"
+                      >
+                        ✎
+                      </button>
+                    ) : null}
+                  </div>
+                  {logline ? <p className="mt-1 line-clamp-1 max-w-xl text-sm text-zinc-500">{logline}</p> : null}
+                </div>
+
+                <div className="ml-auto flex items-center gap-2">
+                  <span className="text-xs text-zinc-500">Cast: {cast.length ? cast.join(', ') : 'nobody'}</span>
+                  {proseDirty || scriptDirty ? (
+                    <Button size="sm" onClick={() => void saveAll().then((ok) => ok && toast('saved'))}>
+                      Save
+                    </Button>
+                  ) : null}
+                  {step === 'script' && script ? (
+                    <>
+                      <Button size="sm" onClick={toggleRaw}>
+                        {rawMode ? 'Back to the form' : '</> Edit as JSON'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        disabled={busy}
+                        onClick={() => void run({ stage: 'panels', page: null, panel: null, seed: null, attempt: null, force: false, noTagger: false })}
+                      >
+                        Render all panels &rarr;
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
+              </div>
 
               {loadError ? <div className="m-3 rounded-md bg-red-500/10 p-3 text-xs text-red-300">{loadError}</div> : null}
 
@@ -512,25 +754,9 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
                         setRawText(text)
                         setScriptDirty(true)
                       }}
-                      onToggleRaw={() => {
-                        if (rawMode) {
-                          try {
-                            const parsed = comicScriptSchema.parse(JSON.parse(rawText))
-                            setScript(parsed)
-                            setScriptError(null)
-                            setRawMode(false)
-                          } catch (error) {
-                            setScriptError(String(error))
-                          }
-                        } else {
-                          setRawText(JSON.stringify(script, null, 2))
-                          setRawMode(true)
-                        }
-                      }}
                       plates={inspection?.settings.plates ?? false}
+                      newPanelAnchor={newPanelAnchor}
                       onChange={updateScript}
-                      onRender={() => void run({ stage: 'panels', page: null, panel: null, seed: null, attempt: null, force: false, noTagger: false })}
-                      busy={busy}
                     />
                   )
                 ) : null}
@@ -547,7 +773,6 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
                       rendering={rendering}
                       busy={busy}
                       onRender={(options) => void run(options)}
-                      onSaveSettings={(settings) => void saveSettings(settings)}
                     />
                   )
                 ) : null}
@@ -578,6 +803,16 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
             </>
           )}
         </main>
+
+        {selected && showSettings ? (
+          <ComicSettingsPanel
+            settings={inspection?.settings ?? null}
+            newPanelAnchor={newPanelAnchor}
+            onNewPanelAnchor={setNewPanelAnchor}
+            busy={busy}
+            onSave={(chosen) => void saveSettings(chosen)}
+          />
+        ) : null}
       </div>
     </div>
   )
@@ -592,17 +827,15 @@ interface ScriptEditorProps {
   /** Whether the hosted plate pass is on. Its fields are hidden when it is
    *  not, rather than asking for words nothing reads. */
   plates: boolean
+  newPanelAnchor: ComicPanelSpec['reserve_space']
   rawMode: boolean
   rawText: string
   scriptError: string | null
-  busy: boolean
   onRaw: (text: string) => void
-  onToggleRaw: () => void
   onChange: (update: (previous: ComicScript) => ComicScript) => void
-  onRender: () => void
 }
 
-function ScriptEditor({ script, cast, plates, rawMode, rawText, scriptError, busy, onRaw, onToggleRaw, onChange, onRender }: ScriptEditorProps) {
+function ScriptEditor({ script, cast, plates, newPanelAnchor, rawMode, rawText, scriptError, onRaw, onChange }: ScriptEditorProps) {
   const setPage = (pageIndex: number, update: (page: ComicPageSpec) => ComicPageSpec) =>
     onChange((previous) => ({
       ...previous,
@@ -611,23 +844,11 @@ function ScriptEditor({ script, cast, plates, rawMode, rawText, scriptError, bus
 
   return (
     <section className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <input
-          value={script.title}
-          onChange={(event) => onChange((previous) => ({ ...previous, title: event.target.value }))}
-          className={cn(inputClass, 'max-w-md text-lg font-semibold')}
-          placeholder="Title"
-        />
-        <span className="text-xs text-zinc-500">
-          cast: {cast.length ? cast.join(', ') : 'nobody — add characters in comic.config.json'}
-        </span>
-        <Button size="sm" className="ml-auto" onClick={onToggleRaw}>
-          {rawMode ? 'Back to the form' : 'Edit as JSON'}
-        </Button>
-        <Button size="sm" variant="primary" disabled={busy} onClick={onRender}>
-          Render the panels
-        </Button>
-      </div>
+      {cast.length === 0 ? (
+        <p className="text-xs text-amber-300">
+          No cast: add characters to comic.config.json, or every panel renders as scenery.
+        </p>
+      ) : null}
       {scriptError ? <pre className="whitespace-pre-wrap rounded-md bg-red-500/10 p-3 text-xs text-red-300">{scriptError}</pre> : null}
 
       {rawMode ? (
@@ -641,18 +862,27 @@ function ScriptEditor({ script, cast, plates, rawMode, rawText, scriptError, bus
             pageNumber={pageIndex + 1}
             cast={cast}
             plates={plates}
+            newPanelAnchor={newPanelAnchor}
             onChange={(update) => setPage(pageIndex, update)}
             onRemove={() => onChange((previous) => ({ ...previous, pages: renumber(previous.pages.filter((_, index) => index !== pageIndex)) }))}
           />
         ))
       )}
+      <datalist id="comic-cameras">
+        {CAMERAS.map((camera) => (
+          <option key={camera} value={camera} />
+        ))}
+      </datalist>
       {!rawMode ? (
         <Button
           size="sm"
           onClick={() =>
             onChange((previous) => ({
               ...previous,
-              pages: renumber([...previous.pages, { layout: 'hero-top', panels: [1, 2, 3].map((n) => blankPanel(previous.pages.length + 1, n)) }]),
+              pages: renumber([
+                ...previous.pages,
+                { layout: 'hero-top', panels: [1, 2, 3].map((n) => blankPanel(previous.pages.length + 1, n, newPanelAnchor)) },
+              ]),
             }))
           }
         >
@@ -668,19 +898,20 @@ interface PageEditorProps {
   pageNumber: number
   cast: string[]
   plates: boolean
+  newPanelAnchor: ComicPanelSpec['reserve_space']
   onChange: (update: (page: ComicPageSpec) => ComicPageSpec) => void
   onRemove: () => void
 }
 
-const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, onChange, onRemove }: PageEditorProps) {
+const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, newPanelAnchor, onChange, onRemove }: PageEditorProps) {
   const layoutName = typeof page.layout === 'string' ? page.layout : 'custom'
   const cells = typeof page.layout === 'string' ? COMIC_LAYOUTS[page.layout]?.cells.length : undefined
   const mismatch = cells !== undefined && cells !== page.panels.length
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="text-sm font-semibold">Page {pageNumber}</span>
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="text-base font-semibold">Page {pageNumber}</span>
         <select
           value={layoutName}
           onChange={(event) => onChange((previous) => ({ ...previous, layout: event.target.value }))}
@@ -689,7 +920,7 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, on
         >
           {Object.entries(COMIC_LAYOUTS).map(([name, layout]) => (
             <option key={name} value={name}>
-              {name} ({layout.cells.length})
+              {layoutLabel(name, layout.cells.length)}
             </option>
           ))}
           {layoutName === 'custom' ? <option value="custom">custom grid</option> : null}
@@ -699,14 +930,14 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, on
             {page.panels.length} panels on a {cells}-panel layout — pick a layout that fits, or add/remove a panel
           </span>
         ) : null}
-        <Button size="sm" className="ml-auto" onClick={() => onChange((previous) => ({ ...previous, panels: [...previous.panels, blankPanel(pageNumber, previous.panels.length + 1)] }))}>
-          Add a panel
+        <Button size="sm" className="ml-auto" onClick={() => onChange((previous) => ({ ...previous, panels: [...previous.panels, blankPanel(pageNumber, previous.panels.length + 1, newPanelAnchor)] }))}>
+          + Add panel
         </Button>
         <Button size="sm" variant="danger" onClick={onRemove} title="Remove this page and its panels from the script">
           Remove page
         </Button>
       </div>
-      <div className="grid gap-2 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-2">
         {page.panels.map((panel, index) => (
           <PanelEditor
             key={panel.id}
@@ -735,9 +966,11 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, o
     onChange((previous) => ({ ...previous, dialogue: previous.dialogue.map((line, i) => (i === index ? { ...line, ...patch } : line)) }))
 
   return (
-    <div className="rounded-md border border-white/10 bg-black/30 p-2 text-xs">
-      <div className="mb-1 flex items-center gap-2">
-        <span className="font-mono text-zinc-400">{panel.id}</span>
+    <div className="rounded-lg border border-white/10 bg-black/30 p-3 text-xs">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="rounded-md bg-white/10 px-2 py-0.5 font-mono text-[11px] text-zinc-300" title={panel.id}>
+          {panel.id.replace(/^p/, '')}
+        </span>
         <label
           className="ml-auto flex items-center gap-1 text-zinc-500"
           title="How many people QA should expect to see. Blank means as many as there are characters; set it when the shot has extras, or a crowd, or nobody."
@@ -772,8 +1005,26 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, o
           ✕
         </button>
       </div>
-      <input value={panel.camera} onChange={(event) => onChange((previous) => ({ ...previous, camera: event.target.value }))} className={cn(inputClass, 'mb-1')} placeholder="camera: close-up, from below, cowboy shot…" title="Framing words the checkpoint knows" />
-      <textarea value={panel.scene} onChange={(event) => onChange((previous) => ({ ...previous, scene: event.target.value }))} className={cn(inputClass, 'mb-1 min-h-14 resize-y')} placeholder="scene: setting, action, light — no names, no words spoken (only the local model reads this)" />
+      <label className="mb-1 block">
+        <span className="mb-0.5 block text-[11px] text-zinc-500">Camera</span>
+        <input
+          value={panel.camera}
+          list="comic-cameras"
+          onChange={(event) => onChange((previous) => ({ ...previous, camera: event.target.value }))}
+          className={inputClass}
+          placeholder="close-up, from below, cowboy shot…"
+          title="Framing first, then the angle. Weighted into the prompt; the list is what has been seen to work on this checkpoint."
+        />
+      </label>
+      <label className="mb-1 block">
+        <span className="mb-0.5 block text-[11px] text-zinc-500">Scene description</span>
+        <textarea
+          value={panel.scene}
+          onChange={(event) => onChange((previous) => ({ ...previous, scene: event.target.value }))}
+          className={cn(inputClass, 'min-h-16 resize-y')}
+          placeholder="setting, action, light — no names, no words spoken (only the local model reads this)"
+        />
+      </label>
       {plates ? (
       <input
         value={panel.setting ?? ''}
@@ -784,7 +1035,7 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, o
       />
       ) : null}
       <div className="mb-1 flex flex-wrap items-center gap-1">
-        <span className="text-zinc-500">in the picture:</span>
+        <span className="text-[11px] text-zinc-500">In the picture</span>
         {cast.map((id) => {
           const on = panel.characters.includes(id)
           return (
@@ -802,8 +1053,8 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, o
       </div>
       {(plates ? panel.characters : []).map((id, index) => (
         <div key={id} className="mb-1 flex items-center gap-1">
-          <span className="w-16 shrink-0 truncate text-zinc-500" title={`${id}'s stand-in in the plate: posture and gesture only, a hosted model reads it`}>
-            pose · {id}
+          <span className="w-20 shrink-0 truncate text-[11px] text-zinc-500" title={`${id}'s stand-in in the plate: posture and gesture only, a hosted model reads it`}>
+            Pose · {id}
           </span>
           <input
             value={panel.pose[index] ?? ''}
@@ -860,7 +1111,7 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, o
           key={`sfx-${index}`}
           className="mb-1 flex items-center gap-1"
         >
-          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] uppercase text-amber-300">sfx</span>
+          <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">sfx</span>
           <select value={sfx.anchor} onChange={(event) => onChange((previous) => ({ ...previous, sfx: previous.sfx.map((s, i) => (i === index ? { ...s, anchor: event.target.value as ComicDialogue['anchor'] } : s)) }))} className={selectClass}>
             {COMIC_ANCHORS.map((anchor) => (
               <option key={anchor} value={anchor}>
@@ -874,7 +1125,7 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, o
           </button>
         </div>
       ))}
-      <div className="flex gap-2">
+      <div className="mt-1.5 flex gap-3 border-t border-white/5 pt-1.5">
         <button
           type="button"
           onClick={() =>
@@ -908,16 +1159,17 @@ interface PanelsViewProps {
   /** Whether each panel on disk is still what the script asks for. Empty
    *  until the pipeline has answered, and on a machine without it. */
   status: Map<string, ComicPanelStatus>
+  /** Only `plates` is read here now; the rest of the settings live in the
+   *  column on the right. */
   settings: ComicSettings | null
   rendering: ComicEvent | null
   busy: boolean
   onRender: (options: ComicRunOptions) => void
-  onSaveSettings: (settings: ComicSettings) => void
 }
 
 const baseRun: ComicRunOptions = { stage: 'panels', page: null, panel: null, seed: null, attempt: null, force: false, noTagger: false }
 
-function PanelsView({ script, state, status, settings, rendering, busy, onRender, onSaveSettings }: PanelsViewProps) {
+function PanelsView({ script, state, status, settings, rendering, busy, onRender }: PanelsViewProps) {
   const total = script.pages.reduce((n, page) => n + page.panels.length, 0)
   const done = script.pages.reduce((n, page) => n + page.panels.filter((panel) => state.get(panel.id)?.path).length, 0)
   const checked = [...state.values()].filter((panel) => panel.verdict).length
@@ -927,7 +1179,6 @@ function PanelsView({ script, state, status, settings, rendering, busy, onRender
 
   return (
     <section className="flex flex-col gap-4">
-      {settings ? <SettingsBar settings={settings} busy={busy} onSave={onSaveSettings} /> : null}
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" disabled={busy} onClick={() => onRender(baseRun)} title="Render every panel that is missing or no longer matches the script; the rest come from the cache">
           Render {done < total ? `the missing ${total - done}` : stale > 0 ? `the ${stale} changed` : 'changed panels'}
@@ -980,77 +1231,214 @@ function PanelsView({ script, state, status, settings, rendering, busy, onRender
   )
 }
 
+/** The page shapes worth one click. Anything else is two numbers in the
+ *  project's config, which is where the width and height still live. */
+const ASPECTS: Array<{ label: string; width: number; height: number }> = [
+  { label: '2:3 (vertical)', width: 2000, height: 3000 },
+  { label: '3:4 (vertical)', width: 2250, height: 3000 },
+  { label: '4:5 (vertical)', width: 2400, height: 3000 },
+  { label: '1:1 (square)', width: 2400, height: 2400 },
+  { label: '4:3 (landscape)', width: 3000, height: 2250 },
+]
+
+function aspectOf(settings: ComicSettings): string {
+  const found = ASPECTS.find((a) => a.width === settings.pageWidth && a.height === settings.pageHeight)
+  return found?.label ?? 'custom'
+}
+
 /**
- * The settings that change what a render produces, where the person can see
- * them before pressing render.
+ * Everything that changes what a render produces, in one column, where it
+ * can be read before the render rather than discovered after it.
  *
- * Only four are editable, and they are written into the project's own
- * `comic.config.json` rather than the package's. Everything else about a
- * render stays a file edit: this is the short list that was costing people
- * a surprise, not a settings screen.
+ * Each control is a real field in `comic.config.json`: the style block, the
+ * quality words, the page box and scale, the checkpoint, and the second
+ * pass. Saving writes them into the PROJECT's config, never the package's,
+ * so one comic's look cannot follow you into the next.
  */
-function SettingsBar({ settings, busy, onSave }: { settings: ComicSettings; busy: boolean; onSave: (settings: ComicSettings) => void }) {
+function ComicSettingsPanel({
+  settings,
+  newPanelAnchor,
+  onNewPanelAnchor,
+  busy,
+  onSave,
+}: {
+  settings: ComicSettings | null
+  newPanelAnchor: ComicPanelSpec['reserve_space']
+  onNewPanelAnchor: (anchor: ComicPanelSpec['reserve_space']) => void
+  busy: boolean
+  onSave: (settings: ComicSettings) => void
+}) {
   const [draft, setDraft] = useState(settings)
   useEffect(() => setDraft(settings), [settings])
+
+  if (!settings || !draft) {
+    return (
+      <aside className="w-72 shrink-0 border-l border-white/10 bg-zinc-900/30 p-4 text-xs text-zinc-500">
+        <h3 className="mb-3 text-sm font-semibold text-zinc-200">Comic Settings</h3>
+        Reading the project…
+      </aside>
+    )
+  }
+
   const dirty = JSON.stringify(draft) !== JSON.stringify(settings)
-  const set = (patch: Partial<ComicSettings>) => setDraft((previous) => ({ ...previous, ...patch }))
+  const set = (patch: Partial<ComicSettings>) => setDraft((previous) => (previous ? { ...previous, ...patch } : previous))
+  const tags = draft.globalTags.split(',').map((tag) => tag.trim()).filter(Boolean)
+  const setTags = (next: string[]) => set({ globalTags: next.join(', ') })
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 text-xs">
-      <label className="flex items-center gap-1">
-        <span className="text-zinc-500">checkpoint</span>
-        <input
-          value={draft.checkpoint}
-          onChange={(event) => set({ checkpoint: event.target.value })}
-          className={cn(inputClass, 'w-40')}
-          title="Part of the checkpoint's filename. Forge resolves it, and refuses rather than guessing when it matches more than one."
-        />
-      </label>
-      <label className="flex items-center gap-1" title="Device pixels per page pixel. Above 1 the lettering is redrawn sharp rather than enlarged.">
-        <span className="text-zinc-500">page scale</span>
-        <input
-          type="number"
-          min={1}
-          max={4}
-          step={0.25}
-          value={draft.pageScale}
-          onChange={(event) => set({ pageScale: Number(event.target.value) })}
-          className={cn(inputClass, 'w-16')}
-        />
-        <span className="text-zinc-600">
-          {Math.round(settings.pageWidth * draft.pageScale)}x{Math.round(settings.pageHeight * draft.pageScale)}
-        </span>
-      </label>
-      <label className="flex items-center gap-1" title="Render each panel at the size its cell displays it at, as a second pass of the same render, instead of enlarging it afterwards. Off means the assembler's upscaler does it, which cannot redraw a face.">
-        <input type="checkbox" checked={draft.hiresEnabled} onChange={(event) => set({ hiresEnabled: event.target.checked })} />
-        <span className="text-zinc-400">panels at their cell size</span>
-      </label>
-      {draft.hiresEnabled ? (
-        <label className="flex items-center gap-1" title="How much the second pass may redraw. Below about 0.35 it only sharpens; above about 0.55 it starts changing the picture.">
-          <span className="text-zinc-500">denoise</span>
+    <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-l border-white/10 bg-zinc-900/30">
+      <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+        <h3 className="text-sm font-semibold">Comic Settings</h3>
+        {dirty ? (
+          <Button size="sm" variant="primary" className="ml-auto" disabled={busy} onClick={() => onSave(draft)}>
+            Save
+          </Button>
+        ) : null}
+      </div>
+
+      <div className="space-y-4 p-4 text-xs">
+        <label className="block">
+          <span className="mb-1 block font-medium text-zinc-300">Style</span>
           <input
-            type="number"
-            min={0}
-            max={1}
-            step={0.05}
-            value={draft.hiresDenoise}
-            onChange={(event) => set({ hiresDenoise: Number(event.target.value) })}
-            className={cn(inputClass, 'w-16')}
+            value={draft.style}
+            onChange={(event) => set({ style: event.target.value })}
+            placeholder="the checkpoint's own look"
+            className={inputClass}
           />
+          <span className="mt-1 block text-[11px] text-zinc-500">
+            Tags appended to every panel. Empty means the checkpoint decides.
+          </span>
         </label>
-      ) : null}
-      <span className="text-zinc-600" title="The backend that draws. `mock` paints coloured placeholders and touches no GPU.">
-        {settings.renderer}
-        {settings.plates ? ' · plates on' : ''}
-      </span>
-      {dirty ? (
-        <Button size="sm" variant="primary" className="ml-auto" disabled={busy} onClick={() => onSave(draft)}>
-          Save settings
-        </Button>
-      ) : (
-        <span className="ml-auto text-zinc-600">edited in this project&apos;s comic.config.json</span>
-      )}
-    </div>
+
+        <label className="block">
+          <span className="mb-1 block font-medium text-zinc-300">Aspect ratio</span>
+          <select
+            value={aspectOf(draft)}
+            onChange={(event) => {
+              const found = ASPECTS.find((a) => a.label === event.target.value)
+              if (found) set({ pageWidth: found.width, pageHeight: found.height })
+            }}
+            className={cn(selectClass, 'w-full')}
+          >
+            {ASPECTS.map((aspect) => (
+              <option key={aspect.label} value={aspect.label}>
+                {aspect.label}
+              </option>
+            ))}
+            {aspectOf(draft) === 'custom' ? <option value="custom">custom</option> : null}
+          </select>
+          <span className="mt-1 block text-[11px] text-zinc-500">
+            {draft.pageWidth}x{draft.pageHeight} on the page, {Math.round(draft.pageWidth * draft.pageScale)}x
+            {Math.round(draft.pageHeight * draft.pageScale)} written out.
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="mb-1 block font-medium text-zinc-300">Model</span>
+          <input
+            value={draft.checkpoint}
+            onChange={(event) => set({ checkpoint: event.target.value })}
+            className={inputClass}
+            title="Part of the checkpoint's filename. Forge resolves it, and refuses rather than guessing when it matches more than one."
+          />
+          <span className="mt-1 block text-[11px] text-zinc-500">Drawn by {draft.renderer}{draft.plates ? ', plates on' : ''}.</span>
+        </label>
+
+        <div>
+          <span className="mb-1 block font-medium text-zinc-300">Global tags</span>
+          <span className="mb-1.5 block text-[11px] text-zinc-500">Lead every panel's prompt.</span>
+          <div className="mb-1.5 flex flex-wrap gap-1">
+            {tags.map((tag) => (
+              <span key={tag} className="flex items-center gap-1 rounded-full bg-white/5 px-2 py-0.5 text-[11px]">
+                {tag}
+                <button type="button" onClick={() => setTags(tags.filter((t) => t !== tag))} className="text-zinc-500 hover:text-red-300">
+                  ✕
+                </button>
+              </span>
+            ))}
+            {tags.length === 0 ? <span className="text-[11px] text-zinc-600">none</span> : null}
+          </div>
+          <input
+            placeholder="Add a tag, then Enter"
+            className={inputClass}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return
+              const value = event.currentTarget.value.trim()
+              if (!value || tags.includes(value)) return
+              setTags([...tags, value])
+              event.currentTarget.value = ''
+            }}
+          />
+        </div>
+
+        <div className="space-y-2 border-t border-white/10 pt-3">
+          <span className="block font-medium text-zinc-300">Output</span>
+          <label className="flex items-center gap-2" title="Device pixels per page pixel. Above 1 the lettering is redrawn sharp rather than enlarged.">
+            <span className="w-24 shrink-0 text-zinc-500">page scale</span>
+            <input
+              type="number"
+              min={1}
+              max={4}
+              step={0.25}
+              value={draft.pageScale}
+              onChange={(event) => set({ pageScale: Number(event.target.value) })}
+              className={cn(inputClass, 'w-20')}
+            />
+          </label>
+          <label className="flex items-start gap-2" title="Render each panel at the size its cell displays it at, as a second pass of the same render, instead of enlarging it afterwards. Off means the assembler's upscaler does it, which cannot redraw a face.">
+            <input
+              type="checkbox"
+              checked={draft.hiresEnabled}
+              onChange={(event) => set({ hiresEnabled: event.target.checked })}
+              className="mt-0.5"
+            />
+            <span className="text-zinc-400">panels at their cell size</span>
+          </label>
+          {draft.hiresEnabled ? (
+            <label className="flex items-center gap-2" title="How much the second pass may redraw. Below about 0.35 it only sharpens; above about 0.55 it starts changing the picture.">
+              <span className="w-24 shrink-0 text-zinc-500">denoise</span>
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={draft.hiresDenoise}
+                onChange={(event) => set({ hiresDenoise: Number(event.target.value) })}
+                className={cn(inputClass, 'w-20')}
+              />
+            </label>
+          ) : null}
+        </div>
+
+        <div className="space-y-2 border-t border-white/10 pt-3">
+          <span className="block font-medium text-zinc-300">New panels</span>
+          <label className="flex items-center gap-2">
+            <span className="w-24 shrink-0 text-zinc-500">text placement</span>
+            <select
+              value={newPanelAnchor}
+              onChange={(event) => onNewPanelAnchor(event.target.value as ComicPanelSpec['reserve_space'])}
+              className={selectClass}
+            >
+              <option value="none">none</option>
+              {COMIC_ANCHORS.map((anchor) => (
+                <option key={anchor} value={anchor}>
+                  {anchor}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="block text-[11px] text-zinc-500">
+            Where a panel added here reserves room. Only affects new panels.
+          </span>
+        </div>
+
+        <div className="rounded-lg border border-indigo-400/20 bg-indigo-500/5 p-3 text-[11px] leading-relaxed text-zinc-400">
+          <span className="mb-1 block font-medium text-zinc-300">Tip</span>
+          A scene reads best as plain tags the checkpoint knows: place, action, light. Framing goes in the camera
+          field, never in the scene, and dialogue never reaches the picture at all.
+        </div>
+      </div>
+    </aside>
   )
 }
 

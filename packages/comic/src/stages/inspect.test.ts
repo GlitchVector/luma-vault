@@ -107,11 +107,17 @@ describe('inspect', () => {
   })
 
   it('reports the settings in force, for the app to show before a render', () => {
-    config({ page: { scale: 2 }, forge: { checkpoint: 'delnoob', hires: { enabled: true, denoise: 0.5 } } })
+    config({
+      page: { scale: 2 },
+      forge: { checkpoint: 'delnoob', hires: { enabled: true, denoise: 0.5 } },
+      prompt: { style: 'watercolour', quality: 'masterpiece' },
+    })
     const { settings } = inspect(openProject(dir))
     expect(settings).toEqual({
       renderer: 'mock',
       checkpoint: 'delnoob',
+      style: 'watercolour',
+      globalTags: 'masterpiece',
       pageWidth: 2000,
       pageHeight: 3000,
       pageScale: 2,

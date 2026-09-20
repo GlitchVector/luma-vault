@@ -91,6 +91,21 @@ pub fn create(root: &Path, name: &str) -> Result<ComicSummary> {
     summarize(&dir, name)
 }
 
+/// The alphabetically first PNG in `dir` whose name starts with `prefix`.
+fn first_png(dir: &Path, prefix: &str) -> Option<String> {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            name.starts_with(prefix) && name.ends_with(".png")
+        })
+        .collect();
+    found.sort();
+    found.first().map(|path| path.to_string_lossy().to_string())
+}
+
 fn summarize(dir: &Path, name: &str) -> Result<ComicSummary> {
     let script = read_json(&dir.join("script.json"));
     let (title, pages, panels) = match &script {
@@ -132,6 +147,9 @@ fn summarize(dir: &Path, name: &str) -> Result<ComicSummary> {
                 .count()
         })
         .unwrap_or(0) as i64;
+    // The finished thing first, the raw material second: a comic with pages
+    // shows a page, one that is only rendered shows a panel.
+    let thumb = first_png(&dir.join("out"), "page-").or_else(|| first_png(&dir.join("panels"), ""));
     let updated_at = ["prose.md", "script.json", "out/book.pdf"]
         .iter()
         .map(|f| mtime_ms(&dir.join(f)))
@@ -146,6 +164,7 @@ fn summarize(dir: &Path, name: &str) -> Result<ComicSummary> {
         assembled,
         has_prose: dir.join("prose.md").is_file(),
         has_script: script.is_some(),
+        thumb,
         updated_at,
     })
 }
@@ -445,6 +464,9 @@ pub fn save_settings(root: &Path, name: &str, settings: &ComicSettings) -> Resul
     if !(0.0..=1.0).contains(&settings.hires_denoise) {
         anyhow::bail!("the hires denoise has to be between 0 and 1");
     }
+    if !(256..=8000).contains(&settings.page_width) || !(256..=8000).contains(&settings.page_height) {
+        anyhow::bail!("the page has to be between 256 and 8000 pixels on a side");
+    }
     let dir = project_dir(root, name)?;
     std::fs::create_dir_all(&dir)?;
     let path = dir.join("comic.config.json");
@@ -466,6 +488,14 @@ pub fn save_settings(root: &Path, name: &str, settings: &ComicSettings) -> Resul
         let page = object.entry("page").or_insert_with(|| serde_json::json!({}));
         let page = page.as_object_mut().context("\"page\" in comic.config.json is not an object")?;
         page.insert("scale".to_string(), serde_json::json!(settings.page_scale));
+        page.insert("width".to_string(), serde_json::json!(settings.page_width));
+        page.insert("height".to_string(), serde_json::json!(settings.page_height));
+    }
+    {
+        let prompt = object.entry("prompt").or_insert_with(|| serde_json::json!({}));
+        let prompt = prompt.as_object_mut().context("\"prompt\" in comic.config.json is not an object")?;
+        prompt.insert("style".to_string(), serde_json::json!(settings.style.trim()));
+        prompt.insert("quality".to_string(), serde_json::json!(settings.global_tags.trim()));
     }
 
     let mut text = serde_json::to_string_pretty(&config)?;

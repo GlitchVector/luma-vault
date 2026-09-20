@@ -1,12 +1,14 @@
 {
   "settings": {
     "checkpoint": "delburry75",
+    "style": "",
+    "globalTags": "masterpiece, best quality",
     "pageScale": 1.5,
+    "pageWidth": 2000,
+    "pageHeight": 3000,
     "hiresEnabled": true,
     "hiresDenoise": 0.45,
     "renderer": "forge",
-    "pageWidth": 2000,
-    "pageHeight": 3000,
     "plates": false
   },
   "panels": [

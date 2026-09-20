@@ -866,6 +866,9 @@ export const comicSummarySchema = z.object({
   assembled: z.number(),
   hasProse: z.boolean(),
   hasScript: z.boolean(),
+  /** A picture for the list: the first assembled page, else the first
+   *  rendered panel, else nothing. Served through `luma://`. */
+  thumb: z.string().nullable().default(null),
   updatedAt: z.number(),
 })
 export type ComicSummary = z.infer<typeof comicSummarySchema>
@@ -941,18 +944,23 @@ export type ComicPanelStatus = z.infer<typeof comicPanelStatusSchema>
 /**
  * The settings that change what comes out of a render.
  *
- * The first four are editable and are written into the project's own
- * `comic.config.json`; the rest are shown so the person can see what they
- * are about to render with. Everything else stays a file edit on purpose.
+ * Everything down to `hiresDenoise` is editable and is written into the
+ * project's own `comic.config.json`; `renderer` and `plates` are shown so
+ * the person can see what they are about to render with. Everything else
+ * about a render stays a file edit on purpose.
  */
 export const comicSettingsSchema = z.object({
   checkpoint: z.string(),
+  /** The style block appended to every panel: the look of the book. */
+  style: z.string(),
+  /** The words that lead every prompt. */
+  globalTags: z.string(),
   pageScale: z.number(),
+  pageWidth: z.number(),
+  pageHeight: z.number(),
   hiresEnabled: z.boolean(),
   hiresDenoise: z.number(),
   renderer: z.string(),
-  pageWidth: z.number(),
-  pageHeight: z.number(),
   /** The hosted plate pass. The panel editor's plate fields are hidden when
    *  this is off, rather than collecting words nothing reads. */
   plates: z.boolean(),
