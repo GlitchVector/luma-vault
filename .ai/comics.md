@@ -359,6 +359,15 @@ or a click on the backdrop, and the PDF, CBZ and page files are revealed in
 Explorer through `reveal_item` instead, falling back to a real download only
 in a LAN browser where there is no file manager to reveal them in.
 
+Card colours carry one rule worth keeping: **a card is lighter than the
+controls inside it.** The first pass had panel cards at `bg-black/30` and
+every input at `bg-black/40`, so the card and its fields were the same value
+and nothing had an edge. Cards now sit on zinc-800 tints, alternating down a
+page (`PANEL_BEAT`) so two panels never run together, each with an indigo
+stripe down its left edge. Page cards take a heavier stripe, the selected
+comic in the list takes one too, and step 3's render cards take the same
+stripe without the alternation, because there the picture is the content.
+
 A panel card in step 2 is laid out as the mockup draws it: the id, the camera
 and the lettering anchor across one header row with a kebab menu, then the
 scene description, then two label-and-field rows for the cast and the pose,

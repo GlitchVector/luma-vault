@@ -317,6 +317,20 @@ const selectClass =
   'rounded-md border border-white/10 bg-black/40 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-400'
 
 /**
+ * Two card shades, alternating down a page, plus the accent stripe.
+ *
+ * A page is a grid of panels that all hold the same kinds of field, so
+ * without a beat they read as one long form. The shades are LIGHTER than the
+ * controls inside them (`bg-black/40`), which is what the old `bg-black/30`
+ * got backwards: the card and its inputs were the same value, so nothing
+ * had an edge.
+ */
+const PANEL_BEAT = [
+  'border-l-indigo-400 bg-zinc-800/60',
+  'border-l-indigo-400/40 bg-zinc-800/25',
+]
+
+/**
  * Comics: prose in, lettered pages out, without leaving the app.
  *
  * Four steps that are the pipeline's four stages, in the order they run. The
@@ -720,8 +734,10 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
                     type="button"
                     onClick={() => void open(comic.name)}
                     className={cn(
-                      'flex w-full gap-2.5 rounded-lg p-2 text-left transition',
-                      comic.name === selected ? 'bg-indigo-500/15 ring-1 ring-indigo-400/40' : 'hover:bg-white/5',
+                      'flex w-full gap-2.5 rounded-lg border-l-2 p-2 text-left transition',
+                      comic.name === selected
+                        ? 'border-l-indigo-400 bg-indigo-500/15'
+                        : 'border-l-transparent hover:bg-white/5',
                     )}
                   >
                     <span className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-md bg-zinc-800 text-[10px] text-zinc-600">
@@ -1049,7 +1065,7 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, ne
   const mismatch = cells !== undefined && cells !== page.panels.length
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="rounded-xl border border-l-4 border-white/10 border-l-indigo-500/70 bg-zinc-900/70 p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="text-base font-semibold">Page {pageNumber}</span>
         <select
@@ -1084,6 +1100,7 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, ne
           <PanelEditor
             key={panel.id}
             panel={panel}
+            position={index}
             cast={cast}
             plates={plates}
             onChange={(update) => onChange((previous) => ({ ...previous, panels: previous.panels.map((p, i) => (i === index ? update(p) : p)) }))}
@@ -1097,13 +1114,15 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, ne
 
 interface PanelEditorProps {
   panel: ComicPanelSpec
+  /** Position on the page, for the alternating card shade. */
+  position: number
   cast: string[]
   plates: boolean
   onChange: (update: (panel: ComicPanelSpec) => ComicPanelSpec) => void
   onRemove: () => void
 }
 
-const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, onRemove }: PanelEditorProps) {
+const PanelEditor = memo(function PanelEditor({ panel, position, cast, plates, onChange, onRemove }: PanelEditorProps) {
   const setLine = (index: number, patch: Partial<ComicDialogue>) =>
     onChange((previous) => ({ ...previous, dialogue: previous.dialogue.map((line, i) => (i === index ? { ...line, ...patch } : line)) }))
   const setPose = (index: number, value: string) =>
@@ -1115,7 +1134,7 @@ const PanelEditor = memo(function PanelEditor({ panel, cast, plates, onChange, o
     })
 
   return (
-    <div className="rounded-lg border border-white/10 bg-black/30 p-3 text-xs">
+    <div className={cn('rounded-lg border border-l-2 border-white/10 p-3 text-xs', PANEL_BEAT[position % PANEL_BEAT.length])}>
       <div className="mb-2.5 flex items-center gap-2">
         <span className="shrink-0 rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] text-zinc-300" title={panel.id}>
           {panel.id.replace(/^p/, '')}
@@ -1653,7 +1672,7 @@ const PanelCard = memo(function PanelCard({ spec, state, status, plates, progres
   const url = state?.path ? `${fileUrl(state.path)}&v=${state.renderedAt ?? 0}` : null
   const verdict = state?.verdict ?? null
   return (
-    <div className="flex flex-col overflow-hidden rounded-md border border-white/10 bg-black/30">
+    <div className="flex flex-col overflow-hidden rounded-md border border-l-2 border-white/10 border-l-indigo-400/70 bg-zinc-800/40">
       <div className="relative aspect-[3/4] bg-zinc-900">
         {url ? (
           <img
