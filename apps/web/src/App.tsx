@@ -11,7 +11,7 @@ import {
 } from '@luma/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FilterBar } from '#/components/FilterBar.tsx'
-import { FolderSidebar, LORA_COMMAND, type Listing } from '#/components/FolderSidebar.tsx'
+import { FolderSidebar, type Page } from '#/components/FolderSidebar.tsx'
 import { Lightbox } from '#/components/Lightbox.tsx'
 import { MediaGrid } from '#/components/MediaGrid.tsx'
 import { DEFAULT_TILE_SIZE, MAX_TILE_SIZE, MIN_TILE_SIZE } from '#/components/MediaTile.tsx'
@@ -19,6 +19,7 @@ import { SearchBar } from '#/components/SearchBar.tsx'
 import { DeviantArtPanel } from '#/components/DeviantArtPanel.tsx'
 import { PatreonPanel } from '#/components/PatreonPanel.tsx'
 import { ComicsPanel } from '#/components/ComicsPanel.tsx'
+import { LorasPanel } from '#/components/LorasPanel.tsx'
 import { DialogHost } from '#/components/DialogHost.tsx'
 import { RemoteDialog } from '#/components/RemoteDialog.tsx'
 import { StatusBar } from '#/components/StatusBar.tsx'
@@ -48,6 +49,7 @@ import { HostLogin } from '#/components/HostLogin.tsx'
 import { useLibrary } from '#/lib/useLibrary.ts'
 import { useRemote } from '#/lib/useRemote.ts'
 import { MD_BREAKPOINT, useViewportWidth } from '#/lib/useViewport.ts'
+import { useBackCloses } from '#/lib/useBackCloses.ts'
 
 const TILE_SIZE_KEY = 'luma.tileSize'
 
@@ -141,7 +143,6 @@ export function App() {
    * session that opens on a set list you chose a week ago has to be understood
    * before it can be used.
    */
-  const [listing, setListing] = useState<Listing>('characters')
 
   /**
    * Deep link to a set: `…/?set=<run>` opens the library with that set showing,
@@ -157,10 +158,8 @@ export function App() {
   useEffect(() => {
     const set = readSet(globalThis.location?.search ?? '')
     if (set === null) return
+    // The sidebar opens the section that holds the set by itself.
     applyQuery({ set })
-    // A link names a sitting, so open on the list that contains sittings
-    // rather than on the character list the app otherwise starts with.
-    setListing(set.startsWith(LORA_COMMAND) ? 'lora' : 'sets')
   }, [applyQuery])
 
   // Written on change, never in the same effect that reads: `replaceState` so
@@ -176,6 +175,24 @@ export function App() {
   }, [selectedSet])
 
   const [openId, setOpenId] = useState<number | null>(null)
+  /** The tile the grid was just opened on from the lightbox; ringed until the moment has passed. */
+  const [focusId, setFocusId] = useState<number | null>(null)
+  useEffect(() => {
+    if (focusId === null) return
+    const timer = setTimeout(() => setFocusId(null), 4000)
+    return () => clearTimeout(timer)
+  }, [focusId])
+
+  // A new filter is a new list, and a new list starts at the top. Without this
+  // a set picked from the sidebar opened wherever the previous grid had been
+  // scrolled to — somewhere in its middle (owner, 2026-09-21). Paging changes
+  // only the offset, and `setQuery` resets it, so offset is left out of the key.
+  const gridScroller = useRef<HTMLDivElement | null>(null)
+  const { offset: _offset, ...filters } = library.query
+  const filterKey = JSON.stringify(filters)
+  useEffect(() => {
+    if (gridScroller.current) gridScroller.current.scrollTop = 0
+  }, [filterKey])
 
   // The lightbox as a history entry, so the phone's back gesture closes it
   // instead of leaving the app — swiping in from the edge is the reflex for
@@ -309,6 +326,13 @@ export function App() {
   const [showTimeline, setShowTimeline] = useState(false)
   /** The comics workspace, over everything: a different job from browsing. */
   const [showComics, setShowComics] = useState(false)
+  const [showLoras, setShowLoras] = useState(false)
+  // Both panels cover the whole window, so the back gesture has to be a way out of them.
+  useBackCloses(showComics, () => setShowComics(false), 'comics')
+  useBackCloses(showLoras, () => setShowLoras(false), 'loras')
+  const page: Page = showComics ? 'comics' : showLoras ? 'loras' : 'library'
+  // The sidebar's Comics section, which the Comics page fills by portal.
+  const [comicsSlot, setComicsSlot] = useState<HTMLDivElement | null>(null)
   // Lives here rather than in the Lightbox so it survives closing one. The
   // Lightbox is mounted per-item, so local state reset the toggle every time
   // you opened a file. Deliberately separate from `showBoxes` above, which is
@@ -966,8 +990,14 @@ export function App() {
       stats={library.stats}
       characters={library.characters}
       sets={library.sets}
-      listing={listing}
-      onListing={setListing}
+      page={page}
+      onPage={(next) => {
+        // One page at a time. Library is the grid with whatever filters are on;
+        // going there from a page closes the page and nothing else.
+        setShowLoras(next === 'loras')
+        setShowComics(next === 'comics')
+        setShowLibrary(false)
+      }}
       selectedSets={library.query.sets}
       onSets={(runs) => {
         // `set` is kept in step for the deep link, which only knows one; the
@@ -975,6 +1005,7 @@ export function App() {
         // from a one-set view still opens that set.
         setQuery({ sets: runs, set: runs.length === 1 ? (runs[0] ?? null) : null })
         setShowLibrary(false)
+        setShowLoras(false)
       }}
       // Home is the unified grid with nothing narrowing it: every folder, no
       // set, no search. The character list is what the app opens on, so the
@@ -982,14 +1013,15 @@ export function App() {
       // nothing selected in it.
       onHome={() => {
         setQuery({ folderId: null, set: null, sets: [], search: '' })
-        setListing('characters')
         setShowLibrary(false)
+        setShowLoras(false)
       }}
       // The name is a ready-made search term: detection found it verbatim
       // in the prompt, and search runs over prompts.
       onCharacter={(name) => {
         setQuery({ search: name })
         setShowLibrary(false)
+        setShowLoras(false)
       }}
       tileSize={tileSize}
       onTileSize={(size) => {
@@ -1002,11 +1034,13 @@ export function App() {
       onSelect={(folderId) => {
         setQuery({ folderId })
         setShowLibrary(false)
+        setShowLoras(false)
       }}
       onAdd={() => void actions.addFolder()}
       onRemove={(id) => void actions.removeFolder(id)}
       onRescan={(id) => void actions.rescanFolder(id)}
       onRetryFailed={() => void actions.retryFailed(query.folderId)}
+      comicsSlot={setComicsSlot}
       exclusions={library.exclusions}
       onInclude={(path) => {
         // Undoing deletes the `.lumaignore` again, so this fails for the
@@ -1066,265 +1100,291 @@ export function App() {
         ) : null}
 
         <main className="flex min-w-0 flex-1 flex-col">
-          <FilterBar
-            query={query}
-            total={library.total}
-            shown={items.length}
-            onOpenLibrary={() => setShowLibrary(true)}
-            showBoxes={showBoxes}
-            onToggleBoxes={() => setShowBoxes((previous) => !previous)}
-            timeline={showTimeline}
-            onOpenComics={() => setShowComics(true)}
-            onToggleTimeline={() => {
-              setShowTimeline((previous) => {
-                // Closing the panel clears its narrowing. A range with no bars
-                // on screen would be an invisible filter — the grid quietly
-                // small and nothing saying why.
-                if (previous) setQuery({ modifiedAfter: null, modifiedBefore: null })
-                return !previous
-              })
-            }}
-            selecting={selecting}
-            onToggleSelecting={() => {
-              // Leaving the mode drops the selection. Keeping it would mean
-              // an invisible set of pictures that an action could later run
-              // over, which is exactly the surprise this mode exists to
-              // avoid.
-              setSelecting((previous) => !previous)
-              setSelected(new Set())
-              anchor.current = null
-            }}
-            onFindDuplicates={() => {
-              void actions.findDuplicates().then((report) => {
-                if (report.files === 0) {
-                  void showMessage(
-                    `No duplicates found across ${report.hashed.toLocaleString()} fingerprinted images.`,
-                    { title: 'No duplicates' },
-                  )
-                  return
-                }
-                void showMessage(
-                  [
-                    `${report.files.toLocaleString()} files in ${report.groups.toLocaleString()} groups ` +
-                      `(${report.imageGroups.toLocaleString()} image, ${report.videoGroups.toLocaleString()} video).`,
-                    report.skippedCommon > 0
-                      ? `${report.skippedCommon.toLocaleString()} blank or flat-coloured images were ` +
-                        'skipped — they all look alike and are not copies of each other.'
-                      : '',
-                  ]
-                    .filter(Boolean)
-                    .join('\n\n'),
-                  { title: 'Duplicates found' },
-                )
-              })
-            }}
-            onChange={setQuery}
-          />
-
-          {showTimeline ? (
-            <TimelinePanel
-              query={query}
-              onRange={(range) =>
-                setQuery(
-                  range
-                    ? { modifiedAfter: range.after, modifiedBefore: range.before }
-                    : { modifiedAfter: null, modifiedBefore: null },
-                )
-              }
+          {showComics ? (
+            // Pages live in the main column so the sidebar stays where it is: picking a folder, a set
+            // or a character there is the way back to the grid, on top of the page's own button and
+            // the back gesture (owner, 2026-09-21: "trapped forever inside the page").
+            <ComicsPanel
+              onClose={() => setShowComics(false)}
+              onOpenLibrary={() => setShowLibrary(true)}
+              listInto={comicsSlot}
             />
-          ) : null}
+          ) : showLoras ? (
+            <LorasPanel
+              onClose={() => setShowLoras(false)}
+              onOpenLibrary={() => setShowLibrary(true)}
+              onShowRenders={(search) => {
+                // A thumbnail is a way into the grid: search the library for that LoRA's own tag and
+                // step out of the way, rather than opening a second viewer inside the panel.
+                setQuery({ search, searchPaths: false })
+                setShowLoras(false)
+              }}
+            />
+          ) : (
+            <>
+              <FilterBar
+                query={query}
+                total={library.total}
+                shown={items.length}
+                onOpenLibrary={() => setShowLibrary(true)}
+                showBoxes={showBoxes}
+                onToggleBoxes={() => setShowBoxes((previous) => !previous)}
+                timeline={showTimeline}
+                onToggleTimeline={() => {
+                  setShowTimeline((previous) => {
+                    // Closing the panel clears its narrowing. A range with no bars
+                    // on screen would be an invisible filter — the grid quietly
+                    // small and nothing saying why.
+                    if (previous) setQuery({ modifiedAfter: null, modifiedBefore: null })
+                    return !previous
+                  })
+                }}
+                selecting={selecting}
+                onToggleSelecting={() => {
+                  // Leaving the mode drops the selection. Keeping it would mean
+                  // an invisible set of pictures that an action could later run
+                  // over, which is exactly the surprise this mode exists to
+                  // avoid.
+                  setSelecting((previous) => !previous)
+                  setSelected(new Set())
+                  anchor.current = null
+                }}
+                onFindDuplicates={() => {
+                  void actions.findDuplicates().then((report) => {
+                    if (report.files === 0) {
+                      void showMessage(
+                        `No duplicates found across ${report.hashed.toLocaleString()} fingerprinted images.`,
+                        { title: 'No duplicates' },
+                      )
+                      return
+                    }
+                    void showMessage(
+                      [
+                        `${report.files.toLocaleString()} files in ${report.groups.toLocaleString()} groups ` +
+                          `(${report.imageGroups.toLocaleString()} image, ${report.videoGroups.toLocaleString()} video).`,
+                        report.skippedCommon > 0
+                          ? `${report.skippedCommon.toLocaleString()} blank or flat-coloured images were ` +
+                            'skipped — they all look alike and are not copies of each other.'
+                          : '',
+                      ]
+                        .filter(Boolean)
+                        .join('\n\n'),
+                      { title: 'Duplicates found' },
+                    )
+                  })
+                }}
+                onChange={setQuery}
+              />
 
-          <SearchBar
-            value={query.search}
-            onChange={(search) => setQuery({ search })}
-            searchPaths={query.searchPaths}
-            onSearchPathsChange={(searchPaths) => setQuery({ searchPaths })}
-            matches={library.total}
-            loading={library.loading}
-          />
-
-          {/* Only while selecting, and above the grid rather than floating over
-              it: a count that covers pictures is a count you have to move to
-              read. */}
-          {selecting ? (
-            <div className="flex items-center gap-2 border-b border-indigo-400/20 bg-indigo-500/10 px-4 py-1.5 text-xs max-md:flex-wrap">
-              <span className="tabular-nums text-indigo-200">
-                {selected.size === 0
-                  ? 'Nothing selected'
-                  : `${selected.size.toLocaleString()} selected`}
-              </span>
-              {/* Keyboard advice, on the one layout that has a keyboard. */}
-              <span className="text-indigo-300/50 max-md:hidden">
-                Click to pick one, shift-click for everything between
-              </span>
-              <button
-                type="button"
-                disabled={selected.size === 0 || upscaling !== null || forge?.busy === true}
-                onClick={runUpscale}
-                title={
-                  forge?.busy
-                    ? `Forge is generating${forge.job ? ` — ${forge.job}` : ''}. Both want the whole GPU, so running them together makes each take about twice as long.`
-                    : 'Run each through a local upscale model and resample to 3840px on the long edge. Results are written beside the originals.'
-                }
-                className="ml-auto mr-2 rounded-full bg-indigo-500 px-3 py-1 text-[11px] font-medium text-white hover:bg-indigo-400 disabled:cursor-default disabled:bg-indigo-500/30 disabled:text-white/50"
-              >
-                {upscaling
-                  ? `Upscaling ${upscaling.done}/${upscaling.total}…`
-                  : forge?.busy
-                    ? 'Forge is busy'
-                    : `Upscale ${selected.size.toLocaleString()} to 4K`}
-              </button>
-
-              <button
-                type="button"
-                disabled={selected.size === 0 || upscaling !== null}
-                onClick={reviewForDeviantArt}
-                title="Review titles, tags and mature flags, then upload to DeviantArt. Nothing is posted without a second click."
-                className="mr-2 rounded-full bg-white/5 px-3 py-1 text-[11px] font-medium text-zinc-300 hover:bg-white/10 hover:text-zinc-100 disabled:cursor-default disabled:bg-white/5 disabled:text-zinc-600"
-              >
-                DeviantArt…
-              </button>
-
-              <button
-                type="button"
-                disabled={selected.size === 0 || upscaling !== null}
-                onClick={reviewForPatreon}
-                title="Compose a Patreon draft from these, in the order shown. Reorder by dragging. Nothing is published."
-                className="mr-2 rounded-full bg-white/5 px-3 py-1 text-[11px] font-medium text-zinc-300 hover:bg-white/10 hover:text-zinc-100 disabled:cursor-default disabled:bg-white/5 disabled:text-zinc-600"
-              >
-                Patreon…
-              </button>
-
-              {/* Marking by hand, for what this app did not upload itself.
-                  Deliberately next to the upload button and deliberately not
-                  looking like it: one posts, the other only records. */}
-              <button
-                type="button"
-                disabled={selected.size === 0 || upscaling !== null}
-                onClick={markDeviantArt}
-                title={
-                  allSelectedPosted
-                    ? 'Clear the DeviantArt mark from these — this only forgets the record, it does not take anything down'
-                    : 'Record these as already on DeviantArt, without uploading anything'
-                }
-                className="mr-2 rounded-full bg-emerald-500/15 px-3 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200 disabled:cursor-default disabled:bg-emerald-500/5 disabled:text-emerald-300/30"
-              >
-                {allSelectedPosted ? 'Unmark d' : 'Mark as posted'}
-              </button>
-
-              {/* Only ever un-marks, and only shows when there is a mark to
-                  clear: a Patreon record without a draft behind it would say
-                  nothing true, so there is no "mark by hand" twin. */}
-              {anySelectedOnPatreon ? (
-                <button
-                  type="button"
-                  disabled={upscaling !== null}
-                  onClick={unmarkPatreon}
-                  title="Forget that these went to a Patreon draft — only the record here; the draft itself is untouched"
-                  className="mr-2 rounded-full bg-orange-500/15 px-3 py-1 text-[11px] font-medium text-orange-300 hover:bg-orange-500/25 hover:text-orange-200 disabled:cursor-default disabled:bg-orange-500/5 disabled:text-orange-300/30"
-                >
-                  Unmark p
-                </button>
+              {showTimeline ? (
+                <TimelinePanel
+                  query={query}
+                  onRange={(range) =>
+                    setQuery(
+                      range
+                        ? { modifiedAfter: range.after, modifiedBefore: range.before }
+                        : { modifiedAfter: null, modifiedBefore: null },
+                    )
+                  }
+                />
               ) : null}
 
-              <button
-                type="button"
-                disabled={selected.size === 0 || upscaling !== null}
-                onClick={deleteSelected}
-                title="Delete every selected file"
-                className="rounded-full bg-red-500/15 px-3 py-1 text-[11px] font-medium text-red-300 hover:bg-red-500/25 hover:text-red-200 disabled:cursor-default disabled:bg-red-500/5 disabled:text-red-300/30"
-              >
-                Delete {selected.size.toLocaleString()}
-              </button>
-
-              <span className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelected(new Set(items.map((item) => item.id)))
-                    anchor.current = items.at(-1)?.id ?? null
-                  }}
-                  className="text-indigo-300 underline decoration-dotted underline-offset-2 hover:text-indigo-100"
-                >
-                  Select all {items.length.toLocaleString()}
-                </button>
-                <button
-                  type="button"
-                  disabled={selected.size === 0}
-                  onClick={() => {
-                    setSelected(new Set())
-                    anchor.current = null
-                  }}
-                  className="text-indigo-300 underline decoration-dotted underline-offset-2 hover:text-indigo-100 disabled:cursor-default disabled:text-indigo-300/30 disabled:no-underline"
-                >
-                  Clear
-                </button>
-              </span>
-            </div>
-          ) : null}
-
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {folders.length === 0 ? (
-              <EmptyState
-                title="No folders watched yet"
-                hint="Add a folder and Luma Vault indexes every image and video inside it, builds thumbnails, and classifies everything locally. Nothing is uploaded and nothing is moved."
-                action={
-                  <Button variant="primary" onClick={() => void actions.addFolder()}>
-                    Choose a folder
-                  </Button>
-                }
+              <SearchBar
+                value={query.search}
+                onChange={(search) => setQuery({ search })}
+                searchPaths={query.searchPaths}
+                onSearchPathsChange={(searchPaths) => setQuery({ searchPaths })}
+                matches={library.total}
+                loading={library.loading}
               />
-            ) : (
-              <>
-                <div className="p-4">
-                  {library.failure ? (
-                    // Checked before the empty case on purpose: a query that
-                    // threw also leaves `items` empty, and falling through to
-                    // "nothing matches" blames the filters for a host that
-                    // stopped answering.
-                    <EmptyState
-                      title={
-                        library.failure.unreachable
-                          ? library.failure.message
-                          : 'That query could not be run'
-                      }
-                      hint={
-                        library.failure.unreachable
-                          ? 'The library is still there — this page just cannot reach the machine sharing it. Check it is awake and still sharing, then retry.'
-                          : library.failure.message
-                      }
-                      action={
-                        <Button variant="primary" onClick={() => library.reload()}>
-                          Retry
-                        </Button>
-                      }
-                    />
-                  ) : items.length === 0 && !library.loading ? (
-                    <EmptyState
-                      title={query.search ? `Nothing matches "${query.search}"` : 'Nothing matches these filters'}
-                      hint={
-                        query.search
-                          ? 'Filenames and prompts are both searched. Three characters minimum, and every word has to appear.'
-                          : 'Clear a filter, or wait for the scan to finish if it is still running.'
-                      }
-                    />
-                  ) : (
-                    <MediaGrid
-                      items={items}
-                      onOpen={openOrSelect}
-                      onReachEnd={library.loadMore}
-                      showBoxes={showBoxes}
-                      groupDuplicates={query.duplicatesOnly}
-                      tileSize={gridTileSize}
-                      maxTileWidth={maxTileWidth}
-                      selected={selected}
-                      folderTerm={query.searchPaths ? query.search : ''}
-                    />
-                  )}
+
+              {/* Only while selecting, and above the grid rather than floating over
+                  it: a count that covers pictures is a count you have to move to
+                  read. */}
+              {selecting ? (
+                <div className="flex items-center gap-2 border-b border-indigo-400/20 bg-indigo-500/10 px-4 py-1.5 text-xs max-md:flex-wrap">
+                  <span className="tabular-nums text-indigo-200">
+                    {selected.size === 0
+                      ? 'Nothing selected'
+                      : `${selected.size.toLocaleString()} selected`}
+                  </span>
+                  {/* Keyboard advice, on the one layout that has a keyboard. */}
+                  <span className="text-indigo-300/50 max-md:hidden">
+                    Click to pick one, shift-click for everything between
+                  </span>
+                  <button
+                    type="button"
+                    disabled={selected.size === 0 || upscaling !== null || forge?.busy === true}
+                    onClick={runUpscale}
+                    title={
+                      forge?.busy
+                        ? `Forge is generating${forge.job ? ` — ${forge.job}` : ''}. Both want the whole GPU, so running them together makes each take about twice as long.`
+                        : 'Run each through a local upscale model and resample to 3840px on the long edge. Results are written beside the originals.'
+                    }
+                    className="ml-auto mr-2 rounded-full bg-indigo-500 px-3 py-1 text-[11px] font-medium text-white hover:bg-indigo-400 disabled:cursor-default disabled:bg-indigo-500/30 disabled:text-white/50"
+                  >
+                    {upscaling
+                      ? `Upscaling ${upscaling.done}/${upscaling.total}…`
+                      : forge?.busy
+                        ? 'Forge is busy'
+                        : `Upscale ${selected.size.toLocaleString()} to 4K`}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={selected.size === 0 || upscaling !== null}
+                    onClick={reviewForDeviantArt}
+                    title="Review titles, tags and mature flags, then upload to DeviantArt. Nothing is posted without a second click."
+                    className="mr-2 rounded-full bg-white/5 px-3 py-1 text-[11px] font-medium text-zinc-300 hover:bg-white/10 hover:text-zinc-100 disabled:cursor-default disabled:bg-white/5 disabled:text-zinc-600"
+                  >
+                    DeviantArt…
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={selected.size === 0 || upscaling !== null}
+                    onClick={reviewForPatreon}
+                    title="Compose a Patreon draft from these, in the order shown. Reorder by dragging. Nothing is published."
+                    className="mr-2 rounded-full bg-white/5 px-3 py-1 text-[11px] font-medium text-zinc-300 hover:bg-white/10 hover:text-zinc-100 disabled:cursor-default disabled:bg-white/5 disabled:text-zinc-600"
+                  >
+                    Patreon…
+                  </button>
+
+                  {/* Marking by hand, for what this app did not upload itself.
+                      Deliberately next to the upload button and deliberately not
+                      looking like it: one posts, the other only records. */}
+                  <button
+                    type="button"
+                    disabled={selected.size === 0 || upscaling !== null}
+                    onClick={markDeviantArt}
+                    title={
+                      allSelectedPosted
+                        ? 'Clear the DeviantArt mark from these — this only forgets the record, it does not take anything down'
+                        : 'Record these as already on DeviantArt, without uploading anything'
+                    }
+                    className="mr-2 rounded-full bg-emerald-500/15 px-3 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/25 hover:text-emerald-200 disabled:cursor-default disabled:bg-emerald-500/5 disabled:text-emerald-300/30"
+                  >
+                    {allSelectedPosted ? 'Unmark d' : 'Mark as posted'}
+                  </button>
+
+                  {/* Only ever un-marks, and only shows when there is a mark to
+                      clear: a Patreon record without a draft behind it would say
+                      nothing true, so there is no "mark by hand" twin. */}
+                  {anySelectedOnPatreon ? (
+                    <button
+                      type="button"
+                      disabled={upscaling !== null}
+                      onClick={unmarkPatreon}
+                      title="Forget that these went to a Patreon draft — only the record here; the draft itself is untouched"
+                      className="mr-2 rounded-full bg-orange-500/15 px-3 py-1 text-[11px] font-medium text-orange-300 hover:bg-orange-500/25 hover:text-orange-200 disabled:cursor-default disabled:bg-orange-500/5 disabled:text-orange-300/30"
+                    >
+                      Unmark p
+                    </button>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    disabled={selected.size === 0 || upscaling !== null}
+                    onClick={deleteSelected}
+                    title="Delete every selected file"
+                    className="rounded-full bg-red-500/15 px-3 py-1 text-[11px] font-medium text-red-300 hover:bg-red-500/25 hover:text-red-200 disabled:cursor-default disabled:bg-red-500/5 disabled:text-red-300/30"
+                  >
+                    Delete {selected.size.toLocaleString()}
+                  </button>
+
+                  <span className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelected(new Set(items.map((item) => item.id)))
+                        anchor.current = items.at(-1)?.id ?? null
+                      }}
+                      className="text-indigo-300 underline decoration-dotted underline-offset-2 hover:text-indigo-100"
+                    >
+                      Select all {items.length.toLocaleString()}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={selected.size === 0}
+                      onClick={() => {
+                        setSelected(new Set())
+                        anchor.current = null
+                      }}
+                      className="text-indigo-300 underline decoration-dotted underline-offset-2 hover:text-indigo-100 disabled:cursor-default disabled:text-indigo-300/30 disabled:no-underline"
+                    >
+                      Clear
+                    </button>
+                  </span>
                 </div>
-              </>
-            )}
-          </div>
+              ) : null}
+
+              <div ref={gridScroller} data-testid="grid-scroller" className="min-h-0 flex-1 overflow-y-auto">
+                {folders.length === 0 ? (
+                  <EmptyState
+                    title="No folders watched yet"
+                    hint="Add a folder and Luma Vault indexes every image and video inside it, builds thumbnails, and classifies everything locally. Nothing is uploaded and nothing is moved."
+                    action={
+                      <Button variant="primary" onClick={() => void actions.addFolder()}>
+                        Choose a folder
+                      </Button>
+                    }
+                  />
+                ) : (
+                  <>
+                    <div className="p-4">
+                      {library.failure ? (
+                        // Checked before the empty case on purpose: a query that
+                        // threw also leaves `items` empty, and falling through to
+                        // "nothing matches" blames the filters for a host that
+                        // stopped answering.
+                        <EmptyState
+                          title={
+                            library.failure.unreachable
+                              ? library.failure.message
+                              : 'That query could not be run'
+                          }
+                          hint={
+                            library.failure.unreachable
+                              ? 'The library is still there — this page just cannot reach the machine sharing it. Check it is awake and still sharing, then retry.'
+                              : library.failure.message
+                          }
+                          action={
+                            <Button variant="primary" onClick={() => library.reload()}>
+                              Retry
+                            </Button>
+                          }
+                        />
+                      ) : items.length === 0 && !library.loading ? (
+                        <EmptyState
+                          title={query.search ? `Nothing matches "${query.search}"` : 'Nothing matches these filters'}
+                          hint={
+                            query.search
+                              ? 'Filenames and prompts are both searched. Three characters minimum, and every word has to appear.'
+                              : 'Clear a filter, or wait for the scan to finish if it is still running.'
+                          }
+                        />
+                      ) : (
+                        <MediaGrid
+                          items={items}
+                          onOpen={openOrSelect}
+                          onReachEnd={library.loadMore}
+                      hasEarlier={library.hasEarlier}
+                      onReachStart={library.loadEarlier}
+                      focusId={focusId}
+                          showBoxes={showBoxes}
+                          groupDuplicates={query.duplicatesOnly}
+                          tileSize={gridTileSize}
+                          maxTileWidth={maxTileWidth}
+                          selected={selected}
+                          folderTerm={query.searchPaths ? query.search : ''}
+                        />
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )}
         </main>
       </div>
 
@@ -1349,6 +1409,15 @@ export function App() {
           seed={items[openIndex] ?? null}
           preload={preload}
           onClose={() => setOpenId(null)}
+          onOpenInLibrary={(id) => {
+            // Out of the lightbox, filters cleared, the grid opened on the
+            // page that holds this picture with the rest of its batch around
+            // it (owner, 2026-09-21).
+            setOpenId(null)
+            setShowLoras(false)
+            setShowComics(false)
+            void library.jumpToItem(id).then(() => setFocusId(id))
+          }}
           onStep={step}
           // Reaches a row the grid is not showing — the original behind an
           // upscaled variant — so it sets the open id directly rather than
@@ -1421,7 +1490,6 @@ export function App() {
         />
       ) : null}
 
-      {showComics ? <ComicsPanel onClose={() => setShowComics(false)} /> : null}
 
       <DialogHost />
       <ToastHost />

@@ -1,6 +1,7 @@
 import { Button, ProgressBar, Spinner, cn } from '@luma/ui'
 import {
   COMIC_ANCHORS,
+  autofixCast,
   COMIC_BALLOON_KINDS,
   COMIC_LAYOUTS,
   comicScriptSchema,
@@ -19,12 +20,14 @@ import {
   type ComicSummary,
 } from '@luma/core'
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import {
   comicCancel,
   comicCreate,
   comicInspect,
   comicList,
   comicRead,
+  comicRestorePanel,
   comicRun,
   comicSave,
   comicSaveSettings,
@@ -36,10 +39,21 @@ import {
   type ForgeStatus,
 } from '#/lib/native.ts'
 import { showMessage } from '#/lib/dialogs.ts'
+import { Viewer } from '#/components/Viewer.tsx'
 import { toast } from '#/lib/toasts.ts'
 
 interface ComicsPanelProps {
   onClose: () => void
+  /** On a phone the sidebar is a drawer; this opens it, since the filter bar that usually does is not on this page. */
+  onOpenLibrary?: () => void
+  /**
+   * Where the comics list renders: the Comics section the main sidebar shows
+   * while this page is open. A portal rather than lifted state, because the
+   * list is inseparable from this component's project state (open, create,
+   * standing) and the sidebar only lends it a place. `null` while the section
+   * is folded, and the list simply does not render.
+   */
+  listInto?: HTMLElement | null
 }
 
 type Step = 'story' | 'script' | 'panels' | 'pages'
@@ -107,52 +121,6 @@ function MenuItem({ onClick, danger, children }: { onClick: () => void; danger?:
  *  `ari` everywhere the pipeline touches it. */
 export function titleCase(id: string): string {
   return id.replace(/(^|[\s_-])(\w)/g, (_, lead: string, letter: string) => lead + letter.toUpperCase())
-}
-
-/**
- * A page or a panel at full size, over the panel.
- *
- * It exists because the obvious markup does the wrong thing here: an
- * `<a href>` to a `luma://` file NAVIGATES the webview to the image, and the
- * shell has no back button, so the app was simply gone until it was
- * restarted. Nothing in this panel links straight at a file any more.
- */
-export function Viewer({ src, caption, onClose }: { src: string; caption: string; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  return (
-    <div
-      role="presentation"
-      data-testid="viewer-backdrop"
-      // Only a click on the backdrop itself closes, so the picture needs no
-      // handler of its own and stays an ordinary image to a screen reader.
-      onClick={(event) => event.target === event.currentTarget && onClose()}
-      className="fixed inset-0 z-[120] flex flex-col items-center justify-center gap-3 bg-black/85 p-8"
-    >
-      <img
-        src={src}
-        alt={caption}
-        className="min-h-0 max-w-full flex-1 object-contain"
-      />
-      <p className="text-xs text-zinc-400">
-        {caption}
-        <span className="ml-3 text-zinc-600">Esc, or click outside, to close</span>
-      </p>
-      <button
-        type="button"
-        onClick={onClose}
-        className="absolute right-5 top-5 rounded-md bg-white/10 px-3 py-1 text-sm hover:bg-white/20"
-      >
-        Close
-      </button>
-    </div>
-  )
 }
 
 /**
@@ -340,7 +308,7 @@ const PANEL_BEAT = [
  * the story text and the script, saved before any stage runs so what renders
  * is what is on screen.
  */
-export function ComicsPanel({ onClose }: ComicsPanelProps) {
+export function ComicsPanel({ onClose, onOpenLibrary, listInto = null }: ComicsPanelProps) {
   const [comics, setComics] = useState<ComicSummary[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [project, setProject] = useState<ComicProject | null>(null)
@@ -353,6 +321,8 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
   const [showSettings, setShowSettings] = useState(true)
   const [renaming, setRenaming] = useState(false)
   const [viewing, setViewing] = useState<{ src: string; caption: string } | null>(null)
+  /** The panel open in the re-roll view, by id. */
+  const [studio, setStudio] = useState<string | null>(null)
   /** Where a newly added panel reserves its lettering space. A preference
    *  for this editor, not a setting the pipeline reads — which is why it is
    *  state here and not in `comic.config.json`. */
@@ -618,70 +588,9 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
   const hasScript = !!script
   const forgeNote = forge && !forge.reachable ? 'Forge is not running — panels cannot render until it is.' : forge?.busy ? `Forge is busy${forge.job ? ` — ${forge.job}` : ''}; renders will queue behind it.` : null
 
-  return (
-    <div className="fixed inset-0 z-[95] flex flex-col bg-zinc-950 text-zinc-200">
-      <header className="flex items-center gap-4 border-b border-white/10 bg-zinc-900/50 px-4 py-2">
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="grid size-7 place-items-center rounded-full ring-2 ring-indigo-400">
-            <span className="size-2.5 rounded-full bg-indigo-400" />
-          </span>
-          <span className="text-sm font-semibold">Luma Vault</span>
-        </div>
-
-        <nav className="mx-auto flex min-w-0 items-center gap-0.5">
-          {STEPS.map((entry, index) => {
-            const active = step === entry.key
-            const done = finished[entry.key]
-            return (
-              <Fragment key={entry.key}>
-                {index > 0 ? <span className="px-1 text-zinc-700">&rarr;</span> : null}
-                <button
-                  type="button"
-                  onClick={() => setStep(entry.key)}
-                  title={entry.hint}
-                  className={cn(
-                    'flex items-center gap-2.5 rounded-full py-1 pl-1 pr-3.5 text-left transition',
-                    active ? 'bg-indigo-500/20 ring-1 ring-indigo-400/60' : 'hover:bg-white/5',
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'grid size-7 shrink-0 place-items-center rounded-full text-xs font-semibold',
-                      active ? 'bg-indigo-500 text-white' : done ? 'bg-emerald-500/20 text-emerald-300' : 'bg-white/10 text-zinc-400',
-                    )}
-                  >
-                    {index + 1}
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-xs font-semibold leading-tight">{entry.label}</span>
-                    <span className="block text-[11px] leading-tight text-zinc-500">{entry.caption}</span>
-                  </span>
-                  {done && !active ? <Tick /> : null}
-                </button>
-              </Fragment>
-            )
-          })}
-        </nav>
-
-        <div className="flex shrink-0 items-center gap-2">
-          {forgeNote ? (
-            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300" title={forgeNote}>
-              {forge?.reachable ? 'Forge busy' : 'Forge off'}
-            </span>
-          ) : null}
-          {busy ? (
-            <Button size="sm" variant="danger" onClick={() => void comicCancel().then(() => toast('stopping…'))}>
-              Stop
-            </Button>
-          ) : null}
-          <Button size="sm" onClick={onClose}>
-            Close
-          </Button>
-        </div>
-      </header>
-
-      <div className="flex min-h-0 flex-1">
-        <aside className="flex w-64 shrink-0 flex-col border-r border-white/10 bg-zinc-900/30">
+  // The comics list, rendered into the sidebar's Comics section (see `listInto`).
+  const comicsList = (
+    <div className="flex flex-col">
           <div className="p-3">
             {naming ? (
               <input
@@ -766,32 +675,87 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
               })
             )}
           </div>
+    </div>
+  )
 
-          <nav className="border-t border-white/10 p-2">
-            <button type="button" onClick={onClose} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-400 hover:bg-white/5 hover:text-zinc-200">
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-zinc-950 text-zinc-200">
+      {/* In the main column beside the app's sidebar, like every page: the
+          wordmark and the way back to the library are the sidebar's, so the
+          header carries only what is about this comic. */}
+      <header className="flex items-center gap-4 border-b border-white/10 bg-zinc-900/50 px-4 py-2">
+        <div className="flex shrink-0 items-center gap-2">
+          {onOpenLibrary ? (
+            <Button size="sm" onClick={onOpenLibrary} aria-label="Open the library panel" className="md:hidden">
               Library
-            </button>
-            <button
-              type="button"
-              onClick={() => setStep('script')}
-              title={cast.length ? `In this comic: ${cast.join(', ')}. Defined in comic.config.json.` : 'The cast comes from comic.config.json'}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
-            >
-              Characters
-              {cast.length ? <span className="ml-auto text-[11px] text-zinc-600">{cast.length}</span> : null}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowSettings((previous) => !previous)}
-              className={cn(
-                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-white/5',
-                showSettings ? 'text-zinc-200' : 'text-zinc-400 hover:text-zinc-200',
-              )}
-            >
-              Settings
-            </button>
-          </nav>
-        </aside>
+            </Button>
+          ) : null}
+          <span className="text-sm font-semibold">Comics</span>
+        </div>
+
+        <nav className="mx-auto flex min-w-0 items-center gap-0.5">
+          {STEPS.map((entry, index) => {
+            const active = step === entry.key
+            const done = finished[entry.key]
+            return (
+              <Fragment key={entry.key}>
+                {index > 0 ? <span className="px-1 text-zinc-700">&rarr;</span> : null}
+                <button
+                  type="button"
+                  onClick={() => setStep(entry.key)}
+                  title={entry.hint}
+                  className={cn(
+                    'flex items-center gap-2.5 rounded-full py-1 pl-1 pr-3.5 text-left transition',
+                    active ? 'bg-indigo-500/20 ring-1 ring-indigo-400/60' : 'hover:bg-white/5',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'grid size-7 shrink-0 place-items-center rounded-full text-xs font-semibold',
+                      active ? 'bg-indigo-500 text-white' : done ? 'bg-emerald-500/20 text-emerald-300' : 'bg-white/10 text-zinc-400',
+                    )}
+                  >
+                    {index + 1}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-semibold leading-tight">{entry.label}</span>
+                    <span className="block text-[11px] leading-tight text-zinc-500">{entry.caption}</span>
+                  </span>
+                  {done && !active ? <Tick /> : null}
+                </button>
+              </Fragment>
+            )
+          })}
+        </nav>
+
+        <div className="flex shrink-0 items-center gap-2">
+          {forgeNote ? (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-300" title={forgeNote}>
+              {forge?.reachable ? 'Forge busy' : 'Forge off'}
+            </span>
+          ) : null}
+          {busy ? (
+            <Button size="sm" variant="danger" onClick={() => void comicCancel().then(() => toast('stopping…'))}>
+              Stop
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            onClick={() => setShowSettings((previous) => !previous)}
+            aria-pressed={showSettings}
+            title="Show or hide the comic's settings"
+          >
+            Settings
+          </Button>
+          <Button size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </header>
+
+      {listInto ? createPortal(comicsList, listInto) : null}
+
+      <div className="flex min-h-0 flex-1">
 
         <main className="flex min-w-0 flex-1 flex-col">
           {!selected ? (
@@ -921,6 +885,7 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
                       busy={busy}
                       onRender={(options) => void run(options)}
                       onView={(src, caption) => setViewing({ src, caption })}
+                      onStudio={setStudio}
                     />
                   )
                 ) : null}
@@ -959,6 +924,20 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
         </main>
 
         {viewing ? <Viewer src={viewing.src} caption={viewing.caption} onClose={() => setViewing(null)} /> : null}
+
+        {studio && selected && script ? (
+          <PanelStudio
+            comic={selected}
+            spec={script.pages.flatMap((page) => page.panels).find((panel) => panel.id === studio) ?? null}
+            state={panelState.get(studio)}
+            status={panelStatus.get(studio)}
+            rendering={rendering?.id === studio ? rendering : null}
+            busy={busy}
+            onClose={() => setStudio(null)}
+            onRender={(options) => void run(options)}
+            onRestored={() => void open(selected)}
+          />
+        ) : null}
 
         {selected && showSettings ? (
           <ComicSettingsPanel
@@ -1097,16 +1076,28 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, ne
           </MenuItem>
         </Kebab>
       </div>
-      <label className="mb-3 flex items-center gap-2 text-xs">
-        <span className="shrink-0 text-zinc-500">Body for this page</span>
-        <input
-          value={page.body ?? ''}
-          onChange={(event) => onChange((previous) => ({ ...previous, body: event.target.value || undefined }))}
-          placeholder="leave empty to use each character's own"
-          className={inputClass}
-          title="Replaces every character's body tags for the panels on this page. A panel that sets its own wins over it."
-        />
-      </label>
+      <div className="mb-3 grid gap-2 text-xs sm:grid-cols-2">
+        <label className="flex items-center gap-2">
+          <span className="shrink-0 text-zinc-500">Lighting</span>
+          <input
+            value={page.lighting ?? ''}
+            onChange={(event) => onChange((previous) => ({ ...previous, lighting: event.target.value || undefined }))}
+            placeholder="this page only"
+            className={inputClass}
+            title="The light for every panel on this page, replacing the book's. A panel that sets its own wins over it."
+          />
+        </label>
+        <label className="flex items-center gap-2">
+          <span className="shrink-0 text-zinc-500">Body</span>
+          <input
+            value={page.body ?? ''}
+            onChange={(event) => onChange((previous) => ({ ...previous, body: event.target.value || undefined }))}
+            placeholder="this page only"
+            className={inputClass}
+            title="Replaces every character's body tags for the panels on this page. A panel that sets its own wins over it."
+          />
+        </label>
+      </div>
       <div className="grid gap-3 lg:grid-cols-2">
         {page.panels.map((panel, index) => (
           <PanelEditor
@@ -1259,6 +1250,17 @@ const PanelEditor = memo(function PanelEditor({ panel, position, cast, plates, o
               />
             </label>
           </div>
+        </div>
+
+        <div className="flex items-start gap-2">
+          <span className="mt-1.5 w-20 shrink-0 text-[11px] text-zinc-500">Lighting</span>
+          <input
+            value={panel.lighting ?? ''}
+            onChange={(event) => onChange((previous) => ({ ...previous, lighting: event.target.value || undefined }))}
+            placeholder="this panel only; empty follows the page, then the book"
+            className={inputClass}
+            title="The light for this panel alone. Bottom rung: book, then page, then panel."
+          />
         </div>
 
         <div className="flex items-start gap-2">
@@ -1417,11 +1419,12 @@ interface PanelsViewProps {
   busy: boolean
   onRender: (options: ComicRunOptions) => void
   onView: (src: string, caption: string) => void
+  onStudio: (id: string) => void
 }
 
 const baseRun: ComicRunOptions = { stage: 'panels', page: null, panel: null, seed: null, attempt: null, force: false, noTagger: false }
 
-function PanelsView({ script, state, status, settings, rendering, busy, onRender, onView }: PanelsViewProps) {
+function PanelsView({ script, state, status, settings, rendering, busy, onRender, onView, onStudio }: PanelsViewProps) {
   const total = script.pages.reduce((n, page) => n + page.panels.length, 0)
   const done = script.pages.reduce((n, page) => n + page.panels.filter((panel) => state.get(panel.id)?.path).length, 0)
   const checked = [...state.values()].filter((panel) => panel.verdict).length
@@ -1471,10 +1474,10 @@ function PanelsView({ script, state, status, settings, rendering, busy, onRender
                 status={status.get(panel.id)}
                 plates={settings?.plates ?? false}
                 onView={onView}
+                onOpen={() => onStudio(panel.id)}
                 progress={rendering?.id === panel.id ? (rendering.progress ?? 0) : null}
                 busy={busy}
                 onNextSeed={() => onRender({ ...baseRun, page: pageIndex + 1, panel: panel.id, attempt: (state.get(panel.id)?.attempt ?? 0) + 1, force: true })}
-                onAgain={() => onRender({ ...baseRun, page: pageIndex + 1, panel: panel.id, force: true })}
               />
             ))}
           </div>
@@ -1566,6 +1569,20 @@ function ComicSettingsPanel({
           />
           <span className="mt-1 block text-[11px] text-zinc-500">
             Tags appended to every panel. Empty means the checkpoint decides.
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="mb-1 block font-medium text-zinc-300">Lighting</span>
+          <input
+            value={draft.lighting}
+            onChange={(event) => set({ lighting: event.target.value })}
+            placeholder="sunrise, golden hour, warm light"
+            className={inputClass}
+            title="The light the whole book is lit by. A page or a panel can override it. Leave it empty and each scene lights itself, which is how a book of 'grey morning' comes back with no colour in it."
+          />
+          <span className="mt-1 block text-[11px] text-zinc-500">
+            Every panel, unless a page or panel says otherwise.
           </span>
         </label>
 
@@ -1671,13 +1688,47 @@ function ComicSettingsPanel({
 
         {script && Object.keys(script.characters).length > 0 ? (
           <div className="space-y-2 border-t border-white/10 pt-3">
-            <span className="block font-medium text-zinc-300">Body</span>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-zinc-300">Cast</span>
+              <Button
+                size="sm"
+                className="ml-auto"
+                onClick={() => {
+                  const fixed = autofixCast(script.characters)
+                  if (fixed.problems.length > 0) {
+                    void showMessage(fixed.problems.join('\n'), { title: 'Autofix' })
+                  }
+                  if (fixed.changes.length === 0) {
+                    if (fixed.problems.length === 0) toast('already matches the LoRA catalogue')
+                    return
+                  }
+                  onScriptChange((previous) => ({ ...previous, characters: fixed.characters }))
+                  void showMessage(fixed.changes.join('\n'), { title: 'Autofix' })
+                }}
+                title="Put every character back in step with the LoRA catalogue: the version it names, at the weight it names, and without the appearance words the trigger already carries."
+              >
+                Autofix prompt
+              </Button>
+            </div>
+            <span className="block text-[11px] leading-relaxed text-zinc-500">
+              Autofix moves each character to the version and weight the LoRA catalogue names, and makes her words
+              match how that LoRA was taught. A trigger-only LoRA carries hair, eyes and the default outfit by itself,
+              so naming the outfit again competes with it; an older sheet-crop LoRA was captioned the other way round
+              and needs its outfit named.
+            </span>
+
+            <span className="block pt-1 font-medium text-zinc-300">Body</span>
             <span className="block text-[11px] text-zinc-500">
               Tags for her build, in every panel she is in. A page or a panel can override it.
             </span>
             {Object.entries(script.characters).map(([id, character]) => (
               <label key={id} className="block">
-                <span className="mb-0.5 block text-zinc-500">{titleCase(id)}</span>
+                <span className="mb-0.5 flex items-center gap-2 text-zinc-500">
+                  {titleCase(id)}
+                  <span className="truncate font-mono text-[10px] text-zinc-600" title={`${character.lora} · trigger "${character.trigger}"${character.look ? ` · look: ${character.look}` : ' · no look words, the trigger carries her'}`}>
+                    {character.lora}
+                  </span>
+                </span>
                 <input
                   value={character.body}
                   onChange={(event) =>
@@ -1727,6 +1778,145 @@ function ComicSettingsPanel({
   )
 }
 
+/**
+ * One panel, large, with the two things a person actually does to it: roll
+ * the seed again, and go back to the take that was right.
+ *
+ * The going back is the point. Getting an outfit right is a matter of
+ * rolling until it is, and before every render archived the picture it
+ * replaced, the roll after the good one destroyed it — so the honest way to
+ * work was to not roll at all.
+ */
+function PanelStudio({
+  comic,
+  spec,
+  state,
+  status,
+  rendering,
+  busy,
+  onClose,
+  onRender,
+  onRestored,
+}: {
+  comic: string
+  spec: ComicPanelSpec | null
+  state: ComicPanelState | undefined
+  status: ComicPanelStatus | undefined
+  rendering: ComicEvent | null
+  busy: boolean
+  onClose: () => void
+  onRender: (options: ComicRunOptions) => void
+  onRestored: () => void
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  if (!spec) return null
+  const page = Number(spec.id.replace(/^p/, '').split('-')[0]) || 1
+  const url = state?.path ? `${fileUrl(state.path)}&v=${state.renderedAt ?? 0}` : null
+  const roll = (patch: Partial<ComicRunOptions>) =>
+    onRender({ stage: 'panels', page, panel: spec.id, seed: null, attempt: null, force: true, noTagger: false, ...patch })
+
+  return (
+    <div role="presentation" data-testid="studio-backdrop" onClick={(event) => event.target === event.currentTarget && onClose()} className="fixed inset-0 z-[120] flex items-center justify-center bg-black/85 p-6">
+      <div className="flex max-h-full w-full max-w-6xl gap-4 overflow-hidden rounded-xl border border-white/10 bg-zinc-950 p-4">
+        <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center">
+          {url ? (
+            <img src={url} alt={spec.id} className="max-h-full max-w-full rounded-lg object-contain" />
+          ) : (
+            <div className="text-sm text-zinc-500">not rendered yet</div>
+          )}
+          {rendering ? (
+            <div className="absolute inset-x-0 bottom-0 rounded-b-lg bg-black/70 p-2">
+              <ProgressBar done={rendering.progress ?? 0} total={1} />
+            </div>
+          ) : null}
+        </div>
+
+        <aside className="flex w-72 shrink-0 flex-col gap-3 overflow-y-auto text-xs">
+          <div className="flex items-center gap-2">
+            <span className="rounded-md bg-white/10 px-2 py-1 font-mono text-[11px]">{spec.id.replace(/^p/, '')}</span>
+            <span className="truncate text-zinc-400">{spec.camera}</span>
+            <Button size="sm" className="ml-auto" onClick={onClose}>
+              Close
+            </Button>
+          </div>
+
+          <div className="space-y-1 text-zinc-500">
+            <div>
+              seed {state?.seed ?? '—'}
+              {state?.attempt ? ` · try ${state.attempt + 1}` : ''}
+            </div>
+            {state?.verdict ? (
+              <div className={state.verdict.ok ? 'text-emerald-300' : 'text-red-300'}>
+                QA {state.verdict.ok ? 'passed' : state.verdict.failures.join(', ')}
+              </div>
+            ) : null}
+            {state?.verdict?.notes.map((note) => (
+              <div key={note} className="text-sky-300">
+                {note}
+              </div>
+            ))}
+            {status?.status === 'stale' ? <div className="text-amber-300">changed: {status.reason}</div> : null}
+          </div>
+
+          <div className="flex flex-wrap gap-1">
+            <Button size="sm" variant="primary" disabled={busy} onClick={() => roll({ attempt: (state?.attempt ?? 0) + 1 })} title="Roll the seed on: the next seed in this character's family">
+              Roll the seed
+            </Button>
+            <Button size="sm" disabled={busy} onClick={() => roll({})} title="Render again at the same seed. Only differs if the prompt or settings changed.">
+              Same seed
+            </Button>
+          </div>
+
+          {/* The scene is the lever that actually fixes a wrong outfit; the
+              seed only re-rolls the dice on the same words. */}
+          <p className="text-[11px] leading-relaxed text-zinc-600">
+            Rolling gives a different take on the same words. If the outfit keeps coming out wrong, the words are what
+            to change, in step 2.
+          </p>
+
+          <div className="min-h-0">
+            <span className="mb-1 block font-medium text-zinc-300">
+              Earlier takes {state?.history?.length ? `(${state.history.length})` : ''}
+            </span>
+            {state?.history && state.history.length > 0 ? (
+              <div className="grid grid-cols-3 gap-1.5">
+                {state.history.map((file) => (
+                  <button
+                    key={file}
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void comicRestorePanel(comic, spec.id, file)
+                        .then(() => {
+                          toast('put back')
+                          onRestored()
+                        })
+                        .catch((error: unknown) => showMessage(String(error), { title: 'Comics' }))
+                    }
+                    title="Put this take back as the panel. The one it replaces is kept too."
+                    className="overflow-hidden rounded border border-white/10 hover:border-indigo-400"
+                  >
+                    <img src={fileUrl(file)} alt="" className="aspect-[3/4] w-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[11px] text-zinc-600">Every roll keeps the picture it replaces. Nothing is lost.</p>
+            )}
+          </div>
+        </aside>
+      </div>
+    </div>
+  )
+}
+
 interface PanelCardProps {
   spec: ComicPanelSpec
   state: ComicPanelState | undefined
@@ -1735,11 +1925,11 @@ interface PanelCardProps {
   progress: number | null
   busy: boolean
   onNextSeed: () => void
-  onAgain: () => void
   onView: (src: string, caption: string) => void
+  onOpen: () => void
 }
 
-const PanelCard = memo(function PanelCard({ spec, state, status, plates, progress, busy, onNextSeed, onAgain, onView }: PanelCardProps) {
+const PanelCard = memo(function PanelCard({ spec, state, status, plates, progress, busy, onNextSeed, onView, onOpen }: PanelCardProps) {
   const url = state?.path ? `${fileUrl(state.path)}&v=${state.renderedAt ?? 0}` : null
   const verdict = state?.verdict ?? null
   return (
@@ -1750,7 +1940,8 @@ const PanelCard = memo(function PanelCard({ spec, state, status, plates, progres
             src={url}
             alt={spec.id}
             role="presentation"
-            onClick={() => onView(url, `${spec.id} · ${spec.camera}`)}
+            onClick={onOpen}
+            title="Open this panel to re-roll it"
             className="size-full cursor-zoom-in object-cover"
           />
         ) : (
@@ -1803,13 +1994,16 @@ const PanelCard = memo(function PanelCard({ spec, state, status, plates, progres
           {spec.camera} · {spec.scene}
         </div>
         <div className="flex gap-1">
+          <Button size="sm" variant="primary" disabled={busy} onClick={onOpen} title="Open this panel large, roll the seed, and go back to any earlier take">
+            Re-roll…
+          </Button>
           <Button size="sm" disabled={busy} onClick={onNextSeed} title="Render this panel at the next seed in its family">
             Next seed
           </Button>
-          <Button size="sm" disabled={busy} onClick={onAgain} title="Render this panel again at the same seed">
-            Again
-          </Button>
         </div>
+        {state?.history && state.history.length > 0 ? (
+          <span className="text-[11px] text-zinc-600">{state.history.length} earlier take{state.history.length === 1 ? '' : 's'}</span>
+        ) : null}
       </div>
     </div>
   )

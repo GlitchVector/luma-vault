@@ -2888,6 +2888,78 @@ impl Db {
         (where_parts, binds)
     }
 
+    /// Where one row sits in the order `query` lists things: how many rows
+    /// come before it. `None` when the row is not in the result, or the sort
+    /// has no seekable key (score, aspect, random, the duplicates view).
+    ///
+    /// For "open this picture in the library": the lightbox knows an id, the
+    /// grid pages by offset, and this is the one number that joins them. It is
+    /// a count over the same WHERE as the page query plus the sort key's own
+    /// comparison, so it agrees with `query_media` by construction rather than
+    /// by a second opinion about ties.
+    pub fn media_position(&self, query: &MediaQuery, id: i64) -> Result<Option<i64>> {
+        if query.duplicates_only {
+            return Ok(None);
+        }
+        let conn = self.connection();
+        let row: Option<(i64, i64, String, i64)> = conn
+            .query_row(
+                "SELECT modified_at, added_at, name, size_bytes FROM media WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+        let Some((modified_at, added_at, name, size_bytes)) = row else {
+            return Ok(None);
+        };
+
+        let (where_parts, mut binds) = Self::media_filter(query, true);
+        // Each arm reads "sorts before this row" for its ORDER BY, ties broken
+        // on id exactly as the ORDER BY breaks them.
+        let key: Box<dyn rusqlite::ToSql> = match query.sort {
+            SortOrder::Recent => Box::new(modified_at),
+            SortOrder::Added => Box::new(added_at),
+            SortOrder::Oldest => Box::new(modified_at),
+            SortOrder::Name => Box::new(name),
+            SortOrder::Largest => Box::new(size_bytes),
+            SortOrder::Aspect | SortOrder::Lowest | SortOrder::Score | SortOrder::Random => {
+                return Ok(None)
+            }
+        };
+        let k = binds.len() + 1;
+        let i = binds.len() + 2;
+        let before = match query.sort {
+            SortOrder::Recent => format!("(modified_at > ?{k} OR (modified_at = ?{k} AND id > ?{i}))"),
+            SortOrder::Added => format!("(added_at > ?{k} OR (added_at = ?{k} AND id > ?{i}))"),
+            SortOrder::Oldest => format!("(modified_at < ?{k} OR (modified_at = ?{k} AND id < ?{i}))"),
+            SortOrder::Name => format!(
+                "(name COLLATE NOCASE < ?{k} OR (name COLLATE NOCASE = ?{k} AND id < ?{i}))"
+            ),
+            SortOrder::Largest => format!("(size_bytes > ?{k} OR (size_bytes = ?{k} AND id > ?{i}))"),
+            _ => unreachable!("handled above"),
+        };
+        binds.push(key);
+        binds.push(Box::new(id));
+        let mut parts = where_parts;
+        let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
+
+        // The row has to be in the result at all, or its position means nothing.
+        let member_sql = if parts.is_empty() {
+            format!("SELECT COUNT(*) FROM media WHERE id = ?{i}")
+        } else {
+            format!("SELECT COUNT(*) FROM media WHERE {} AND id = ?{i}", parts.join(" AND "))
+        };
+        let member: i64 = conn.query_row(&member_sql, bind_refs.as_slice(), |row| row.get(0))?;
+        if member == 0 {
+            return Ok(None);
+        }
+
+        parts.push(before);
+        let count_sql = format!("SELECT COUNT(*) FROM media WHERE {}", parts.join(" AND "));
+        let position: i64 = conn.query_row(&count_sql, bind_refs.as_slice(), |row| row.get(0))?;
+        Ok(Some(position))
+    }
+
     pub fn query_media(&self, query: &MediaQuery) -> Result<MediaPage> {
         let conn = self.connection();
 
@@ -4956,6 +5028,28 @@ mod tests {
             .query_media(&MediaQuery { min_stars: Some(4), ..query() })
             .expect("query");
         assert_eq!(high.items.iter().map(|item| item.id).collect::<Vec<_>>(), vec![ids[0]]);
+    }
+
+    #[test]
+    fn a_row_s_position_is_its_index_in_the_same_query() {
+        // The lightbox knows an id and the grid knows an offset; this is the
+        // join. Checked against the page itself for every seekable sort, so a
+        // tie-break that drifted from ORDER BY would show up here.
+        let (db, _folder) = seeded();
+        for sort in [SortOrder::Recent, SortOrder::Added, SortOrder::Oldest, SortOrder::Name, SortOrder::Largest] {
+            let q = MediaQuery { sort, ..query() };
+            let page = db.query_media(&q).expect("page");
+            for (index, item) in page.items.iter().enumerate() {
+                assert_eq!(db.media_position(&q, item.id).expect("position"), Some(index as i64), "{sort:?} {}", item.name);
+            }
+        }
+        // Not in the result: a filter the row fails, or a sort with no seekable key.
+        let ids: Vec<i64> = db.query_media(&query()).expect("q").items.iter().map(|i| i.id).collect();
+        let videos = MediaQuery { kind: Some(MediaKind::Video), ..query() };
+        let image = ids.iter().find(|id| db.media_by_id(**id).unwrap().unwrap().kind == MediaKind::Image).copied().unwrap();
+        assert_eq!(db.media_position(&videos, image).expect("position"), None);
+        assert_eq!(db.media_position(&MediaQuery { sort: SortOrder::Random, ..query() }, image).expect("position"), None);
+        assert_eq!(db.media_position(&query(), 987654321).expect("position"), None);
     }
 
     #[test]

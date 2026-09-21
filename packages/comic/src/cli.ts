@@ -14,6 +14,7 @@
  *   assemble  <project> [--page N] [--format png,pdf,cbz]
  *                                             stage 3: pages, book.pdf, book.cbz
  *   all       <project>                       script -> panels -> qa -> assemble
+ *   collect   <project>                       copy panels and pages into the vault as a set
  *   inspect   <project>                       settings in force, and which panels are out of date
  *   doctor    [project]                       what is reachable: Forge, LoRAs, tagger, Chrome
  *   layouts                                   the layout presets
@@ -32,6 +33,7 @@ import { PythonTagger } from './qa/tagger.ts'
 import { runAssemble } from './stages/assemble.ts'
 import { loraNames, runPanels } from './stages/panels.ts'
 import { runQa } from './stages/qa.ts'
+import { collect } from './stages/collect.ts'
 import { inspect } from './stages/inspect.ts'
 import { runScript } from './stages/script.ts'
 import { plateBackendFor, platesEnabled, runPlates } from './stages/plates.ts'
@@ -60,7 +62,7 @@ const report = new Reporter(values.json)
 
 function usage(): never {
   console.error(
-    `usage: comic <init|script|plates|panels|render|qa|assemble|all|inspect|doctor|layouts> <project> [flags]
+    `usage: comic <init|script|plates|panels|render|qa|assemble|all|collect|inspect|doctor|layouts> <project> [flags]
   --page N        1-based page          --panel ID|N   a panel id (p2-3) or its number on --page
   --seed S        exact seed (render)   --attempt N    plan at this retry slot
   --prose FILE    story file (script)   --format LIST  png,pdf,cbz (assemble)
@@ -140,7 +142,14 @@ async function main(): Promise<void> {
       await runPanels(p, report)
       const verdicts = await runQa(p, report, {}, { tagger: values['no-tagger'] ? null : undefined })
       await runAssemble(p, report)
+      // Last, so the set holds the pages as well as the panels.
+      collect(p, loadScript(p), report, { outdir: p.config.vault.outdir })
       if (verdicts.some((v) => !v.ok)) process.exitCode = 1
+      return
+    }
+    case 'collect': {
+      const p = project()
+      collect(p, loadScript(p), report, { outdir: p.config.vault.outdir })
       return
     }
     case 'inspect': {

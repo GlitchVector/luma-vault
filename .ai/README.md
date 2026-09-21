@@ -9,6 +9,7 @@ on every task and points here for the rest.
 | `conventions.md` | Writing code: adding a command, a schema, a contract, a UI component |
 | `gotchas.md` | Something behaves unexpectedly, or you are about to remove something that looks redundant |
 | `testing.md` | Adding or changing tests |
+| `lora-training.md` | Training, judging, filing or rendering with one of the character LoRAs: the recipe, the caption rule, the dataset checks, how the owner is worked with, what the Ari week proved |
 | `comics.md` | Anything comics: the picture pipeline (`packages/comic`), the Comics panel, the studio (`packages/studio`), the decisions the owner made, what is verified and what is not |
 
 ## Ground rules for editing these files

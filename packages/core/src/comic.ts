@@ -79,6 +79,11 @@ export const comicPanelSchema = z.object({
   pose: z.array(z.string()).default([]),
   characters: z.array(z.string()).default([]),
   /**
+   * The light for THIS panel only, replacing the book's and the page's.
+   * Bottom rung: book, then page, then panel, most specific wins.
+   */
+  lighting: z.string().optional(),
+  /**
    * Turn the face pass off for this panel alone.
    *
    * Unset means whatever `forge.face.enabled` says. It is here because the
@@ -202,6 +207,9 @@ export const comicPageSchema = z.object({
   /** Her build for every panel on this page, replacing the character's own
    *  and replaced in turn by any panel that sets its own. */
   body: z.string().optional(),
+  /** The light for every panel on this page, replacing the book's and
+   *  replaced in turn by any panel that sets its own. */
+  lighting: z.string().optional(),
   /** A preset name from the pipeline's `layouts.ts`, or an explicit grid template. */
   layout: z.union([z.string().min(1), comicGridSchema]),
   panels: z.array(comicPanelSchema).min(1),
@@ -213,8 +221,18 @@ export const comicCharacterSchema = z.object({
   lora: z.string().regex(/^[^:<>]+:\d+(\.\d+)?$/, 'lora must be "name:weight"'),
   /** The activation word(s) the LoRA was trained on. Goes first, always. */
   trigger: z.string().min(1),
-  /** The full appearance, restated in every panel this character is in. */
-  look: z.string().min(1),
+  /**
+   * The appearance, restated in every panel this character is in.
+   *
+   * EMPTY IS CORRECT for a full-character LoRA. The owner's caption recipe
+   * is that a LoRA is taught only what varies inside its dataset, so the
+   * trigger alone carries hair, eyes and the default outfit — measured on
+   * ari_adopt_v4, whose 235 captions contain the outfit exactly zero times.
+   * Restating it here does not reinforce it, it competes with it: generic
+   * tags like 'off-shoulder shirt' and 'black collar' pull toward a
+   * generic tube top and choker instead of her yoke and cut-outs.
+   */
+  look: z.string().default(''),
   /**
    * Her head alone: hair, eyes, and what she wears on them.
    *

@@ -106,6 +106,13 @@ export function useLibrary() {
 
   const [query, setQueryState] = useState<MediaQuery>(DEFAULT_QUERY)
   const [items, setItems] = useState<MediaItem[]>([])
+  /**
+   * The index, in the whole result, of `items[0]`. Zero except after `jumpToItem`,
+   * which opens the grid part-way down; `loadEarlier` walks it back towards zero.
+   * A ref beside the state so `reload` can read it without being rebuilt.
+   */
+  const [earliest, setEarliest] = useState(0)
+  const earliestRef = useRef(0)
   const [total, setTotal] = useState(0)
   // The same number, readable without a render. `loadMore` runs in bursts and
   // has to know where the results end without waiting for one.
@@ -134,7 +141,7 @@ export function useLibrary() {
       native.libraryStats(),
       native.listExclusions(),
       native.topCharacters({ ...queryRef.current, search: '' }, 30),
-      native.librarySets({ ...queryRef.current, search: '', set: null }, null, 100),
+      native.librarySets({ ...queryRef.current, search: '', set: null, sets: [] }, null, 100),
     ])
     setFolders(nextFolders)
     setStats(nextStats)
@@ -156,12 +163,14 @@ export function useLibrary() {
         // would collapse to that one name and there would be no way to hop to
         // another character from the list that just navigated you here.
         native.topCharacters({ ...next, search: '' }, 30),
-        // And the sets follow it minus the *set*, for exactly the same reason
+        // And the sets follow it minus the *sets*, for exactly the same reason
         // one step further on: opening a set filters the grid to that run, and
         // a list narrowed by it would collapse to the one run you are already
         // looking at — leaving no way back to the others, and no way to see
-        // that the set you opened is one of five that day.
-        native.librarySets({ ...next, search: '', set: null }, null, 100),
+        // that the set you opened is one of five that day. Both fields: the
+        // grid reads `sets`, the deep link `set`, and the list collapsed again
+        // the day the grid switched (owner, 2026-09-21).
+        native.librarySets({ ...next, search: '', set: null, sets: [] }, null, 100),
       ])
       setCharacters(nextCharacters)
       setSets(nextSets)
@@ -172,6 +181,12 @@ export function useLibrary() {
         loaded.current = merged.length
         return merged
       })
+      if (!append) {
+        // A fresh result starts where it was asked to start: at zero for a
+        // filter change, deeper for a jump.
+        earliestRef.current = next.offset
+        setEarliest(next.offset)
+      }
       setTotal(page.total)
       totalRef.current = page.total
     } catch (error) {
@@ -192,6 +207,68 @@ export function useLibrary() {
     } finally {
       if (ticket === generation.current) setLoading(false)
     }
+  }, [])
+
+  /**
+   * Open the grid on one picture: the cleared query, loaded from the page that
+   * holds it, so the pictures made around it are on screen with it. The
+   * position comes from the index; the pages before it load on the way up.
+   *
+   * Two pages before and three after, so there is something to scroll into in
+   * both directions before another request is needed; `offset` is left where
+   * `loadMore` should continue from.
+   */
+  const jumpToItem = useCallback(
+    async (id: number, patch: Partial<MediaQuery> = {}): Promise<number | null> => {
+      const base = { ...DEFAULT_QUERY, ...patch, offset: 0 }
+      // A host without the command (an app not yet restarted onto this build)
+      // answers with an error; that is "no position", not a broken button.
+      const position = await native.mediaPosition(base, id).catch(() => null)
+      if (position === null) {
+        // Not in the cleared result (a file that is gone, or a sort with no
+        // key): open on the top instead of doing nothing.
+        setQueryState(base)
+        void runQuery(base, false)
+        return null
+      }
+      const start = Math.max(0, Math.floor(position / PAGE_SIZE) * PAGE_SIZE - PAGE_SIZE)
+      const window = PAGE_SIZE * 4
+      void runQuery({ ...base, offset: start, limit: window }, false)
+      setQueryState({ ...base, offset: Math.max(start, start + window - PAGE_SIZE) })
+      return position
+    },
+    [runQuery],
+  )
+
+  /**
+   * Prepend the page before the first one on screen. Only ever needed after a
+   * jump; one at a time, like `loadMore`, and for the same reason.
+   */
+  const prepending = useRef(false)
+  const loadEarlier = useCallback(() => {
+    if (prepending.current || earliestRef.current === 0) return
+    prepending.current = true
+    const from = Math.max(0, earliestRef.current - PAGE_SIZE)
+    const limit = earliestRef.current - from
+    const ticket = generation.current
+    void native
+      .queryMedia({ ...queryRef.current, offset: from, limit })
+      .then((page) => {
+        // A filter changed while this was in flight: those rows belong to a
+        // result that is gone.
+        if (ticket !== generation.current) return
+        setItems((previous) => {
+          const merged = [...page.items, ...previous]
+          loaded.current = merged.length
+          return merged
+        })
+        earliestRef.current = from
+        setEarliest(from)
+      })
+      .catch((error: unknown) => console.error('load earlier failed', error))
+      .finally(() => {
+        prepending.current = false
+      })
   }, [])
 
   const setQuery = useCallback(
@@ -252,10 +329,14 @@ export function useLibrary() {
   const reload = useCallback(() => {
     setQueryState((previous) => {
       const window = Math.max(previous.limit, loaded.current)
-      void runQuery({ ...previous, offset: 0, limit: window }, false)
+      // From the first row on screen, not from zero: after a jump the window
+      // starts part-way down, and refetching from the top would swap the rows
+      // under the person for the ones they jumped away from.
+      const from = earliestRef.current
+      void runQuery({ ...previous, offset: from, limit: window }, false)
       // Leave `offset` where the next append should continue from, which is the
       // end of the window just re-fetched — not the end of one page.
-      return { ...previous, offset: Math.max(0, window - previous.limit) }
+      return { ...previous, offset: Math.max(from, from + window - previous.limit) }
     })
     void refreshFolders()
   }, [runQuery, refreshFolders])
@@ -439,6 +520,11 @@ export function useLibrary() {
     loading,
     failure,
     loadMore,
+    loadEarlier,
+    jumpToItem,
+    /** Rows before `items[0]` that are not loaded; zero except after a jump. */
+    earliest,
+    hasEarlier: earliest > 0,
     reload,
     actions,
     hasMore: items.length < total,

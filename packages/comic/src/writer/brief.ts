@@ -62,6 +62,12 @@ EACH PANEL
   - NEVER describe appearance, clothing or hair. The pipeline adds it.
   - NEVER use names or pronouns for the cast. Say what the figure does.
   - Vary the camera across a page. Every panel must restate where we are.
+  - NEVER write grey, cold, dull, overcast, washed-out, muted or desaturated
+    light. Those words go straight into the prompt and the model obeys them:
+    a page of "grey morning, cold light" renders as a page with no colour in
+    it. Name the hour and the source instead — "dawn", "sunrise", "golden
+    hour", "street lamp", "neon" — and let the light have a colour. A sombre
+    scene is made sombre by what is in it, not by draining it.
 - "setting": the place and light as seen in THIS panel, nobody in it, one sentence (e.g. "the parapet edge from below, sky filling the top of the frame"). Goes to a hosted model: no nudity, no sexual content, no names.
 - "pose": one short phrase per character in the same order as "characters", describing what a stand-in figure does — posture and gesture only (e.g. "crouching, one hand reaching down"). A hosted model reads it: keep it neutral; the explicit action, if any, belongs in "scene" alone.
 - "characters": the cast ids visible in the panel, the one the panel is about first. Empty for an establishing shot with nobody in it.

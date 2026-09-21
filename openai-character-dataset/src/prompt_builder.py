@@ -32,9 +32,11 @@ def load_template(path: Path = TEMPLATE_PATH) -> str:
     return text
 
 
-def global_prompt(character: Character, template: str | None = None) -> str:
+def global_prompt(character: Character, template: str | None = None, background: str | None = None) -> str:
     text = template or load_template()
-    return text.replace("{character_name}", character.name).replace("{description}", character.description).replace("{background}", character.background)
+    return (text.replace("{character_name}", character.name)
+                .replace("{description}", character.description)
+                .replace("{background}", background or character.background))
 
 
 def build_prompt(character: Character, view: View, *, attempt: int = 1, template: str | None = None) -> str:
@@ -42,4 +44,4 @@ def build_prompt(character: Character, view: View, *, attempt: int = 1, template
     rewordings = character.settings.refusal_rewordings
     extra = rewordings[(attempt - 1) % len(rewordings)] if attempt > 1 else ""
     view_text = view.prompt if not extra else f"{view.prompt}\n\n{extra}"
-    return f"{global_prompt(character, template)}{SEPARATOR}{view_text}"
+    return f"{global_prompt(character, template, view.background)}{SEPARATOR}{view_text}"

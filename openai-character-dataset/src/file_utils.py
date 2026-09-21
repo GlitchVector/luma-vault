@@ -126,12 +126,17 @@ def starred_files(character: Character, run: str) -> set[str]:
     return {Path(str(item["path"]).replace("\\", "/")).name for item in answer["ok"]["items"]}
 
 
-def collect_into_sheets(character: Character, state: dict) -> tuple[int, int, list[str]]:
-    """Copy the starred, generated views into the training sheet folders. Returns (body, face, not-collected)."""
+def collect_into_sheets(character: Character, state: dict, *, accept_all: bool = False) -> tuple[int, int, list[str]]:
+    """Copy the acknowledged, generated views into the training sheet folders. Returns (body, face, not-collected).
+
+    Normally only the views the owner STARRED in the vault are taken. ``accept_all`` skips that check and is
+    only for when he has accepted the whole set in words instead - his acknowledgement is the gate either way,
+    never my own audit.
+    """
     if not state.get("stamp"):
         raise FileError("nothing generated yet")
     run = set_run(character, state["stamp"])
-    starred = starred_files(character, run)
+    starred = set() if accept_all else starred_files(character, run)
     body_dir = character.settings.sheets_dir / f"{slug(character.name)}-refs-gen"
     face_dir = character.settings.sheets_dir / f"{slug(character.name)}-face-refs-gen"
     body_dir.mkdir(parents=True, exist_ok=True)
@@ -144,7 +149,7 @@ def collect_into_sheets(character: Character, state: dict) -> tuple[int, int, li
             missing.append(f"{view.key} ({entry.get('status') if entry else 'not generated'})")
             continue
         vault_name = f"refgen-{slug(character.name)}-{Path(entry['file']).name}"
-        if vault_name not in starred:
+        if not accept_all and vault_name not in starred:
             missing.append(f"{view.key} (generated, not starred)")
             continue
         source = character.out_dir / entry["file"]

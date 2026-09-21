@@ -49,6 +49,7 @@
       "attempt": 0,
       "prompt": "masterpiece, best quality, 1girl, solo, <lora:ari_adopt_v1:1.2>, ari, white hair, aqua hair, wide shot, rooftop at dawn",
       "plate": "C:\\Users\\me\\AppData\\Local\\net.glitchvector.luma-vault\\comics\\first-light\\plates\\p1-1.png",
+      "history": ["C:\\Users\\me\\AppData\\Local\\net.glitchvector.luma-vault\\comics\\first-light\\panels\\history\\p1-1-8812-3f2a9c.png"],
       "verdict": { "ok": true, "attempt": 0, "failures": [], "notes": ["space: little empty room at top"] }
     },
     {
@@ -60,6 +61,7 @@
       "attempt": null,
       "prompt": null,
       "plate": null,
+      "history": [],
       "verdict": null
     }
   ],

@@ -15,6 +15,7 @@ const kira: Character = { ...ari, lora: 'kvoss_v2:0.9', trigger: 'kvoss', look: 
 const config = {
   prompt: {
     quality: 'masterpiece, best quality',
+    lighting: '',
     style: '',
     negative: 'worst quality, lowres',
     negative_lettering: 'speech bubble, english text',

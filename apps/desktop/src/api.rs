@@ -145,6 +145,11 @@ pub fn media_by_id(state: &AppState, id: i64) -> Result<Option<MediaItem>, Strin
     state.db.media_by_id(id).map_err(stringify)
 }
 
+/// How many rows `query` lists before `id`, so the grid can open on it.
+pub fn media_position(state: &AppState, query: MediaQuery, id: i64) -> Result<Option<i64>, String> {
+    state.db.media_position(&query, id).map_err(stringify)
+}
+
 /// One row by path, for a picture no list contains.
 ///
 /// The grid hides an original once an upscaled variant of it exists, so there
@@ -986,6 +991,25 @@ pub fn patreon_unmark(state: &AppState, ids: Vec<i64>) -> Result<usize, String> 
 }
 
 // ---------------------------------------------------------------------------
+// LoRA training data
+// ---------------------------------------------------------------------------
+
+/// The training data behind a character LoRA, for the LoRAs page. Thumbnails
+/// are written under the app's own thumbs root, so the protocol serves them
+/// without any change to what it serves.
+pub fn lora_dataset(state: &AppState, name: String) -> Result<crate::types::LoraDataset, String> {
+    crate::lora::read(&crate::lora::train_root(), &name, &state.pipeline.thumb_root()).map_err(stringify)
+}
+
+/// A viewer-sized copy of one training image, made on first request. Answers
+/// the path under the thumbs root that `luma://` serves.
+pub fn lora_image_preview(state: &AppState, dataset: String, path: String) -> Result<String, String> {
+    crate::lora::preview(&crate::lora::train_root(), &dataset, &path, &state.pipeline.thumb_root())
+        .map(|made| made.to_string_lossy().into_owned())
+        .map_err(stringify)
+}
+
+// ---------------------------------------------------------------------------
 // Comics
 // ---------------------------------------------------------------------------
 
@@ -1052,6 +1076,11 @@ pub fn comic_save_settings(
     settings: crate::types::ComicSettings,
 ) -> Result<(), String> {
     crate::comic::save_settings(&comics_root(state), &name, &settings).map_err(stringify)
+}
+
+/// Put one of a panel's kept attempts back.
+pub fn comic_restore_panel(state: &AppState, name: String, panel: String, file: String) -> Result<(), String> {
+    crate::comic::restore_panel(&comics_root(state), &name, &panel, std::path::Path::new(&file)).map_err(stringify)
 }
 
 pub fn comic_status(_state: &AppState, since: i64) -> Result<crate::types::ComicStatus, String> {
@@ -1324,6 +1353,7 @@ pub async fn dispatch(
         "recent_media" => ok(recent_media(state, arg(args, "limit")?)?),
         "media_frames" => ok(media_frames(state, arg(args, "mediaId")?)?),
         "media_by_id" => ok(media_by_id(state, arg(args, "id")?)?),
+        "media_position" => ok(media_position(state, arg(args, "query")?, arg(args, "id")?)?),
         "media_by_path" => ok(media_by_path(state, arg(args, "path")?)?),
         "upscale_media" => ok(upscale_media(app, state, arg(args, "ids")?, arg(args, "longEdge")?).await?),
         "library_stats" => ok(library_stats(state)?),
@@ -1370,6 +1400,10 @@ pub async fn dispatch(
         // Comics run where the library is, for the same reason a Patreon post
         // does: Forge, Chrome and the repo are on that machine.
         "comic_list" => ok(comic_list(state)?),
+        // The datasets are on the machine that trains, which is the one with
+        // the library; a phone reading the LoRAs page asks it like anything else.
+        "lora_dataset" => ok(lora_dataset(state, arg(args, "name")?)?),
+        "lora_image_preview" => ok(lora_image_preview(state, arg(args, "dataset")?, arg(args, "path")?)?),
         "comic_read" => ok(comic_read(state, arg(args, "name")?)?),
         "comic_create" => ok(comic_create(state, arg(args, "name")?)?),
         "comic_save" => ok(comic_save(
@@ -1384,6 +1418,12 @@ pub async fn dispatch(
             state,
             arg(args, "name")?,
             arg(args, "settings")?,
+        )?),
+        "comic_restore_panel" => ok(comic_restore_panel(
+            state,
+            arg(args, "name")?,
+            arg(args, "panel")?,
+            arg(args, "file")?,
         )?),
         "comic_status" => ok(comic_status(state, arg(args, "since")?)?),
         "comic_cancel" => ok(comic_cancel(state)?),

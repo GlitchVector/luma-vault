@@ -788,6 +788,11 @@ pub struct ComicPanel {
     pub prompt: Option<String>,
     /// The hosted model's plate the panel was painted into, when there is one.
     pub plate: Option<String>,
+    /// Every earlier attempt at this panel, newest first. Getting an outfit
+    /// right means rolling the seed until it is, and without these the roll
+    /// after the good one destroys it.
+    #[serde(default)]
+    pub history: Vec<String>,
     pub verdict: Option<ComicVerdict>,
 }
 
@@ -848,6 +853,8 @@ pub struct ComicSettings {
     pub style: String,
     /// The words that lead every prompt.
     pub global_tags: String,
+    /// The light the whole book is lit by.
+    pub lighting: String,
     pub page_scale: f64,
     pub page_width: i64,
     pub page_height: i64,
@@ -919,4 +926,50 @@ pub struct ComicStatus {
     /// The sequence number to poll with next.
     pub next: i64,
     pub error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// LoRA training data
+// ---------------------------------------------------------------------------
+
+/// One character LoRA's training data, as kohya read it. Built by `lora::read`
+/// from the dataset's own `.toml`, on request, never stored.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LoraDataset {
+    /// The folder under `datasets/`, which is also what the command takes.
+    pub name: String,
+    /// The `.toml` that was read - the newest in the folder.
+    pub config: String,
+    pub subsets: Vec<LoraSubset>,
+    /// Files across every subset, mirrors included.
+    pub images: i64,
+    /// Files times repeats: what one epoch actually shows the trainer.
+    pub per_epoch: i64,
+}
+
+/// One `[[datasets.subsets]]`: a folder and how often an epoch repeats it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LoraSubset {
+    /// Relative to the dataset folder when inside it, the full path otherwise.
+    pub dir: String,
+    pub repeats: i64,
+    pub images: Vec<LoraImage>,
+}
+
+/// One training image. The thumbnail is under the app's own thumbs root and is
+/// what `luma://` serves; the original path is for reading, never for loading.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LoraImage {
+    pub path: String,
+    /// `None` when the decoder rejected the file; it still lists.
+    pub thumb_path: Option<String>,
+    pub width: i64,
+    pub height: i64,
+    /// The `.txt` beside the image, trimmed. `None` when there is none.
+    pub caption: Option<String>,
+    /// A `-flip` mirror the prep script made; the page folds these away.
+    pub flipped: bool,
 }

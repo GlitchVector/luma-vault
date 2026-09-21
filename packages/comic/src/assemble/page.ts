@@ -10,7 +10,6 @@
  */
 
 import { resolveGrid, resolveSpans } from '../layouts.ts'
-import { headBand } from '../prompt.ts'
 import type { EnergyMap } from './energy.ts'
 export { cellPixels } from '../layouts.ts'
 import type { Anchor, Config, Dialogue, Page, Point } from '../schema.ts'
@@ -52,6 +51,8 @@ function balloonHtml(line: Dialogue): string {
 /** Busyness per panel id, from `energy.ts`. Optional: without it the
  *  balloons sit at their anchors, which is how this worked before. */
 export type PanelEnergy = Map<string, EnergyMap>
+/** What each panel holds: `faces` as boxes, `figure` as an occupancy grid. */
+export type PanelFaces = Map<string, { faces: string; figure: string }>
 
 /** Panel id to the URL its picture is served from, when it is not the
  *  plain `/panels/<id>.png` — a retina page points at the upscaled copy. */
@@ -64,6 +65,7 @@ export function pageHtml(
   config: Pick<Config, 'page'>,
   energy?: PanelEnergy,
   sources?: PanelSources,
+  faces?: PanelFaces,
 ): string {
   const grid = resolveGrid(page)
   const spans = resolveSpans(page)
@@ -77,10 +79,11 @@ export function pageHtml(
         .join('\n')
       const map = energy?.get(panel.id)
       const busy = map ? ` data-energy="${map.cols},${map.rows},${map.cells}"` : ''
-      // How far down her head reaches, so the letterer can refuse to cover
-      // it even where the art is flat enough to look empty.
-      const band = headBand(panel.camera, panel.characters.length > 0)
-      const head = band > 0 ? ` data-head="${band.toFixed(2)}"` : ''
+      // Her face, from the detector. The energy map cannot find it: against
+      // a bright sky a head is as flat as the sky behind it.
+      const found = faces?.get(panel.id)
+      const head =
+        (found?.faces ? ` data-faces="${found.faces}"` : '') + (found?.figure ? ` data-figure="${found.figure}"` : '')
       return `<figure class="panel" data-id="${panel.id}"${busy}${head} style="grid-column:${span.col};grid-row:${span.row};${clip}">
   <img src="${sources?.get(panel.id) ?? `${ORIGIN}/panels/${panel.id}.png`}" alt="">
 ${balloons}

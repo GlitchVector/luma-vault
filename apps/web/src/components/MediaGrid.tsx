@@ -23,6 +23,19 @@ interface MediaGridProps {
   items: MediaItem[]
   onOpen: (id: number, range: boolean) => void
   onReachEnd: () => void
+  /**
+   * The grid was opened part-way down a result (a picture opened "in the
+   * library") and there are rows above `items[0]`. When the top comes within
+   * reach, `onReachStart` asks for them; the browser's scroll anchoring keeps
+   * the tiles under the person where they are while rows land above.
+   */
+  hasEarlier?: boolean
+  onReachStart?: () => void
+  /**
+   * A tile to scroll to and mark once it is on screen - the picture the grid
+   * was opened on. The parent clears it when the moment has passed.
+   */
+  focusId?: number | null
   showBoxes: boolean
   /** Draw each set of duplicates inside its own frame. */
   groupDuplicates: boolean
@@ -102,9 +115,15 @@ export function MediaGrid({
   maxTileWidth,
   selected,
   folderTerm,
+  hasEarlier = false,
+  onReachStart,
+  focusId = null,
 }: MediaGridProps) {
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const reachEndRef = useRef(onReachEnd)
+  const startRef = useRef<HTMLDivElement | null>(null)
+  const reachStartRef = useRef(onReachStart)
+  const [nearStart, setNearStart] = useState(false)
   /** Whether the end of the loaded content is inside the lookahead band. */
   const [nearEnd, setNearEnd] = useState(false)
 
@@ -112,7 +131,34 @@ export function MediaGrid({
   // render — the caller almost certainly passes a fresh closure each time.
   useEffect(() => {
     reachEndRef.current = onReachEnd
+    reachStartRef.current = onReachStart
   })
+
+  // The top sentinel exists only while there is something above to load, so
+  // the observer is (re)made when that changes rather than once.
+  useEffect(() => {
+    const sentinel = startRef.current
+    if (!hasEarlier || !sentinel || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(
+      (entries) => setNearStart(entries.some((entry) => entry.isIntersecting)),
+      { rootMargin: LOOKAHEAD },
+    )
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasEarlier])
+
+  useEffect(() => {
+    if (nearStart && hasEarlier) reachStartRef.current?.()
+  }, [nearStart, hasEarlier, items.length])
+
+  // Scroll the opened picture into the middle once its tile exists. `items`
+  // is a dependency because the tile may land a render after the id does.
+  useEffect(() => {
+    if (focusId === null) return
+    const tile = document.querySelector<HTMLElement>(`[data-media-id="${focusId}"]`)
+    // Guarded: jsdom has no scrollIntoView, and a missing method must not take the grid down.
+    if (tile && typeof tile.scrollIntoView === 'function') tile.scrollIntoView({ block: 'center' })
+  }, [focusId, items])
 
   useEffect(() => {
     const sentinel = sentinelRef.current
@@ -150,6 +196,7 @@ export function MediaGrid({
 
   return (
     <>
+      {hasEarlier ? <div ref={startRef} data-testid="grid-start" className="h-px w-full" /> : null}
       {groupDuplicates ? (
         // One frame per set, stacked. Adjacency alone does not say where a set
         // ends — with tiles the same size and no divider, three copies of one
@@ -178,6 +225,7 @@ export function MediaGrid({
                     maxTileWidth={maxTileWidth}
                     selected={selected.has(item.id)}
                     folderTerm={folderTerm}
+                    focused={item.id === focusId}
                   />
                 ))}
               </div>
@@ -196,6 +244,7 @@ export function MediaGrid({
               maxTileWidth={maxTileWidth}
               selected={selected.has(item.id)}
               folderTerm={folderTerm}
+              focused={item.id === focusId}
             />
           ))}
         </div>

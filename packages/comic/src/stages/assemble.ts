@@ -12,7 +12,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { extname, join } from 'node:path'
 import { zipSync } from 'fflate'
 import { chromium, type Browser, type Page as BrowserPage } from 'playwright-core'
-import { ORIGIN, bookHtml, cellPixels, pageHtml, type PanelEnergy, type PanelSources } from '../assemble/page.ts'
+import { ORIGIN, bookHtml, cellPixels, pageHtml, type PanelEnergy, type PanelFaces, type PanelSources } from '../assemble/page.ts'
+import { PythonFigureFinder, encodeFaces } from '../assemble/faces.ts'
 import { energyMap } from '../assemble/energy.ts'
 import { readSidecar, rendererFor } from './panels.ts'
 import type { Renderer } from '../render/renderer.ts'
@@ -134,6 +135,10 @@ export async function runAssemble(project: Project, report: Reporter, options: A
     }
   }
 
+  const finder = new PythonFigureFinder({
+    python: project.config.qa.python,
+    cachePath: join(project.buildDir, 'faces.json'),
+  })
   const browser = await launch(project.config.browser)
   const written: string[] = []
   try {
@@ -149,12 +154,28 @@ export async function runAssemble(project: Project, report: Reporter, options: A
     for (const { page, number } of pages) {
       // Where the art is quiet, so a balloon can avoid the face it belongs to.
       const energy: PanelEnergy = new Map()
+      const faces: PanelFaces = new Map()
       for (const panel of page.panels) {
         energy.set(panel.id, energyMap(readFileSync(join(project.panelsDir, `${panel.id}.png`))))
       }
       // eslint-disable-next-line no-await-in-loop
       const sources = await upscalePanels(project, page, report)
-      const html = pageHtml(page, number, script.title, project.config, energy, sources)
+      // Faces for the whole page at once: the detector's cost is mostly
+      // starting Python, and a cached panel costs nothing at all.
+      const wanted = page.panels.map((panel) => join(project.panelsDir, `${panel.id}.png`)).filter((path) => existsSync(path))
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const found = await finder.find(wanted)
+        for (const panel of page.panels) {
+          const what = found.get(join(project.panelsDir, `${panel.id}.png`))
+          if (what) faces.set(panel.id, { faces: encodeFaces(what.faces), figure: what.figure })
+        }
+      } catch (error) {
+        // Lettering without it is what this did for a week; a page is not
+        // worth failing over a detector.
+        report.emit({ event: 'note', message: `no face detection: ${(error as Error).message}` })
+      }
+      const html = pageHtml(page, number, script.title, project.config, energy, sources, faces)
       const htmlName = `page-${String(number).padStart(2, '0')}.html`
       writeFileSync(join(project.buildDir, htmlName), html)
       // One tab, one page at a time: the pages share the browser, not the work.

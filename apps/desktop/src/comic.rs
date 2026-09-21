@@ -185,6 +185,26 @@ pub fn list(root: &Path) -> Result<Vec<ComicSummary>> {
     Ok(comics)
 }
 
+/// Earlier attempts at one panel, newest first.
+///
+/// By name: the pipeline keeps `<id>-<seed>-<hash>.png` beside the panels, so
+/// the prefix is the panel and everything after it is which attempt.
+fn history_of(dir: &Path, id: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let prefix = format!("{id}-");
+    let mut found: Vec<(i64, String)> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            name.starts_with(&prefix) && name.ends_with(".png")
+        })
+        .map(|path| (mtime_ms(&path), path.to_string_lossy().to_string()))
+        .collect();
+    found.sort_by_key(|(when, _)| std::cmp::Reverse(*when));
+    found.into_iter().map(|(_, path)| path).collect()
+}
+
 /// A string array out of a JSON object, or empty. Missing and malformed are
 /// the same thing here: a verdict file nobody can read is not a reason to
 /// lose the panel it belongs to.
@@ -238,6 +258,7 @@ pub fn read(root: &Path, name: &str) -> Result<ComicProject> {
                         .and_then(|x| x.as_str())
                         .map(str::to_string),
                     plate: plate.is_file().then(|| plate.to_string_lossy().to_string()),
+                    history: history_of(&dir.join("panels").join("history"), id),
                     verdict,
                 });
             }
@@ -495,12 +516,48 @@ pub fn save_settings(root: &Path, name: &str, settings: &ComicSettings) -> Resul
         let prompt = object.entry("prompt").or_insert_with(|| serde_json::json!({}));
         let prompt = prompt.as_object_mut().context("\"prompt\" in comic.config.json is not an object")?;
         prompt.insert("style".to_string(), serde_json::json!(settings.style.trim()));
+        prompt.insert("lighting".to_string(), serde_json::json!(settings.lighting.trim()));
         prompt.insert("quality".to_string(), serde_json::json!(settings.global_tags.trim()));
     }
 
     let mut text = serde_json::to_string_pretty(&config)?;
     text.push('\n');
     std::fs::write(&path, text)?;
+    Ok(())
+}
+
+/// Put a kept attempt back as the panel.
+///
+/// The current picture is archived first, so choosing an older one is not a
+/// way to lose the newer one — the whole point of keeping them is that no
+/// roll of the seed destroys anything.
+pub fn restore_panel(root: &Path, name: &str, panel: &str, kept: &Path) -> Result<()> {
+    let dir = project_dir(root, name)?;
+    let panels = dir.join("panels");
+    if !valid_name(panel) {
+        anyhow::bail!("\"{panel}\" is not a panel id");
+    }
+    // The file has to be one of THIS comic's kept attempts. A path from the
+    // webview is not a licence to copy anything on the disk over a panel.
+    let history = panels.join("history");
+    let kept = kept.canonicalize().context("that attempt is no longer on disk")?;
+    let history = history.canonicalize().context("this comic has no kept attempts")?;
+    if !kept.starts_with(&history) {
+        anyhow::bail!("that file is not one of this comic's kept attempts");
+    }
+    let png = panels.join(format!("{panel}.png"));
+    let sidecar = panels.join(format!("{panel}.json"));
+    if png.is_file() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let _ = std::fs::copy(&png, history.join(format!("{panel}-restored-{stamp}.png")));
+    }
+    std::fs::copy(&kept, &png).context("could not put that attempt back")?;
+    // Its sidecar too, so the panel says what actually drew it and 
+    // can tell you it is now out of date.
+    let kept_sidecar = kept.with_extension("json");
+    if kept_sidecar.is_file() {
+        let _ = std::fs::copy(&kept_sidecar, &sidecar);
+    }
     Ok(())
 }
 

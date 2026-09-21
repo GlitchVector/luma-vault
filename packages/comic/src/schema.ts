@@ -150,6 +150,20 @@ export const promptConfigSchema = z.object({
   /** A style block appended to every panel. Empty by default: the look of
    *  the book is the checkpoint's, and this is the one place to change it. */
   style: z.string().default(''),
+  /**
+   * The light the whole book is lit by, as tags.
+   *
+   * Its own field rather than part of `style`, because it is the setting
+   * most likely to be changed and the one most likely to want overriding
+   * for a stretch of pages: a book can turn from dawn to night halfway
+   * through without its style changing at all.
+   *
+   * It is the counterweight to what a writer puts in a scene line. Words
+   * like "grey morning" and "cold light" go straight into the prompt and
+   * the model obeys them, which is how a whole book came back with no
+   * colour in it.
+   */
+  lighting: z.string().default(''),
   negative: z.string().min(1),
   /** Lettering words. Added to every negative so the model does not draw
    *  the balloons the assembler is about to add. */
@@ -244,6 +258,21 @@ export const configSchema = z.object({
   qa: qaConfigSchema.prefault({}),
   writer: writerConfigSchema.prefault({}),
   plates: platesConfigSchema.prefault({}),
+  /**
+   * Where a finished comic is copied so the vault can see it as a set.
+   *
+   * Forge already leaves a copy of every panel in whatever dated folder it
+   * was writing to, which is worse than useless: eleven pictures among the
+   * day's other work, named by Forge, with nothing saying they belong
+   * together. Collecting deliberately replaces that, so 
+   * should be off wherever this is on.
+   */
+  vault: z
+    .object({
+      /** The watched folder to copy into. Empty means do not collect. */
+      outdir: z.string().default(''),
+    })
+    .prefault({}),
   /** Chrome channel Playwright launches for the assembler. */
   browser: z.enum(['chrome', 'msedge', 'chromium']).default('chrome'),
   characters: z.record(z.string(), comicCharacterSchema),

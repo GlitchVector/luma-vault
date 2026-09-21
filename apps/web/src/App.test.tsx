@@ -198,6 +198,11 @@ vi.mock('#/lib/native.ts', () => {
     )
   },
   mediaById: (id: number) => Promise.resolve(library.find((item) => item.id === id) ?? null),
+  // The position in the cleared, newest-first order: the mock library is in id order, newest last.
+  mediaPosition: (_query: Record<string, unknown>, id: number) => {
+    const index = [...library].sort((a, b) => b.id - a.id).findIndex((item) => item.id === id)
+    return Promise.resolve(index === -1 ? null : index)
+  },
   mediaFrames: () => Promise.resolve([]),
   extrasOriginal: () => Promise.resolve(null),
   sourceOrigin: () => Promise.resolve(null),
@@ -2683,7 +2688,8 @@ describe('browsing by set', () => {
     },
   ]
 
-  const setsTab = () => screen.getByRole('button', { name: 'Sets' })
+  // The Sets section is open by default; its heading is only looked for, never clicked, or it would fold.
+  const setsTab = () => screen.getByRole('button', { name: /^Sets/ })
 
   it('offers the switch only once a run exists', async () => {
     // A library nobody has shot a set in shows exactly what it showed before.
@@ -2692,15 +2698,47 @@ describe('browsing by set', () => {
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
 
-    expect(screen.queryByRole('button', { name: 'Sets' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Characters' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^Sets/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /^Characters/ })).toBeTruthy()
+  })
+
+  it('keeps the whole list when a set is picked, and only marks it selected', async () => {
+    // The sets follow the grid's filters, minus the set itself - both fields, or
+    // opening one collapses the list to the run already on screen.
+    librarySetsState = RUNS
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    librarySetQueries.length = 0
+
+    fireEvent.click(screen.getByRole('button', { name: /Aqua — every angle/ }))
+    await waitFor(() =>
+      expect((queries.at(-1) as { sets?: string[] } | undefined)?.sets).toEqual(['shotall-aqua-20260903t1431']),
+    )
+    expect(librarySetQueries.length).toBeGreaterThan(0)
+    for (const asked of librarySetQueries) {
+      expect(asked.sets).toEqual([])
+      expect(asked.set).toBeNull()
+    }
+    expect(screen.getByRole('button', { name: /Aqua — every angle/ }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: /photostory/ })).toBeTruthy()
+  })
+
+  it('scrolls the grid back to the top when a set is picked', async () => {
+    librarySetsState = RUNS
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    const scroller = screen.getByTestId('grid-scroller')
+    scroller.scrollTop = 800
+
+    fireEvent.click(screen.getByRole('button', { name: /Aqua — every angle/ }))
+    await waitFor(() => expect(scroller.scrollTop).toBe(0))
   })
 
   it('lists the runs under the character each was of, newest first', async () => {
     librarySetsState = RUNS
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
-    setsTab().click()
+    setsTab()
 
     // Grouped by who, and both the groups and the runs inside them arrive in
     // the order the backend sent — newest first.
@@ -2732,7 +2770,7 @@ describe('browsing by set', () => {
     ]
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
-    setsTab().click()
+    setsTab()
 
     expect(await screen.findByRole('heading', { level: 4, name: 'Other' })).toBeTruthy()
   })
@@ -2741,7 +2779,7 @@ describe('browsing by set', () => {
     librarySetsState = RUNS
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
-    setsTab().click()
+    setsTab()
 
     const row = (await screen.findByText('Aqua — every angle')).closest('button')
     row?.click()
@@ -2766,7 +2804,7 @@ describe('browsing by set', () => {
     librarySetsState = RUNS
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
-    setsTab().click()
+    setsTab()
     ;(await screen.findByText('Aqua — every angle')).closest('button')?.click()
 
     await waitFor(() =>
@@ -3084,6 +3122,71 @@ describe('the phone layout', () => {
       window.dispatchEvent(new PopStateEvent('popstate'))
     })
     expect(screen.queryByRole('dialog', { name: `image-${LIBRARY_SIZE}.png` })).toBeNull()
+  })
+
+  it('opens the LoRAs panel as a history entry, so the back gesture is the way out', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    fireEvent.click(screen.getByRole('button', { name: /^LoRAs/ }))
+    await screen.findByTestId('loras-final')
+    expect(window.location.hash).toBe('#loras')
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    expect(screen.queryByTestId('loras-final')).toBeNull()
+  })
+
+  it('keeps the sidebar beside the LoRAs page, and a pick there leads back to the grid', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    fireEvent.click(screen.getByRole('button', { name: /^LoRAs/ }))
+    await screen.findByTestId('loras-final')
+
+    const allFolders = screen.getAllByRole('button', { name: /All folders/ })
+    expect(allFolders.length).toBeGreaterThan(0)
+    fireEvent.click(allFolders[0]!)
+    expect(screen.queryByTestId('loras-final')).toBeNull()
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+  })
+
+  it('takes the history entry back out when the LoRAs panel closes from its Back button', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    fireEvent.click(screen.getByRole('button', { name: /^LoRAs/ }))
+    await screen.findByTestId('loras-final')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to the library' }))
+    expect(screen.queryByTestId('loras-final')).toBeNull()
+    await waitFor(() => expect(window.location.hash).not.toBe('#loras'))
+  })
+
+  it('"Open in library" leaves the lightbox, clears the filters and opens the grid on that picture', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    // A filter first, so there is something to clear.
+    screen.getByRole('button', { name: 'Videos' }).click()
+    await waitFor(() => expect((queries.at(-1) as { kind?: string } | undefined)?.kind).toBe('video'))
+    fireEvent.click(screen.getByRole('button', { name: 'Images' }))
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    ;(await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)).click()
+    await screen.findByRole('dialog', { name: `image-${LIBRARY_SIZE}.png` })
+    queries.length = 0
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open in library' }))
+    expect(screen.queryByRole('dialog', { name: `image-${LIBRARY_SIZE}.png` })).toBeNull()
+    // The query that follows is the cleared one, opened on the page that holds the picture.
+    await waitFor(() => expect(queries.length).toBeGreaterThan(0))
+    const sent = queries.at(-1) as { kind?: string | null; search?: string; offset?: number; limit?: number }
+    expect(sent.kind).toBeNull()
+    expect(sent.search).toBe('')
+    expect(sent.offset).toBe(0)
+    expect(sent.limit).toBeGreaterThan(300)
+    // The tile is marked once it is on screen.
+    await waitFor(() => {
+      const tile = screen.getByTitle(`image-${LIBRARY_SIZE}.png`)
+      expect(tile.className).toContain('ring-indigo-400')
+    })
   })
 
   it('takes the history entry back out when the lightbox closes from inside', async () => {

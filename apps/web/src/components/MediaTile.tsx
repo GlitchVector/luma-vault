@@ -85,6 +85,8 @@ interface MediaTileProps {
    * every render of the grid.
    */
   folderTerm?: string
+  /** The picture the grid was just opened on: drawn with a ring so the eye finds it among three hundred. */
+  focused?: boolean
 }
 
 /**
@@ -115,6 +117,7 @@ export const MediaTile = memo(function MediaTile({
   maxTileWidth = MAX_ANIMATED_SIZE,
   selected = false,
   folderTerm = '',
+  focused = false,
 }: MediaTileProps) {
   const { ref, inView } = useInView()
 
@@ -189,12 +192,14 @@ export const MediaTile = memo(function MediaTile({
     <button
       type="button"
       ref={ref}
+      data-media-id={item.id}
       onClick={(event) => onOpen(item.id, event.shiftKey)}
       style={{ width, height }}
       title={item.name}
       aria-pressed={selected || undefined}
       className={cn(
         'group relative shrink-0 overflow-hidden rounded-md bg-zinc-800/80',
+        focused && 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-zinc-950',
         'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400',
         // An inset ring rather than an outline: the grid packs tiles two
         // pixels apart, and anything drawn outside the box would overlap the

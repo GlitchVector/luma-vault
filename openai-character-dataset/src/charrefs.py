@@ -77,6 +77,7 @@ def request_summary(character: Character, view: View, prompt: str, references: l
         f"  references     : {', '.join(str(p) for p in references) if references else '(none)'}",
         f"  output path    : {output}",
         f"  caption tags   : {view.tags}",
+        f"  background     : {view.background or character.background}",
         "  final prompt   :",
     ]
     lines.extend("    " + line for line in prompt.splitlines())
@@ -140,7 +141,11 @@ def cmd_generate(args: argparse.Namespace, log) -> int:
             done += 1
             continue
         entry = state["views"].setdefault(view.key, {"status": "pending", "attempts": 0, "refusals": 0, "transient": 0})
+        # A re-attempt starts its own budget: the caps are per run, not for the life of the state file.
+        if entry.get("status") in ("open", "done"):
+            entry.update(refusals=0, transient=0)
         entry["status"] = "pending"
+        entry.pop("reason", None)
         started = time.time()
         while entry["status"] == "pending":
             if entry["refusals"] >= s.retry_cap:
@@ -175,6 +180,9 @@ def cmd_generate(args: argparse.Namespace, log) -> int:
                     entry["status"] = "pending"
                     stopped = True
                     break
+                elif exc.kind == "bad_request":
+                    # Not transient: the same request would fail the same way every time.
+                    entry["status"], entry["reason"] = "open", str(exc).splitlines()[0][:200]
                 else:
                     entry["transient"] += 1
                     log.warning("    %s [%s] (%d/%d): %s", view.key, exc.kind, entry["transient"], s.transient_cap, str(exc).splitlines()[0][:160])
@@ -209,7 +217,9 @@ def cmd_generate(args: argparse.Namespace, log) -> int:
 
 def cmd_collect(args: argparse.Namespace, log) -> int:
     character = load_character(args.name)
-    n_body, n_face, missing = collect_into_sheets(character, read_state(character))
+    if args.all:
+        log.warning("--all: taking every generated view, the vault stars are NOT consulted")
+    n_body, n_face, missing = collect_into_sheets(character, read_state(character), accept_all=args.all)
     name = character.name.lower()
     log.info("%d body refs -> %s", n_body, character.settings.sheets_dir / f"{name}-refs-gen")
     log.info("%d face refs -> %s", n_face, character.settings.sheets_dir / f"{name}-face-refs-gen")
@@ -253,6 +263,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--vault", action="store_true", help="also file every result into the vault review set")
     p = sub.add_parser("collect", help="copy the starred views into the training sheet folders")
     p.add_argument("name")
+    p.add_argument("--all", action="store_true", help="take every generated view instead of only the starred ones - use ONLY when the owner has accepted the whole set")
     p = sub.add_parser("status", help="done / open / pending per character")
     p.add_argument("name")
     parser.add_argument("--verbose", action="store_true")

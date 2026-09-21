@@ -1,42 +1,217 @@
 {
-  "_comment": "The view library: every angle, framing and head shot a full-character LoRA needs. `prompt` is natural language for the image model; `tags` is the caption the dataset prep writes for that view, so the two never drift apart. A character selects views by id (default: all).",
+  "_comment": "The view library: every angle, framing and head shot a full-character LoRA needs. `prompt` is natural language for the image model; `tags` is the caption the dataset prep writes for that view, so the two never drift apart. A character selects views by id (default: all). Each view also carries its own `background`, rotating through neutral fields so the background never correlates with the trigger (2026-09-21).",
   "body": [
-    { "id": "01-front", "prompt": "Full-body front view. She stands naturally and faces directly toward the camera, camera at eye level, arms relaxed at her sides, neutral posture, looking toward the viewer, feet fully visible.", "tags": "full body, standing, looking at viewer" },
-    { "id": "02-three-quarter-front", "prompt": "Full-body three-quarter front view, her body rotated about 45 degrees from the camera, camera at eye level, relaxed standing pose, arms relaxed, looking toward the viewer, the front and the side construction of the outfit both clearly visible, feet fully visible.", "tags": "full body, standing, looking at viewer" },
-    { "id": "03-left-profile", "prompt": "Full-body exact side profile from her left side, camera perpendicular to her at eye level. She stands straight with arms relaxed and looks straight ahead in the direction her body faces. No accidental three-quarter rotation. Silhouette and side construction of the outfit clearly visible, feet fully visible.", "tags": "full body, standing, from side, profile" },
-    { "id": "04-right-profile", "prompt": "Full-body exact side profile from her right side, camera perpendicular to her at eye level. She stands straight with arms relaxed and looks straight ahead in the direction her body faces. No accidental three-quarter rotation. Silhouette and side construction of the outfit clearly visible, feet fully visible.", "tags": "full body, standing, from side, profile" },
-    { "id": "05-back", "prompt": "Full-body straight back view. She faces directly away from the camera, camera at eye level, standing naturally, arms relaxed at her sides, torso not turned toward the camera. The full back construction of the hairstyle and the outfit clearly visible, feet fully visible.", "tags": "full body, standing, from behind, facing away" },
-    { "id": "06-three-quarter-back", "prompt": "Full-body three-quarter rear view, her body about halfway between a side view and a direct back view, camera at eye level, natural standing pose. Her head may turn slightly toward the viewer but the body stays oriented away. Back and side outfit construction clearly visible, feet fully visible.", "tags": "full body, standing, from behind, looking back" },
-    { "id": "07-back-looking-over-right-shoulder", "prompt": "Full-body view from directly behind. She turns her head to look back at the viewer over her right shoulder, body facing away, arms relaxed, camera at eye level, feet fully visible.", "tags": "full body, standing, from behind, looking back, looking at viewer" },
-    { "id": "08-back-looking-over-left-shoulder", "prompt": "Full-body view from directly behind. She turns her head to look back at the viewer over her left shoulder, body facing away, arms relaxed, camera at eye level, feet fully visible.", "tags": "full body, standing, from behind, looking back, looking at viewer" },
-    { "id": "09-walking-front", "prompt": "Full-body walking pose toward the viewer, natural mid-stride motion, arms swinging naturally, camera at eye level, looking generally toward the viewer, outfit construction correct in motion, both feet and the entire figure inside the frame.", "tags": "full body, walking, looking at viewer" },
-    { "id": "10-walking-back", "prompt": "Full-body walking pose away from the viewer, natural mid-stride motion, arms swinging naturally, camera at eye level. She may turn her head slightly to look back toward the viewer; the body stays oriented away. Rear outfit construction clearly visible, the entire figure and both feet inside the frame.", "tags": "full body, walking, from behind, looking back, looking at viewer" },
-    { "id": "11-left-profile-walking", "prompt": "Full-body walking pose seen exactly from her left side in profile, natural mid-stride motion, camera perpendicular at eye level, the entire figure and both feet inside the frame.", "tags": "full body, walking, from side, profile" },
-    { "id": "12-hands-on-hips", "prompt": "Full-body standing pose with both hands on her hips, front or slightly three-quarter front orientation, camera at eye level, looking toward the viewer, believable anatomy and arm placement, feet fully visible.", "tags": "full body, standing, hands on own hips, looking at viewer" },
-    { "id": "13-hands-on-hips-from-below", "prompt": "Full-body standing pose facing the viewer with both hands on her hips, seen from a low camera angle looking up at her, looking down toward the viewer, feet fully visible.", "tags": "full body, standing, from below, hands on own hips, looking at viewer" },
-    { "id": "14-from-above", "prompt": "Full-body standing pose facing the viewer with her arms behind her back, seen from a high camera angle looking down at her, looking up toward the viewer, feet fully visible.", "tags": "full body, standing, from above, arms behind back, looking at viewer" },
-    { "id": "15-touching-hair", "prompt": "Full-body relaxed standing pose in three-quarter front orientation. She raises one hand naturally to touch her hair, the other arm relaxed, camera at eye level, looking toward the viewer, believable hand anatomy, outfit clearly visible, feet fully visible.", "tags": "full body, standing, hand in own hair, looking at viewer" },
-    { "id": "16-arms-crossed", "prompt": "Full-body standing pose facing the viewer with her arms crossed, camera at eye level, looking toward the viewer, feet fully visible.", "tags": "full body, standing, crossed arms, looking at viewer" },
-    { "id": "17-arms-behind-head", "prompt": "Full-body standing pose facing the viewer with both arms raised and her hands behind her head, camera at eye level, looking toward the viewer, feet fully visible.", "tags": "full body, standing, arms up, arms behind head, looking at viewer" },
-    { "id": "18-arms-behind-back", "prompt": "Full-body standing pose facing the viewer with her arms behind her back, camera at eye level, looking toward the viewer, feet fully visible.", "tags": "full body, standing, arms behind back, looking at viewer" },
-    { "id": "19-contrapposto", "prompt": "Full-body standing pose facing the viewer with her weight on one leg, arms relaxed at her sides, camera at eye level, looking toward the viewer, feet fully visible.", "tags": "full body, standing, arms at sides, looking at viewer" },
-    { "id": "20-side-hands-on-hips-looking-back", "prompt": "Full-body view from her right side with both hands on her hips, head turned to look back at the viewer, camera at eye level, feet fully visible.", "tags": "full body, standing, from side, hands on own hips, looking back, looking at viewer" },
-    { "id": "21-sitting", "prompt": "Full-body view of her sitting on a plain low cube, hands together on her lap, camera at eye level, looking toward the viewer, the whole figure including both feet inside the frame.", "tags": "full body, sitting, own hands together, hands on lap, looking at viewer" },
-    { "id": "22-kneeling-one-knee", "prompt": "Full-body view of her kneeling on one knee with the other knee up and a hand resting on it, camera at eye level, looking toward the viewer, the whole figure inside the frame.", "tags": "full body, kneeling, knee up, hand on own knee, looking at viewer" }
+    {
+      "id": "01-front",
+      "prompt": "Full-body front view. She stands naturally and faces directly toward the camera, camera at eye level, arms relaxed at her sides, neutral posture, looking toward the viewer, feet fully visible.",
+      "tags": "full body, standing, looking at viewer",
+      "background": "a plain, even white background"
+    },
+    {
+      "id": "02-three-quarter-front",
+      "prompt": "Full-body three-quarter front view, her body rotated about 45 degrees from the camera, camera at eye level, relaxed standing pose, arms relaxed, looking toward the viewer, the front and the side construction of the outfit both clearly visible, feet fully visible.",
+      "tags": "full body, standing, looking at viewer",
+      "background": "a plain, even light grey background"
+    },
+    {
+      "id": "03-left-profile",
+      "prompt": "Full-body exact side profile from her left side, camera perpendicular to her at eye level. She stands straight with arms relaxed and looks straight ahead in the direction her body faces. No accidental three-quarter rotation. Silhouette and side construction of the outfit clearly visible, feet fully visible.",
+      "tags": "full body, standing, from side, profile",
+      "background": "a plain, even warm sand-beige background"
+    },
+    {
+      "id": "04-right-profile",
+      "prompt": "Full-body exact side profile from her right side, camera perpendicular to her at eye level. She stands straight with arms relaxed and looks straight ahead in the direction her body faces. No accidental three-quarter rotation. Silhouette and side construction of the outfit clearly visible, feet fully visible.",
+      "tags": "full body, standing, from side, profile",
+      "background": "a plain, even pale blue background"
+    },
+    {
+      "id": "05-back",
+      "prompt": "Full-body straight back view. She faces directly away from the camera, camera at eye level, standing naturally, arms relaxed at her sides, torso not turned toward the camera. The full back construction of the hairstyle and the outfit clearly visible, feet fully visible.",
+      "tags": "full body, standing, from behind, facing away",
+      "background": "a plain, even soft lavender background"
+    },
+    {
+      "id": "06-three-quarter-back",
+      "prompt": "Full-body three-quarter rear view, her body about halfway between a side view and a direct back view, camera at eye level, natural standing pose. Her head may turn slightly toward the viewer but the body stays oriented away. Back and side outfit construction clearly visible, feet fully visible.",
+      "tags": "full body, standing, from behind, looking back",
+      "background": "a plain, even pale mint background"
+    },
+    {
+      "id": "07-back-looking-over-right-shoulder",
+      "prompt": "Full-body view from directly behind. She turns her head to look back at the viewer over her right shoulder, body facing away, arms relaxed, camera at eye level, feet fully visible.",
+      "tags": "full body, standing, from behind, looking back, looking at viewer",
+      "background": "a plain, even light peach background"
+    },
+    {
+      "id": "08-back-looking-over-left-shoulder",
+      "prompt": "Full-body view from directly behind. She turns her head to look back at the viewer over her left shoulder, body facing away, arms relaxed, camera at eye level, feet fully visible.",
+      "tags": "full body, standing, from behind, looking back, looking at viewer",
+      "background": "a simple neutral studio interior: an out-of-focus plain wall and floor in warm grey, no furniture, no props"
+    },
+    {
+      "id": "09-walking-front",
+      "prompt": "Full-body walking pose toward the viewer, natural mid-stride motion, arms swinging naturally, camera at eye level, looking generally toward the viewer, outfit construction correct in motion, both feet and the entire figure inside the frame.",
+      "tags": "full body, walking, looking at viewer",
+      "background": "a plain, even pale yellow background"
+    },
+    {
+      "id": "10-walking-back",
+      "prompt": "Full-body walking pose away from the viewer, natural mid-stride motion, arms swinging naturally, camera at eye level. She may turn her head slightly to look back toward the viewer; the body stays oriented away. Rear outfit construction clearly visible, the entire figure and both feet inside the frame.",
+      "tags": "full body, walking, from behind, looking back, looking at viewer",
+      "background": "a simple neutral studio interior: an out-of-focus plain wall and floor in cool grey, no furniture, no props"
+    },
+    {
+      "id": "11-left-profile-walking",
+      "prompt": "Full-body walking pose seen exactly from her left side in profile, natural mid-stride motion, camera perpendicular at eye level, the entire figure and both feet inside the frame.",
+      "tags": "full body, walking, from side, profile",
+      "background": "a plain, even white background"
+    },
+    {
+      "id": "12-hands-on-hips",
+      "prompt": "Full-body standing pose with both hands on her hips, front or slightly three-quarter front orientation, camera at eye level, looking toward the viewer, believable anatomy and arm placement, feet fully visible.",
+      "tags": "full body, standing, hands on own hips, looking at viewer",
+      "background": "a plain, even light grey background"
+    },
+    {
+      "id": "13-hands-on-hips-from-below",
+      "prompt": "Full-body standing pose facing the viewer with both hands on her hips, seen from a low camera angle looking up at her, looking down toward the viewer, feet fully visible.",
+      "tags": "full body, standing, from below, hands on own hips, looking at viewer",
+      "background": "a plain, even warm sand-beige background"
+    },
+    {
+      "id": "14-from-above",
+      "prompt": "Full-body standing pose facing the viewer with her arms behind her back, seen from a HIGH CAMERA ANGLE clearly looking DOWN at her from above her head height: the camera is above her, her face is tilted up toward it, her feet are small and far away at the bottom of the frame, strong downward perspective. Feet fully visible.",
+      "tags": "full body, standing, from above, arms behind back, looking at viewer",
+      "background": "a plain, even pale blue background"
+    },
+    {
+      "id": "15-touching-hair",
+      "prompt": "Full-body relaxed standing pose in three-quarter front orientation. She raises one hand naturally to touch her hair, the other arm relaxed, camera at eye level, looking toward the viewer, believable hand anatomy, outfit clearly visible, feet fully visible.",
+      "tags": "full body, standing, hand in own hair, looking at viewer",
+      "background": "a plain, even soft lavender background"
+    },
+    {
+      "id": "16-arms-crossed",
+      "prompt": "Full-body standing pose facing the viewer with her ARMS CROSSED OVER HER CHEST - one forearm laid across the other in front of her upper chest, each hand resting near the opposite elbow, NOT resting under her bust. Camera at eye level, looking at the viewer, feet fully visible.",
+      "tags": "full body, standing, crossed arms, looking at viewer",
+      "background": "a plain, even pale mint background"
+    },
+    {
+      "id": "17-arms-behind-head",
+      "prompt": "Full-body standing pose facing the viewer with both arms raised and her hands behind her head, camera at eye level, looking toward the viewer, feet fully visible.",
+      "tags": "full body, standing, arms up, arms behind head, looking at viewer",
+      "background": "a plain, even light peach background"
+    },
+    {
+      "id": "18-arms-behind-back",
+      "prompt": "Full-body standing pose facing the viewer with her arms behind her back, camera at eye level, looking toward the viewer, feet fully visible.",
+      "tags": "full body, standing, arms behind back, looking at viewer",
+      "background": "a simple neutral studio interior: an out-of-focus plain wall and floor in warm grey, no furniture, no props"
+    },
+    {
+      "id": "19-contrapposto",
+      "prompt": "Full-body standing pose facing the viewer with her weight on one leg, arms relaxed at her sides, camera at eye level, looking toward the viewer, feet fully visible.",
+      "tags": "full body, standing, arms at sides, looking at viewer",
+      "background": "a plain, even pale yellow background"
+    },
+    {
+      "id": "20-side-hands-on-hips-looking-back",
+      "prompt": "Full-body view from her right side with both hands on her hips, head turned to look back at the viewer, camera at eye level, feet fully visible.",
+      "tags": "full body, standing, from side, hands on own hips, looking back, looking at viewer",
+      "background": "a simple neutral studio interior: an out-of-focus plain wall and floor in cool grey, no furniture, no props"
+    },
+    {
+      "id": "21-sitting",
+      "prompt": "Full-body view of her sitting on a plain low cube, hands together on her lap, camera at eye level, looking toward the viewer, the whole figure including both feet inside the frame.",
+      "tags": "full body, sitting, own hands together, hands on lap, looking at viewer",
+      "background": "a plain, even white background"
+    },
+    {
+      "id": "22-kneeling-one-knee",
+      "prompt": "Full-body view of her kneeling on one knee with the other knee up and a hand resting on it, camera at eye level, looking toward the viewer, the whole figure inside the frame.",
+      "tags": "full body, kneeling, knee up, hand on own knee, looking at viewer",
+      "background": "a plain, even light grey background"
+    }
   ],
   "face": [
-    { "id": "01-front", "prompt": "Head-and-shoulders portrait facing the viewer directly with a calm neutral expression; the face fills most of the frame.", "tags": "portrait, close-up, looking at viewer" },
-    { "id": "02-front-smile", "prompt": "Head-and-shoulders portrait facing the viewer with a warm smile; the face fills most of the frame.", "tags": "portrait, close-up, smile, looking at viewer" },
-    { "id": "03-three-quarter-left", "prompt": "Head-and-shoulders portrait, head turned three-quarters to her left, eyes on the viewer; the face fills most of the frame.", "tags": "portrait, close-up, looking at viewer" },
-    { "id": "04-three-quarter-right", "prompt": "Head-and-shoulders portrait, head turned three-quarters to her right, eyes on the viewer; the face fills most of the frame.", "tags": "portrait, close-up, looking at viewer" },
-    { "id": "05-profile-left", "prompt": "Head-and-shoulders portrait in strict left profile, camera perpendicular to her face; the head fills most of the frame.", "tags": "portrait, close-up, from side, profile" },
-    { "id": "06-profile-right", "prompt": "Head-and-shoulders portrait in strict right profile, camera perpendicular to her face; the head fills most of the frame.", "tags": "portrait, close-up, from side, profile" },
-    { "id": "07-from-above", "prompt": "Head-and-shoulders portrait seen from above, she looks up at the viewer; the face fills most of the frame.", "tags": "portrait, close-up, from above, looking at viewer" },
-    { "id": "08-from-below", "prompt": "Head-and-shoulders portrait seen from below, she looks down at the viewer; the face fills most of the frame.", "tags": "portrait, close-up, from below, looking at viewer" },
-    { "id": "09-looking-back", "prompt": "Head-and-shoulders view from behind, she looks back over her shoulder at the viewer; head large in frame.", "tags": "portrait, close-up, from behind, looking back, looking at viewer" },
-    { "id": "10-eyes-closed", "prompt": "Head-and-shoulders portrait facing the viewer with her eyes closed, serene; the face fills most of the frame.", "tags": "portrait, close-up, closed eyes" },
-    { "id": "11-laughing", "prompt": "Head-and-shoulders portrait facing the viewer, laughing with an open mouth; the face fills most of the frame.", "tags": "portrait, close-up, laughing, open mouth, looking at viewer" },
-    { "id": "12-surprised", "prompt": "Head-and-shoulders portrait facing the viewer with a surprised expression; the face fills most of the frame.", "tags": "portrait, close-up, surprised, looking at viewer" },
-    { "id": "13-back-of-head", "prompt": "Head-and-shoulders view from directly behind: the back of the head, the hair and any headwear, and the shoulders; head large in frame.", "tags": "portrait, from behind, facing away" }
+    {
+      "id": "01-front",
+      "prompt": "Head-and-shoulders portrait facing the viewer directly with a calm neutral expression; the face fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, looking at viewer",
+      "background": "a plain, even pale mint background"
+    },
+    {
+      "id": "02-front-smile",
+      "prompt": "Head-and-shoulders portrait facing the viewer with a warm smile; the face fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, smile, looking at viewer",
+      "background": "a plain, even light peach background"
+    },
+    {
+      "id": "03-three-quarter-left",
+      "prompt": "Head-and-shoulders portrait, head turned three-quarters to her left, eyes on the viewer; the face fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, looking at viewer",
+      "background": "a simple neutral studio interior: an out-of-focus plain wall and floor in warm grey, no furniture, no props"
+    },
+    {
+      "id": "04-three-quarter-right",
+      "prompt": "Head-and-shoulders portrait, head turned three-quarters to her right, eyes on the viewer; the face fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, looking at viewer",
+      "background": "a plain, even pale yellow background"
+    },
+    {
+      "id": "05-profile-left",
+      "prompt": "Head-and-shoulders portrait in strict left profile, camera perpendicular to her face; the head fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, from side, profile",
+      "background": "a simple neutral studio interior: an out-of-focus plain wall and floor in cool grey, no furniture, no props"
+    },
+    {
+      "id": "06-profile-right",
+      "prompt": "Head-and-shoulders portrait in strict right profile, camera perpendicular to her face; the head fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, from side, profile",
+      "background": "a plain, even white background"
+    },
+    {
+      "id": "07-from-above",
+      "prompt": "Head-and-shoulders portrait seen from above, she looks up at the viewer; the face fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, from above, looking at viewer",
+      "background": "a plain, even light grey background"
+    },
+    {
+      "id": "08-from-below",
+      "prompt": "Head-and-shoulders portrait seen from below, she looks down at the viewer; the face fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, from below, looking at viewer",
+      "background": "a plain, even warm sand-beige background"
+    },
+    {
+      "id": "09-looking-back",
+      "prompt": "Head-and-shoulders view from behind, she looks back over her shoulder at the viewer; head large in frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, from behind, looking back, looking at viewer",
+      "background": "a plain, even pale blue background"
+    },
+    {
+      "id": "10-eyes-closed",
+      "prompt": "Head-and-shoulders portrait facing the viewer with her eyes closed, serene; the face fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, closed eyes",
+      "background": "a plain, even soft lavender background"
+    },
+    {
+      "id": "11-laughing",
+      "prompt": "Head-and-shoulders portrait facing the viewer, laughing with an open mouth; the face fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, laughing, open mouth, looking at viewer",
+      "background": "a plain, even pale mint background"
+    },
+    {
+      "id": "12-surprised",
+      "prompt": "Head-and-shoulders portrait facing the viewer with a surprised expression; the face fills most of the frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, close-up, surprised, looking at viewer",
+      "background": "a plain, even light peach background"
+    },
+    {
+      "id": "13-back-of-head",
+      "prompt": "Head-and-shoulders view from directly behind: the back of the head, the hair and any headwear, and the shoulders; head large in frame. Cropped at the collarbones: the chest is OUT of frame, no cleavage, no bust visible. Only her head, neck and the tops of her shoulders are in the picture.",
+      "tags": "portrait, from behind, facing away",
+      "background": "a simple neutral studio interior: an out-of-focus plain wall and floor in warm grey, no furniture, no props"
+    }
   ]
 }

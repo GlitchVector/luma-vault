@@ -39,12 +39,14 @@ import {
   comicProjectSchema,
   comicStatusSchema,
   comicSummarySchema,
+  loraDatasetSchema,
   type ComicInspection,
   type ComicProject,
   type ComicRunOptions,
   type ComicSettings,
   type ComicStatus,
   type ComicSummary,
+  type LoraDataset,
   patreonSummarySchema,
   setMemberRowSchema,
   deviantArtGallerySchema,
@@ -672,6 +674,16 @@ export async function extrasOriginal(id: number): Promise<MediaItem | null> {
   return mediaItemSchema.nullable().parse(await invoke('extras_original', { id }))
 }
 
+/**
+ * How many rows `query` lists before `id`, or null when the row is not in that
+ * result or the sort has no seekable key. The join between a lightbox that
+ * knows an id and a grid that pages by offset.
+ */
+export async function mediaPosition(query: MediaQuery, id: number): Promise<number | null> {
+  if (!(await hasBackend())) return null
+  return z.number().nullable().parse(await invoke('media_position', { query: mediaQuerySchema.parse(query), id }))
+}
+
 export async function mediaById(id: number): Promise<MediaItem | null> {
   if (!(await hasBackend())) return null
   return mediaItemSchema.nullable().parse(await invoke('media_by_id', { id }))
@@ -1223,6 +1235,23 @@ export function onScanProgress(handler: (progress: ScanProgress) => void): () =>
  * post, everything here runs where the library is: that machine has Forge,
  * Chrome, the tagger and the repo, and a browser on the iPad has none.
  */
+/**
+ * The training data behind a character LoRA, read from its kohya config on the
+ * machine that trains. Thumbnails come back under the app's own thumbs root.
+ */
+export async function loraDataset(name: string): Promise<LoraDataset> {
+  return loraDatasetSchema.parse(await invoke('lora_dataset', { name }))
+}
+
+/**
+ * A viewer-sized copy of one training image, made on first request under the
+ * app's thumbs root. `path` must be one the dataset listed; anything else is
+ * refused on the Rust side.
+ */
+export async function loraImagePreview(dataset: string, path: string): Promise<string> {
+  return z.string().parse(await invoke('lora_image_preview', { dataset, path }))
+}
+
 export async function comicList(): Promise<ComicSummary[]> {
   if (!(await hasBackend())) return []
   return z.array(comicSummarySchema).parse(await invoke('comic_list'))
@@ -1257,6 +1286,17 @@ export async function comicInspect(name: string): Promise<ComicInspection> {
 /** Write the editable render settings into the project's comic.config.json. */
 export async function comicSaveSettings(name: string, settings: ComicSettings): Promise<void> {
   await invoke('comic_save_settings', { name, settings })
+}
+
+/**
+ * Put one of a panel's kept attempts back as the panel.
+ *
+ * Every render archives the picture it replaces, so rolling the seed for a
+ * better outfit cannot destroy the take that was right. This is how you go
+ * back to it.
+ */
+export async function comicRestorePanel(name: string, panel: string, file: string): Promise<void> {
+  await invoke('comic_restore_panel', { name, panel, file })
 }
 
 /** Start a stage. Returns once the pipeline is running; poll `comicStatus`. */

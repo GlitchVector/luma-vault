@@ -14,7 +14,7 @@ belongs here; if it is needed only when working *in an area*, it belongs in
 | Adding or changing tests | `.ai/testing.md` |
 | Touching the Patreon post automation, or capturing anything from patreon.com | `packages/patreon-harness/README.md` |
 | Anything comics — the picture pipeline, the Comics panel, the studio, the owner's decisions, what is verified | `.ai/comics.md` first, then `packages/comic/README.md` and `packages/studio/README.md` |
-| Rendering with, or training, one of the character LoRAs | `docs/loras.md` |
+| Rendering with, or training, one of the character LoRAs | `.ai/lora-training.md` first (the rules), then `docs/loras.md` (the register) |
 
 ## The shape, in one paragraph
 

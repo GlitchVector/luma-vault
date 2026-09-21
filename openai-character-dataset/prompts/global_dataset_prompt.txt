@@ -17,7 +17,8 @@ Do not redesign the character. Do not simplify, recolour or replace any outfit c
 PURPOSE: a machine-learning dataset image (LoRA training). Maximise usefulness for training, not scene composition.
 
 REQUIREMENTS:
-- exactly one character
+- exactly one character, redrawn as a SINGLE standalone illustration; the reference may be a character sheet, the output never is
+- no sheet layout, no panels, no colour swatches, no labels, no multiple views in one image
 - clean composition, the whole figure clearly readable
 - full body visible unless the view says otherwise: the entire head and both entire feet inside the frame, with margin
 - no cropping of any important anatomy

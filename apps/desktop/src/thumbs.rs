@@ -115,6 +115,25 @@ pub fn derived_path(root: &Path, key: &str, suffix: &str) -> PathBuf {
         .join(format!("{}{}", &hex[4..24], suffix))
 }
 
+/// Longest edge of a viewer preview. Enough to read a face and a caption's
+/// worth of garment detail on a laptop screen; a 1024x1536 training image
+/// loses nothing that matters, and the original is never what gets served.
+pub const PREVIEW_MAX: u32 = 1536;
+
+/// A larger derived copy of an image for the viewer, beside its thumbnail
+/// under the same content key, or the existing one. Same reuse rule as
+/// [`thumbnail_image`]: the file's presence is the cache.
+pub fn preview_image(source: &str, key: &str, thumb_root: &Path) -> Result<PathBuf> {
+    let destination = derived_path(thumb_root, key, "-preview.jpg");
+    if destination.is_file() && image::image_dimensions(&destination).is_ok() {
+        return Ok(destination);
+    }
+    let decoded = image::open(source).with_context(|| format!("cannot decode image {source}"))?;
+    let (width, height) = fit_within(decoded.width(), decoded.height(), PREVIEW_MAX);
+    write_jpeg(&decoded.thumbnail(width, height), &destination)?;
+    Ok(destination)
+}
+
 /// Generate a thumbnail for an image, or return the existing one.
 ///
 /// Reuse is keyed on the source's content, not its path or its mtime: the

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { toPayload } from '../render/forge.ts'
-import { bodyFor } from '../prompt.ts'
+import { bodyFor, lightingFor } from '../prompt.ts'
 import { openProject } from '../project.ts'
 import type { Character, Script } from '../schema.ts'
 import { planPanel } from './panels.ts'
@@ -193,5 +193,38 @@ describe('the ADetailer payload', () => {
 
   it('says nothing at all when the panel has no face pass', () => {
     expect(toPayload(base, { save_to_forge: true })).not.toHaveProperty('alwayson_scripts')
+  })
+})
+
+describe('the lighting ladder', () => {
+  it('takes the most specific rung that is set', () => {
+    expect(lightingFor('dawn')).toBe('dawn')
+    expect(lightingFor('dawn', 'night')).toBe('night')
+    expect(lightingFor('dawn', 'night', 'neon')).toBe('neon')
+    expect(lightingFor('dawn', undefined, 'neon')).toBe('neon')
+  })
+
+  it('treats a blank rung as silence, so an empty page keeps the book lit', () => {
+    expect(lightingFor('dawn', '')).toBe('dawn')
+    expect(lightingFor('dawn', '  ', '')).toBe('dawn')
+  })
+
+  it('reaches the prompt after the scene, and a page can turn the lights off', () => {
+    const lit = solo()
+    const open = project(lit, { prompt: { lighting: 'sunrise, golden hour' } })
+    const plan = planPanel(open, lit, prepared, { pageIndex: 0, panelIndex: 0 })
+    expect(plan.request.prompt).toContain('rooftop, sunrise, golden hour')
+
+    const night = solo({}, { lighting: 'night, neon' })
+    const dark = planPanel(project(night, { prompt: { lighting: 'sunrise, golden hour' } }), night, prepared, { pageIndex: 0, panelIndex: 0 })
+    expect(dark.request.prompt).toContain('night, neon')
+    expect(dark.request.prompt).not.toContain('sunrise')
+  })
+
+  it('lets one panel break from its page', () => {
+    const script = solo({ lighting: 'candlelight' }, { lighting: 'night, neon' })
+    const plan = planPanel(project(script), script, prepared, { pageIndex: 0, panelIndex: 0 })
+    expect(plan.request.prompt).toContain('candlelight')
+    expect(plan.request.prompt).not.toContain('neon')
   })
 })

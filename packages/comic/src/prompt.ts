@@ -138,6 +138,17 @@ export function bodyFor(character: Character, page?: string, panel?: string): st
 }
 
 /**
+ * Which light wins: the panel's, else the page's, else the book's.
+ *
+ * The same three rungs as the body, and for the same reason — a book has a
+ * light, a sequence may break from it, and one panel may break from that.
+ * A blank rung is silence rather than an override.
+ */
+export function lightingFor(book: string, page?: string, panel?: string): string {
+  return panel?.trim() || page?.trim() || book
+}
+
+/**
  * The prompt the face pass paints with: her, and nothing about the scene.
  *
  * Deliberately not the panel's prompt. ADetailer applies whatever it is
@@ -157,10 +168,11 @@ export function facePrompt(character: Character, config: Pick<Config, 'prompt'>)
 }
 
 export function buildPrompt(
-  panel: Pick<Panel, 'camera' | 'scene' | 'characters' | 'reserve_space' | 'body'>,
+  panel: Pick<Panel, 'camera' | 'scene' | 'characters' | 'reserve_space' | 'body' | 'lighting'>,
   characters: Record<string, Character>,
   config: Pick<Config, 'prompt'>,
   pageBody?: string,
+  pageLighting?: string,
 ): BuiltPrompt {
   const cast = panel.characters.map((id) => {
     const character = characters[id]
@@ -187,6 +199,10 @@ export function buildPrompt(
   // cowboy shot and `full body` as a crop. Weighting is the difference
   // between the camera being a request and being an instruction.
   parts.push(weighted(panel.camera, config.prompt.camera_weight, config.prompt.angle_weight), panel.scene)
+  // After the scene, so it reads as how the scene is lit rather than as
+  // another thing in it.
+  const light = lightingFor(config.prompt.lighting, pageLighting, panel.lighting)
+  if (light) parts.push(light)
   if (config.prompt.style) parts.push(config.prompt.style)
   if (panel.reserve_space !== 'none') parts.push(reserveClause(panel.reserve_space))
 

@@ -1,0 +1,35 @@
+{
+  "name": "ari-gen",
+  "config": "dataset-ari-gen.toml",
+  "subsets": [
+    {
+      "dir": "refs",
+      "repeats": 6,
+      "images": [
+        {
+          "path": "D:\\AI\\lora-train\\datasets\\ari-gen\\refs\\ari-01-front.png",
+          "thumbPath": "C:\\Users\\jebba\\AppData\\Local\\net.glitchvector.luma-vault\\thumbs\\0b\\94\\9798e1077b0ec173e4bb.jpg",
+          "width": 1024,
+          "height": 1536,
+          "caption": "ari, 1girl, solo, full body, standing, looking at viewer",
+          "flipped": false
+        },
+        {
+          "path": "D:\\AI\\lora-train\\datasets\\ari-gen\\refs\\ari-01-front-flip.png",
+          "thumbPath": null,
+          "width": 0,
+          "height": 0,
+          "caption": null,
+          "flipped": true
+        }
+      ]
+    },
+    {
+      "dir": "refs-face",
+      "repeats": 5,
+      "images": []
+    }
+  ],
+  "images": 2,
+  "perEpoch": 12
+}

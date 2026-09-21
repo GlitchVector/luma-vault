@@ -64,6 +64,24 @@ view still open or unstarred; `generate <name> --only <view> --redo` fills those
 recipe in `D:/AI/lora-train/TRAINING-A-CHARACTER.md` applies unchanged: prep, stage 1, undressed candidate
 round on both checkpoints, stars, final train (~30 epochs, undressed ~15 %), epoch sweep.
 
+## Outfit variants: the same character in a new outfit
+
+The LoRAs page has **+ Add outfit** on every character's card; it writes the message the owner pastes here,
+with his reference image attached. When a message arrives that way (it starts with `/character-refs <trigger>-<outfit> - outfit variant`),
+the flow above applies with these differences:
+
+- **The character file starts from the existing one.** Copy `characters/<trigger>/character.json`'s description
+  word for word for face, hair, body and accessories; replace only the outfit with what the image shows; rewrite
+  the audit list for the new outfit. Her face is not up for reinterpretation.
+- **The head shots are shared.** The prep takes the new body references plus the character's existing
+  `sheets/<trigger>-face-refs-gen`; the face is constant, the outfit is what varies.
+- **Names follow the line** (`outfitLoraNames` in `packages/core/src/loras.ts`): LoRA `<line>_<outfit>` with
+  `_s1` / `_v1` versions, trigger `<trigger><outfit>` run together, refs folder and dataset `<trigger>-<outfit>`.
+  A variant outfit is its own LoRA with its own trigger, never a second token on the main one.
+- **The catalogue entry** is `kind: 'outfit'` with `outfit: '<label>'` and `parent: '<main LoRA>'`, so the
+  page lists it under that card with one render, not as a card of its own. A new LINE of the same
+  character (a rebuild, `ari_gen` beside `ari_adopt`) has no parent: it is a new LoRA and a new card.
+
 ## Rules that bind here
 
 - Owner inputs are never altered (no colour correction, no background swap); generated frames are never

@@ -90,3 +90,12 @@ merges; a comment recording a constraint the code cannot express is why the next
 person does not undo your fix. Both `.ai/gotchas.md` and the inline comments in
 `pipeline.rs`, `thumbs.rs` and `useInView.ts` are written to that standard —
 match it.
+
+## Navigation vs filters
+
+The filter bar (`apps/web/src/components/FilterBar.tsx`) holds filters on the grid and, after a
+divider, tools for the grid (Labels, Select, Duplicates, Timeline). A page - the LoRAs catalogue,
+Comics, whatever comes next - is never a pill there: pages are entries in the sidebar's Navigation
+section (`FolderSidebar.tsx`, type `Page`), render in the main column beside the sidebar where they
+can, and get a history entry through `useBackCloses` so the back gesture leaves them. Owner's rule,
+2026-09-21, after the bar had grown two page pills.

@@ -155,6 +155,12 @@ interface LightboxProps {
   /** Called once the file is gone, so the grid can move on. */
   onDeleted: (id: number) => void
   /**
+   * Leave the lightbox and open the grid on this picture with every filter
+   * cleared - the way to the rest of the batch it was made in, from wherever
+   * (favourites, a set, a search) it was found.
+   */
+  onOpenInLibrary: (id: number) => void
+  /**
    * Pick this row for the grid's selection, without leaving the lightbox.
    *
    * The point of doing it from here: reviewing a folder is one pass, and
@@ -326,6 +332,7 @@ export function Lightbox({
   showGeneration,
   onToggleGeneration,
   onDeleted,
+  onOpenInLibrary,
   onOpenId,
   onUpscale,
   onToggleSelect,
@@ -1873,6 +1880,15 @@ export function Lightbox({
             {counterpart.label}
           </button>
         ) : null}
+
+        <button
+          type="button"
+          onClick={() => onOpenInLibrary(item.id)}
+          title="Close this and show the whole library scrolled to this picture, so the rest of its batch is around it"
+          className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-white/20"
+        >
+          Open in library
+        </button>
 
         <span
           className="shrink-0 tabular-nums text-[11px] text-zinc-500"

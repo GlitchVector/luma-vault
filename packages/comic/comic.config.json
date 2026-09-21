@@ -4,13 +4,13 @@
   "forge": {
     "url": "http://127.0.0.1:7860",
     "checkpoint": "delburry75",
-    "sampler": "Euler a",
-    "scheduler": "Automatic",
+    "sampler": "DPM++ 2M SDE",
+    "scheduler": "Karras",
     "steps": 28,
     "cfg": 5,
-    "save_to_forge": true,
+    "save_to_forge": false,
     "timeout_s": 900,
-    "upscaler": "R-ESRGAN 4x+ Anime6B",
+    "upscaler": "4xUltrasharp_4xUltrasharpV10",
     "face": {
       "enabled": true,
       "model": "face_yolov8s.pt",
@@ -27,17 +27,18 @@
     },
     "hires": {
       "enabled": true,
-      "denoise": 0.45,
-      "steps": 14,
+      "denoise": 0.4,
+      "steps": 30,
       "min_factor": 1.15,
       "max_megapixels": 6
     }
   },
   "prompt": {
-    "quality": "masterpiece, best quality",
-    "style": "",
-    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, extra arms, extra legs, jpeg artifacts, signature, watermark, artist name, username, blurry, (censored:1.4), light censor",
-    "negative_lettering": "speech bubble, english text, multiple views"
+    "quality": "masterpiece, best quality, amazing quality, very aesthetic, newest, absurdres",
+    "style": "realistic",
+    "negative": "worst quality, low quality, lowres, bad anatomy, bad hands, extra arms, extra legs, jpeg artifacts, signature, watermark, artist name, username, blurry, (censored:1.3), mosaic censoring, bar censor, heart censor, censor sticker",
+    "negative_lettering": "speech bubble, english text, multiple views",
+    "lighting": "vivid colors, warm light, rich shadows"
   },
   "page": {
     "width": 2000,
@@ -81,5 +82,8 @@
       "body": "large breasts, narrow waist, wide hips, thick thighs, pale skin",
       "head": "white hair, aqua hair, colored tips, bob cut, blunt bangs, blue eyes, hairband, earrings"
     }
+  },
+  "vault": {
+    "outdir": "\\\\jebpot\\devs\\AI\\Stable Diffusion\\outputs\\txt2img-images"
   }
 }

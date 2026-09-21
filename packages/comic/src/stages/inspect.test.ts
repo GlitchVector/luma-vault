@@ -110,7 +110,7 @@ describe('inspect', () => {
     config({
       page: { scale: 2 },
       forge: { checkpoint: 'delnoob', hires: { enabled: true, denoise: 0.5 } },
-      prompt: { style: 'watercolour', quality: 'masterpiece' },
+      prompt: { style: 'watercolour', quality: 'masterpiece', lighting: 'candlelight' },
     })
     const { settings } = inspect(openProject(dir))
     expect(settings).toEqual({
@@ -118,6 +118,7 @@ describe('inspect', () => {
       checkpoint: 'delnoob',
       style: 'watercolour',
       globalTags: 'masterpiece',
+      lighting: 'candlelight',
       pageWidth: 2000,
       pageHeight: 3000,
       pageScale: 2,

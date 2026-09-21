@@ -6,3 +6,4 @@ characters/*/out/
 characters/*/state.json
 logs/*
 !logs/.gitkeep
+characters/*/out-*/

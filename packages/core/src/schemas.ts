@@ -855,6 +855,39 @@ export type ShareStatus = z.infer<typeof shareStatusSchema>
 // `comicScriptSchema` in `comic.ts` and crosses as an opaque value here.
 // ---------------------------------------------------------------------------
 
+/** One training image of a character LoRA. `thumbPath` is under the app's own thumbs root and is what `luma://` serves. */
+export const loraImageSchema = z.object({
+  path: z.string(),
+  thumbPath: z.string().nullable(),
+  width: z.number(),
+  height: z.number(),
+  /** The `.txt` beside the image, trimmed. */
+  caption: z.string().nullable(),
+  /** A `-flip` mirror the prep script made; the page folds these away. */
+  flipped: z.boolean(),
+})
+export type LoraImage = z.infer<typeof loraImageSchema>
+
+/** One `[[datasets.subsets]]` of a kohya config: a folder and how often an epoch repeats it. */
+export const loraSubsetSchema = z.object({
+  dir: z.string(),
+  repeats: z.number(),
+  images: z.array(loraImageSchema),
+})
+export type LoraSubset = z.infer<typeof loraSubsetSchema>
+
+/** A character LoRA's training data as kohya read it, from the dataset's own `.toml`. */
+export const loraDatasetSchema = z.object({
+  name: z.string(),
+  config: z.string(),
+  subsets: z.array(loraSubsetSchema),
+  /** Files across every subset, mirrors included. */
+  images: z.number(),
+  /** Files times repeats: what one epoch shows the trainer. */
+  perEpoch: z.number(),
+})
+export type LoraDataset = z.infer<typeof loraDatasetSchema>
+
 export const comicSummarySchema = z.object({
   /** The folder name, and the only handle a command takes. */
   name: z.string(),
@@ -899,6 +932,13 @@ export const comicPanelStateSchema = z.object({
   prompt: z.string().nullable(),
   /** The hosted model's plate the panel was painted into, when there is one. */
   plate: z.string().nullable(),
+  /**
+   * Every earlier attempt at this panel, newest first.
+   *
+   * Getting an outfit right is a matter of rolling the seed until it is, and
+   * without these the roll after the good one destroys it.
+   */
+  history: z.array(z.string()).default([]),
   verdict: comicVerdictSchema.nullable(),
 })
 export type ComicPanelState = z.infer<typeof comicPanelStateSchema>
@@ -955,6 +995,8 @@ export const comicSettingsSchema = z.object({
   style: z.string(),
   /** The words that lead every prompt. */
   globalTags: z.string(),
+  /** The light the whole book is lit by. */
+  lighting: z.string(),
   pageScale: z.number(),
   pageWidth: z.number(),
   pageHeight: z.number(),

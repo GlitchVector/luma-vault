@@ -9,7 +9,8 @@
     "hiresEnabled": true,
     "hiresDenoise": 0.45,
     "renderer": "forge",
-    "plates": false
+    "plates": false,
+    "lighting": "sunrise, golden hour, warm light"
   },
   "panels": [
     {

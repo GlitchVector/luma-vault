@@ -41,6 +41,8 @@ export interface Settings {
   style: string
   /** `prompt.quality`: the words that lead every prompt. */
   globalTags: string
+  /** `prompt.lighting`: the light the whole book is lit by. */
+  lighting: string
   pageWidth: number
   pageHeight: number
   pageScale: number
@@ -63,6 +65,7 @@ export function settingsFor(project: Project): Settings {
     checkpoint: config.forge.checkpoint,
     style: config.prompt.style,
     globalTags: config.prompt.quality,
+    lighting: config.prompt.lighting,
     pageWidth: config.page.width,
     pageHeight: config.page.height,
     pageScale: config.page.scale,

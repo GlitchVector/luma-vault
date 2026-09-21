@@ -45,6 +45,9 @@ class View:
     id: str
     prompt: str
     tags: str
+    # Per-view background. A dataset where every frame shares one background teaches that background to the
+    # trigger, so the library rotates neutral fields and this overrides the character's own default.
+    background: str | None = None
 
     @property
     def key(self) -> str:
@@ -118,7 +121,9 @@ def load_views(path: Path = CONFIG_DIR / "views.json") -> list[View]:
             if item["id"] in seen:
                 raise ConfigError(f'duplicate {kind} view id "{item["id"]}" in {path}')
             seen.add(item["id"])
-            views.append(View(kind=kind, id=item["id"], prompt=item["prompt"].strip(), tags=item["tags"].strip()))
+            bg = item.get("background")
+            views.append(View(kind=kind, id=item["id"], prompt=item["prompt"].strip(), tags=item["tags"].strip(),
+                              background=bg.strip() if isinstance(bg, str) and bg.strip() else None))
     return views
 
 

@@ -7,7 +7,7 @@
  * part that touches the GPU.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { requestHash, type RenderRequest, type Sidecar } from '../cache.ts'
 import { bucketFor, sizeForCellBox, targetForCell } from '../layouts.ts'
@@ -99,10 +99,10 @@ export function planPanel(
     width = w
     height = h
   }
-  const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body)
+  const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting)
   // With a plate, each character is painted alone into her own mask, so
   // each gets a prompt naming only her - the panel prompt names them all.
-  const characterPrompts = panel.characters.map((id) => buildPrompt({ ...panel, characters: [id] }, script.characters, project.config, page.body).prompt)
+  const characterPrompts = panel.characters.map((id) => buildPrompt({ ...panel, characters: [id] }, script.characters, project.config, page.body, page.lighting).prompt)
   const seed = options.seed ?? panelSeed(familyFor(script.characters, panel.characters), where.pageIndex, where.panelIndex, attempt)
 
   const { forge } = project.config
@@ -267,6 +267,7 @@ export async function renderPlan(plan: PanelPlan, renderer: Renderer, report: Re
     report.tick({ event: 'panel', id: plan.id, status: 'rendering', progress, eta, seed: plan.seed, attempt: plan.attempt })
   const result = plan.plate ? await paintCharacters(plan, plan.plate, renderer, onProgress) : await renderer.render(plan.request, onProgress)
   mkdirSync(dirname(plan.pngPath), { recursive: true })
+  archive(plan)
   writeFileSync(plan.pngPath, result.png)
   const sidecar: Sidecar = {
     version: 1,
@@ -282,6 +283,26 @@ export async function renderPlan(plan: PanelPlan, renderer: Renderer, report: Re
   writeJson(plan.sidecarPath, sidecar)
   report.emit({ event: 'panel', id: plan.id, status: 'rendered', seed: plan.seed, attempt: plan.attempt })
   return 'rendered'
+}
+
+/**
+ * Put the panel that is about to be replaced somewhere it can be found again.
+ *
+ * Getting an outfit right is a matter of rolling the seed until it is, and
+ * the roll after the good one used to destroy it. The kept copy carries the
+ * hash of the request that drew it, so two attempts at one seed are two
+ * files and re-rendering the same thing twice is one.
+ */
+export function archive(plan: PanelPlan): void {
+  if (!existsSync(plan.pngPath)) return
+  const sidecar = readSidecar(plan.sidecarPath)
+  const dir = join(dirname(plan.pngPath), 'history')
+  mkdirSync(dir, { recursive: true })
+  const stamp = `${plan.id}-${sidecar?.seed ?? 'noseed'}-${sidecar?.hash ?? 'nohash'}`
+  const kept = join(dir, `${stamp}.png`)
+  if (existsSync(kept)) return
+  copyFileSync(plan.pngPath, kept)
+  if (sidecar) writeJson(join(dir, `${stamp}.json`), sidecar)
 }
 
 /**

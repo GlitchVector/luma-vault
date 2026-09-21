@@ -85,47 +85,122 @@
    * balloon only moves when what it would have covered is genuinely busy.
    */
   /*
-   * The band down from the top of the panel where a head is.
+   * The faces in this panel, in panel pixels.
    *
-   * `data-head` comes from the panel's framing, because the energy map
-   * cannot see a head against a flat sky and will happily call it quiet.
+   * From `face_yolov8s`, the detector ADetailer repaints with, run at
+   * assembly. Nothing cheaper worked: the energy map cannot see a head
+   * against a bright sky, framing alone only says roughly how far down a
+   * head reaches, and a skin-tone guess finds faces in lit windows.
+   *
+   * A face, not a head. A caption across her hair is fine.
    */
-  function headBottom(panel) {
-    const band = parseFloat(panel.dataset.head)
-    return Number.isFinite(band) ? band * panel.clientHeight : 0
+  function facesIn(panel) {
+    const raw = panel.dataset.faces
+    if (!raw) return []
+    const out = []
+    const groups = raw.split(';')
+    for (let i = 0; i < groups.length; i++) {
+      const n = groups[i].split(',').map(Number)
+      if (n.length !== 4 || n.some(function (v) { return !Number.isFinite(v) })) continue
+      out.push({
+        left: n[0] * panel.clientWidth,
+        top: n[1] * panel.clientHeight,
+        width: (n[2] - n[0]) * panel.clientWidth,
+        height: (n[3] - n[1]) * panel.clientHeight,
+      })
+    }
+    return out
   }
+
+  /*
+   * How much of a rectangle is a person, 0 to 9.
+   *
+   * From the segmentation mask, not a bounding box. A standing figure's box
+   * covers most of the panel while the figure is a column down the middle of
+   * it, so a box says "nowhere is free" about a panel with a brick wall down
+   * one side. The mask knows the wall is free.
+   */
+  function figureUnder(panel, rect) {
+    const raw = panel.dataset.figure
+    if (!raw) return 0
+    const a = raw.indexOf(',')
+    const b = raw.indexOf(',', a + 1)
+    const cols = Number(raw.slice(0, a))
+    const rows = Number(raw.slice(a + 1, b))
+    const cells = raw.slice(b + 1)
+    if (!cols || !rows || cells.length < cols * rows) return 0
+    const x0 = Math.max(0, Math.floor((rect.left / panel.clientWidth) * cols))
+    const x1 = Math.min(cols - 1, Math.ceil(((rect.left + rect.width) / panel.clientWidth) * cols) - 1)
+    const y0 = Math.max(0, Math.floor((rect.top / panel.clientHeight) * rows))
+    const y1 = Math.min(rows - 1, Math.ceil(((rect.top + rect.height) / panel.clientHeight) * rows) - 1)
+    let sum = 0
+    let n = 0
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        sum += Number(cells.charAt(y * cols + x)) || 0
+        n++
+      }
+    }
+    return n ? sum / n : 0
+  }
+
+  function hitsAFace(rect, faces) {
+    for (let i = 0; i < faces.length; i++) if (overlaps(rect, faces[i], 0)) return true
+    return false
+  }
+
+  /*
+   * Widths to try, as a share of the balloon's own maximum.
+   *
+   * A narrower box is taller and slightly less handsome, and it is what lets
+   * a caption sit in the strip of wall BESIDE her instead of across her
+   * chest. The owner asked for this after watching a full-width box have
+   * nowhere to go on a panel she fills the middle of.
+   */
+  var WIDTHS = [1, 0.78, 0.6, 0.46]
 
   function place(balloon, panel, taken, energy) {
     const inset = cssPx(balloon, '--balloon-inset', 24)
-    const box = { width: balloon.offsetWidth, height: balloon.offsetHeight }
     const anchor = balloon.dataset.anchor || 'top-left'
+    const faces = facesIn(panel)
+    const full = balloon.offsetWidth
+
+    // Measure each width once, not once per candidate position: a reflow per
+    // position would be hundreds of forced layouts for one balloon.
+    const shapes = []
+    for (let i = 0; i < WIDTHS.length; i++) {
+      const wanted = Math.round(full * WIDTHS[i])
+      balloon.style.maxWidth = wanted + 'px'
+      const measured = { width: balloon.offsetWidth, height: balloon.offsetHeight, share: WIDTHS[i] }
+      // Text that cannot wrap any narrower stops the ladder: two identical
+      // shapes are one shape, and the taller one is never better.
+      if (i > 0 && measured.width >= shapes[shapes.length - 1].width) break
+      shapes.push(measured)
+    }
+    balloon.style.maxWidth = ''
+    if (shapes.length === 0) shapes.push({ width: full, height: balloon.offsetHeight, share: 1 })
+
+    let bestOverall = null
+    for (let si = 0; si < shapes.length; si++) {
+      const found = placeAt(shapes[si], balloon, panel, taken, energy, faces, anchor, inset)
+      // Narrow is a concession, so a wider box wins a tie: only take one if
+      // it is meaningfully better than what the full width could manage.
+      found.score += (1 - shapes[si].share) * 7
+      if (!bestOverall || found.score < bestOverall.score) bestOverall = found
+    }
+    if (bestOverall.share < 1) balloon.style.maxWidth = Math.round(full * bestOverall.share) + 'px'
+    return bestOverall
+  }
+
+  function placeAt(shape, balloon, panel, taken, energy, faces, anchor, inset) {
+    const box = { width: shape.width, height: shape.height }
     const ideal = anchorPosition(anchor, panel, box, inset)
-    const head = headBottom(panel)
     const bottomAligned = () => ({
       left: anchorPosition(anchor, panel, box, inset).left,
       top: Math.max(inset, panel.clientHeight - box.height - inset),
       width: box.width,
       height: box.height,
     })
-
-    /*
-     * A top anchor on a panel with a person in it goes to the BOTTOM, not to
-     * the first quiet spot below her head.
-     *
-     * Clearing the head band alone is not enough, which the owner had to say
-     * twice: the search then lands the box across her chest, because flat
-     * clothing reads as quiet to the energy map exactly like flat sky does.
-     * There is no signal here that can tell her body from the background, so
-     * the honest answer is the one he asked for — put it along the bottom,
-     * where a caption can never be over a head. The horizontal side he asked
-     * for is kept, so top-right becomes bottom-right.
-     */
-    if (head > 0 && (anchor.indexOf('top') >= 0 || anchor === 'center')) {
-      const floor = bottomAligned()
-      let clear = true
-      for (let i = 0; i < taken.length; i++) if (overlaps(floor, taken[i], 8)) clear = false
-      if (clear) return floor
-    }
 
     const maxLeft = Math.max(inset, panel.clientWidth - box.width - inset)
     const maxTop = Math.max(inset, panel.clientHeight - box.height - inset)
@@ -141,6 +216,8 @@
       for (let i = 0; i < taken.length; i++) {
         if (overlaps(best, taken[i], 8)) best = clamp({ left: best.left, top: taken[i].top + taken[i].height + 12 })
       }
+      best.score = 0
+      best.share = shape.share
       return best
     }
 
@@ -155,16 +232,19 @@
           left: ideal.left + ((ix / steps) * 2 - 1) * reachX,
           top: ideal.top + ((iy / steps) * 2 - 1) * reachY,
         })
-        let score = energyUnder(energy, panel, candidate)
+        // Being ON her is what makes a box look wrong, and it is a different
+        // question from whether the art under it is busy — her flat top reads
+        // as quiet to the energy map exactly like flat sky does.
+        let score = figureUnder(panel, candidate) * 7 + energyUnder(energy, panel, candidate)
         /* Straying from the writer's corner costs; 9 is the busiest a cell
          * can be, so this is measured in the same units. */
         const drift =
           Math.abs(candidate.left - ideal.left) / panel.clientWidth +
           Math.abs(candidate.top - ideal.top) / panel.clientHeight
         score += drift * 6
-        /* Sitting on her head costs more than any amount of drift can, so
-         * the search leaves the band whenever anywhere else will do. */
-        if (candidate.top < head) score += 60
+        /* Sitting on a face costs more than any amount of drift can, so
+         * the search leaves it whenever anywhere else will do at all. */
+        if (hitsAFace(candidate, faces)) score += 80
         for (let i = 0; i < taken.length; i++) if (overlaps(candidate, taken[i], 8)) score += 40
         if (score < bestScore) {
           bestScore = score
@@ -172,13 +252,25 @@
         }
       }
     }
-    /* A side anchor that still could not clear her head takes the floor too. */
-    if (head > 0 && best.top < head) {
+    /*
+     * Nowhere in reach misses her face: take the floor of the panel.
+     *
+     * This is the owner's rule, and it now fires only when it has to. On a
+     * close-up the face fills the frame and every candidate is on it, which
+     * is exactly when a caption belongs along the bottom edge.
+     */
+    if (faces.length > 0 && hitsAFace(best, faces)) {
       const floor = bottomAligned()
-      let clear = true
+      let clear = !hitsAFace(floor, faces)
       for (let i = 0; i < taken.length; i++) if (overlaps(floor, taken[i], 8)) clear = false
-      if (clear) return floor
+      if (clear) {
+        floor.score = figureUnder(panel, floor) * 7
+        floor.share = shape.share
+        return floor
+      }
     }
+    best.score = bestScore
+    best.share = shape.share
     return best
   }
 

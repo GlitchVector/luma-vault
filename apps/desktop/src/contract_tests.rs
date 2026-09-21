@@ -139,6 +139,11 @@ fn patreon_summaries_match_the_shared_fixture() {
 }
 
 #[test]
+fn lora_datasets_match_the_shared_fixture() {
+    round_trip::<crate::types::LoraDataset>(include_str!("../../../contracts/lora-dataset.json"));
+}
+
+#[test]
 fn comic_summaries_match_the_shared_fixture() {
     round_trip::<Vec<crate::types::ComicSummary>>(include_str!(
         "../../../contracts/comic-summary.json"

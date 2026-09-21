@@ -90,6 +90,8 @@ image = { version = "0.25", default-features = false, features = [
 
 walkdir = "2"
 rayon = "1"
+# kohya's dataset config is TOML; the LoRAs page reads it for what a LoRA saw.
+toml = "0.8"
 # notify 8, not 6. The 6.x Windows backend is the best remaining explanation for
 # three STATUS_HEAP_CORRUPTION exits, all during heavy write activity in a
 # watched folder on an SMB share: that volume overflows ReadDirectoryChangesW's

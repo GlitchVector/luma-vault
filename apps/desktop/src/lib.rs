@@ -24,6 +24,7 @@ mod deviantart;
 mod dupes;
 mod generated;
 pub mod imports;
+mod lora;
 mod origin;
 mod paths;
 mod patreon;
@@ -158,6 +159,11 @@ async fn media_frames(state: State<'_, AppState>, media_id: i64) -> Result<Vec<M
 #[tauri::command(async)]
 async fn media_by_id(state: State<'_, AppState>, id: i64) -> Result<Option<MediaItem>, String> {
     api::media_by_id(&state, id)
+}
+
+#[tauri::command(async)]
+async fn media_position(state: State<'_, AppState>, query: MediaQuery, id: i64) -> Result<Option<i64>, String> {
+    api::media_position(&state, query, id)
 }
 
 #[tauri::command(async)]
@@ -417,6 +423,16 @@ async fn comic_list(state: State<'_, AppState>) -> Result<Vec<types::ComicSummar
 }
 
 #[tauri::command(async)]
+async fn lora_dataset(state: State<'_, AppState>, name: String) -> Result<types::LoraDataset, String> {
+    api::lora_dataset(&state, name)
+}
+
+#[tauri::command(async)]
+async fn lora_image_preview(state: State<'_, AppState>, dataset: String, path: String) -> Result<String, String> {
+    api::lora_image_preview(&state, dataset, path)
+}
+
+#[tauri::command(async)]
 async fn comic_read(state: State<'_, AppState>, name: String) -> Result<types::ComicProject, String> {
     api::comic_read(&state, name)
 }
@@ -457,6 +473,16 @@ async fn comic_save_settings(
     settings: types::ComicSettings,
 ) -> Result<(), String> {
     api::comic_save_settings(&state, name, settings)
+}
+
+#[tauri::command(async)]
+async fn comic_restore_panel(
+    state: State<'_, AppState>,
+    name: String,
+    panel: String,
+    file: String,
+) -> Result<(), String> {
+    api::comic_restore_panel(&state, name, panel, file)
 }
 
 #[tauri::command(async)]
@@ -957,6 +983,7 @@ pub fn run() {
             recent_media,
             media_frames,
             media_by_id,
+            media_position,
             media_by_path,
             upscale_media,
             library_stats,
@@ -995,12 +1022,15 @@ pub fn run() {
             patreon_tiers,
             patreon_unmark,
             comic_list,
+            lora_dataset,
+            lora_image_preview,
             comic_read,
             comic_create,
             comic_save,
             comic_run,
             comic_inspect,
             comic_save_settings,
+            comic_restore_panel,
             comic_status,
             comic_cancel,
             deviantart_mark,

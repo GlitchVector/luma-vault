@@ -5,7 +5,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ComicSummary } from '@luma/core'
-import { Viewer, blankPanel, describeEvent, layoutLabel, parseScript, renumber, standing, titleCase } from './ComicsPanel.tsx'
+import { blankPanel, describeEvent, layoutLabel, parseScript, renumber, standing, titleCase } from './ComicsPanel.tsx'
+import { Viewer } from './Viewer.tsx'
 
 const summary = (patch: Partial<ComicSummary> = {}): ComicSummary => ({
   name: 'first-light',

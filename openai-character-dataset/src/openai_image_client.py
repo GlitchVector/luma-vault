@@ -60,7 +60,12 @@ def classify_error(exc: BaseException) -> ImageClientError:
 
 
 class OpenAIImageClient:
+    # Set when a model rejects `input_fidelity` (gpt-image-2.5-* does); the parameter is then
+    # dropped for the rest of the session instead of failing every view.
+    _no_input_fidelity: set[str]
+
     def __init__(self, *, timeout: float = DEFAULT_TIMEOUT_SECONDS):
+        self._no_input_fidelity = set()
         if not os.environ.get("OPENAI_API_KEY"):
             raise ImageClientError("auth", "OPENAI_API_KEY is not set. Copy .env.example to .env and put the key there (never commit .env).")
         try:
@@ -103,23 +108,33 @@ class OpenAIImageClient:
         missing = [path for path in references if not path.is_file()]
         if missing:
             raise ImageClientError("bad_request", f"reference image not found: {', '.join(str(p) for p in missing)}")
-        with ExitStack() as stack:
-            handles = [stack.enter_context(path.open("rb")) for path in references]
-            image: Any = handles[0] if len(handles) == 1 else handles
-            try:
-                response = self._client.images.edit(
-                    model=model,
-                    image=image,
-                    prompt=prompt,
-                    n=1,
-                    size=size,  # type: ignore[arg-type]
-                    quality=quality,  # type: ignore[arg-type]
-                    output_format=output_format,  # type: ignore[arg-type]
-                    input_fidelity=input_fidelity,  # type: ignore[arg-type]
-                )
-            except Exception as exc:  # noqa: BLE001
-                raise classify_error(exc) from exc
-        return _decode(response)
+        for attempt in (1, 2):
+            extra: dict[str, Any] = {}
+            if input_fidelity and model not in self._no_input_fidelity:
+                extra["input_fidelity"] = input_fidelity
+            with ExitStack() as stack:
+                handles = [stack.enter_context(path.open("rb")) for path in references]
+                image: Any = handles[0] if len(handles) == 1 else handles
+                try:
+                    response = self._client.images.edit(
+                        model=model,
+                        image=image,
+                        prompt=prompt,
+                        n=1,
+                        size=size,  # type: ignore[arg-type]
+                        quality=quality,  # type: ignore[arg-type]
+                        output_format=output_format,  # type: ignore[arg-type]
+                        **extra,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    error = classify_error(exc)
+                    # "The model '…' does not support the 'input_fidelity' parameter": drop it and retry once.
+                    if attempt == 1 and "input_fidelity" in str(exc) and "input_fidelity" in extra:
+                        self._no_input_fidelity.add(model)
+                        continue
+                    raise error from exc
+            return _decode(response)
+        raise ImageClientError("api", "unreachable")
 
 
 def _decode(response: Any) -> bytes:

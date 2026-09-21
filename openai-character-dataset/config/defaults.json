@@ -1,10 +1,13 @@
 {
-  "_comment": "Settings shared by every character. Environment variables override: OPENAI_IMAGE_MODEL, OPENAI_IMAGE_QUALITY, OPENAI_OUTPUT_FORMAT, OPENAI_IMAGE_SIZE (body only), LUMA_VAULT_OUTDIR, LUMA_RPC. A character file may override any of these under its own \"settings\".",
+  "_comment": "Settings shared by every character. Environment variables override: OPENAI_IMAGE_MODEL, OPENAI_IMAGE_QUALITY, OPENAI_OUTPUT_FORMAT, OPENAI_IMAGE_SIZE (body only), LUMA_VAULT_OUTDIR, LUMA_RPC; vault_link is the LAN address while he is home, the tailnet one while away. A character file may override any of these under its own \"settings\".",
   "model": "gpt-image-2.5-sunburst",
   "quality": "high",
   "output_format": "png",
   "input_fidelity": "high",
-  "size": { "body": "1024x1536", "face": "1024x1024" },
+  "size": {
+    "body": "1024x1536",
+    "face": "1024x1024"
+  },
   "dry_run": true,
   "retry_cap": 30,
   "transient_cap": 10,
@@ -16,6 +19,6 @@
   ],
   "vault_outdir": "//jebpot/devs/AI/Stable Diffusion/outputs/txt2img-images",
   "vault_rpc": "http://127.0.0.1:7870/luma/v1/rpc",
-  "vault_link": "http://100.72.26.22:7870/?set=",
+  "vault_link": "http://192.168.1.160:7870/?set=",
   "sheets_dir": "D:/AI/lora-train/sheets"
 }
