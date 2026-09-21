@@ -59,7 +59,11 @@ describe('stage 1', () => {
     expect(page.layout).toBe('two-stack')
     expect(page.panels.map((p) => p.id)).toEqual(['p1-1', 'p1-2'])
     expect(page.panels[1]!.reserve_space).toBe('top-right')
-    expect(script.characters['ari']).toMatchObject({ lora: 'ari_adopt_v1:1.2', trigger: 'ari', seed_family: 8812 })
+    // Against the config rather than a literal: which LoRA Ari uses is a
+    // decision that changes, and a test that breaks every time it does is
+    // testing the config, not the merge.
+    const cast = openProject(dir).config.characters['ari']!
+    expect(script.characters['ari']).toMatchObject({ lora: cast.lora, trigger: cast.trigger, seed_family: cast.seed_family })
     const onDisk = JSON.parse(readFileSync(join(dir, 'script.json'), 'utf8'))
     expect(onDisk.title).toBe('First Light')
   })

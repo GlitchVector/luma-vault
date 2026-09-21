@@ -172,10 +172,58 @@ of it is taste, and re-deriving any of it costs an afternoon.
   Four wordings, weighted and moved to the front, all scored 4.8-5.3 against
   a limit of 3.4. The assembler works around it instead (below).
 
+### The body ladder, and the face pass (2026-09-21)
+
+- **Body tags are their own field**, not part of `look`. `character.body`
+  holds her build, a page can override it for its panels, and a panel can
+  override both; the most specific rung that is set wins, and a blank rung is
+  silence rather than an override. Ari's came from the owner's own character
+  notes, translated to words that are tags: `hourglass figure` and `full
+  bust` are not, `large breasts, narrow waist, wide hips, thick thighs, pale
+  skin` are, and each count was checked against `selected_tags.csv`.
+- **The body block is UNWEIGHTED.** A weighted one drags every shot toward
+  the hips, which is the exact thing `prompt.camera_weight` exists to fight.
+  Two weights pulling against each other is how a wide shot became a cowboy
+  shot on the boards.
+- **`forge.face` is an ADetailer pass** on `alwayson_scripts`, because the
+  second pass fixed the big faces and not the small ones: a face at two
+  percent of a wide shot is a hundred pixels however well the panel is drawn.
+  `ad_mask_max_ratio` is what makes it a SMALL-face pass, so close-ups, where
+  the face is already drawn at size, are left alone.
+- **Three guards, each against a failure this house has already had.** It
+  never runs on a panel with nobody in it, because the detector will find a
+  face in the scenery. It is off on panels with more than one character
+  (`solo_only`), because one prompt over two faces paints the wrong person.
+  And a panel can switch it off by itself (`panel.face`), because the pass is
+  right almost always and wrong on the odd panel.
+- **The face prompt is `head`, not `look`.** The crop stops at her neck, so
+  her shirt, collar, shorts and sneakers have no business in it. Measured:
+  with the full look, the outfit was a third of the face prompt and the
+  repainted faces came back worse than the ones they replaced.
+- **The balance is the owner's own, from 2023.** Read off 97 of his pre-2026
+  renders that used ADetailer: confidence 0.3, denoise 0.38, mask blur 0,
+  padding 32, and the face on its own 30 steps at CFG 7, above whatever the
+  panel used. My first guesses (0.35 / 0.5 / blur 4 / padding 48, inheriting
+  the panel's steps and CFG) were all harsher than his. If this ever needs
+  re-deriving, the method is in `index.db`: sample pre-2026 PNGs, read the
+  `parameters` tEXt chunk, and count the `ADetailer …` fields.
+- **`hr_additional_modules: []` is required** on the hires payload by this
+  Forge build. Without it every panel returns a bare 500 reading `argument of
+  type 'NoneType' is not iterable`, with nothing naming the field.
+
 ### Lettering
 
 `assets/theme.css` is the whole look; `assets/balloons.js` places and draws.
 
+- **A top-anchored caption on a panel with a person goes to the BOTTOM.**
+  Not "below her head" — the bottom. The energy map cannot see a person: her
+  head against a bright sky is as flat as the sky, and once a box is pushed
+  below the head band it parks on her top, which is as flat as both. There is
+  no signal in the assembler that separates her from the background, so the
+  panel carries `data-head`, a band derived from its FRAMING (close-up 0.75
+  of the height, upper body 0.5, cowboy 0.36, wider 0.3, nobody 0), and a top
+  anchor on a people panel takes the floor of the panel with the horizontal
+  side it asked for. Panels with nobody in them are untouched.
 - **A balloon goes where the art is quiet.** `assemble/energy.ts` reduces each
   panel to a 16x24 grid of mean luminance gradient, scaled to that panel's own
   busiest cell so a night scene still has a quiet corner, and passes it on the

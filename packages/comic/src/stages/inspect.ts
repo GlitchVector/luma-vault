@@ -93,6 +93,9 @@ export function describeChange(before: RenderRequest, after: RenderRequest): str
   for (const key of ['steps', 'cfg', 'sampler', 'scheduler', 'clip_skip'] as const) {
     if (before[key] !== after[key]) say('the sampler settings changed')
   }
+  if (JSON.stringify(before.face ?? null) !== JSON.stringify(after.face ?? null)) {
+    say(after.face ? (before.face ? 'the face pass changed' : 'a face pass was added') : 'the face pass was switched off')
+  }
   if (JSON.stringify(before.plate ?? null) !== JSON.stringify(after.plate ?? null)) say('the plate changed')
   if (said.length === 0) say('something in the request changed')
   return said.slice(0, 2).join(', ')

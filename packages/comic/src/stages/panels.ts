@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { requestHash, type RenderRequest, type Sidecar } from '../cache.ts'
 import { bucketFor, sizeForCellBox, targetForCell } from '../layouts.ts'
-import { buildPrompt } from '../prompt.ts'
+import { buildPrompt, facePrompt } from '../prompt.ts'
 import { DUMMIES, plateSizeFor, type PlateBackend } from '../plates/plate.ts'
 import { maskForColour, maskPng } from '../plates/mask.ts'
 import { loadScript, writeJson, type Project } from '../project.ts'
@@ -99,10 +99,10 @@ export function planPanel(
     width = w
     height = h
   }
-  const { prompt, negative } = buildPrompt(panel, script.characters, project.config)
+  const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body)
   // With a plate, each character is painted alone into her own mask, so
   // each gets a prompt naming only her - the panel prompt names them all.
-  const characterPrompts = panel.characters.map((id) => buildPrompt({ ...panel, characters: [id] }, script.characters, project.config).prompt)
+  const characterPrompts = panel.characters.map((id) => buildPrompt({ ...panel, characters: [id] }, script.characters, project.config, page.body).prompt)
   const seed = options.seed ?? panelSeed(familyFor(script.characters, panel.characters), where.pageIndex, where.panelIndex, attempt)
 
   const { forge } = project.config
@@ -113,6 +113,7 @@ export function planPanel(
     width,
     height,
     hires: platesEnabled(project) ? undefined : hiresFor(project, page, where.panelIndex, width),
+    face: faceFor(project, panel, script),
     steps: forge.steps,
     cfg: forge.cfg,
     sampler: forge.sampler,
@@ -150,6 +151,37 @@ function hiresFor(project: Project, page: Page, index: number, width: number): R
   const target = targetForCell(page, index, project.config.page, project.config.page.scale, hires.max_megapixels)
   if (target.width <= width * hires.min_factor) return undefined
   return { width: target.width, height: target.height, upscaler, denoise: hires.denoise, steps: hires.steps }
+}
+
+/**
+ * The face pass for this panel, or nothing.
+ *
+ * Nobody in the panel means no face to fix and a detector left free to find
+ * one in the scenery, which this house has watched it do. More than one
+ * character means one prompt would be painted onto two faces.
+ */
+function faceFor(project: Project, panel: Panel, script: Script): RenderRequest['face'] {
+  const { face } = project.config.forge
+  // The panel's own answer wins over the config's, either way round.
+  if (!(panel.face ?? face.enabled)) return undefined
+  if (panel.characters.length === 0) return undefined
+  if (face.solo_only && panel.characters.length > 1) return undefined
+  const character = script.characters[panel.characters[0]!]
+  if (!character) return undefined
+  return {
+    prompt: facePrompt(character, project.config),
+    negative: project.config.prompt.negative,
+    model: face.model,
+    confidence: face.confidence,
+    max_area: face.max_area,
+    denoise: face.denoise,
+    size: face.size,
+    padding: face.padding,
+    mask_blur: face.mask_blur,
+    steps: face.steps,
+    cfg: face.cfg,
+    checkpoint: face.checkpoint,
+  }
 }
 
 /** What a run needs besides the plan: the renderer, and the plate backend

@@ -75,6 +75,8 @@ describe('the hires pass', () => {
       { save_to_forge: true },
     )
     expect(payload['enable_hr']).toBe(true)
+    // Empty but present: Forge throws a bare 500 without it.
+    expect(payload['hr_additional_modules']).toEqual([])
     expect(payload['hr_resize_x']).toBe(1856)
     expect(payload['hr_resize_y']).toBe(2856)
     expect(payload['hr_upscaler']).toBe('R-ESRGAN 4x+ Anime6B')

@@ -29,6 +29,22 @@ export interface RenderRequest {
    * another picture rather than the same one stretched.
    */
   hires?: { width: number; height: number; upscaler: string; denoise: number; steps: number }
+  /** The face pass, when the panel gets one. Hashed like everything else:
+   *  a panel drawn before the pass existed is not this picture. */
+  face?: {
+    prompt: string
+    negative: string
+    model: string
+    confidence: number
+    max_area: number
+    denoise: number
+    size: number
+    padding: number
+    mask_blur: number
+    steps: number
+    cfg: number
+    checkpoint: string
+  }
   /** Set when the panel is painted into a plate: the plate's hash and the
    *  inpaint settings, so a new plate or a new strength is a new picture. */
   plate?: { hash: string; denoise: number; mask_grow: number; mask_tolerance: number; mask_blur: number; padding: number }

@@ -6,6 +6,8 @@ const ari: Character = {
   lora: 'ari_adopt_v1:1.2',
   trigger: 'ari',
   look: 'white hair, aqua hair, aqua shirt, white shorts',
+  head: 'white hair, blue eyes',
+  body: 'large breasts, wide hips',
   subject: '1girl',
   seed_family: 8812,
 }

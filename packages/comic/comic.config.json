@@ -11,6 +11,20 @@
     "save_to_forge": true,
     "timeout_s": 900,
     "upscaler": "R-ESRGAN 4x+ Anime6B",
+    "face": {
+      "enabled": true,
+      "model": "face_yolov8s.pt",
+      "confidence": 0.3,
+      "max_area": 0.1,
+      "denoise": 0.38,
+      "size": 1024,
+      "padding": 32,
+      "solo_only": true,
+      "checkpoint": "",
+      "mask_blur": 0,
+      "steps": 30,
+      "cfg": 7
+    },
     "hires": {
       "enabled": true,
       "denoise": 0.45,
@@ -59,11 +73,13 @@
   "browser": "chrome",
   "characters": {
     "ari": {
-      "lora": "ari_adopt_v1:1.2",
+      "lora": "ari_adopt_v4:1.2",
       "trigger": "ari",
       "subject": "1girl",
       "look": "white hair, aqua hair, colored tips, bob cut, blunt bangs, blue eyes, hairband, earrings, necklace, aqua shirt, off-shoulder shirt, black collar, white shorts, sneakers",
-      "seed_family": 8812
+      "seed_family": 8812,
+      "body": "large breasts, narrow waist, wide hips, thick thighs, pale skin",
+      "head": "white hair, aqua hair, colored tips, bob cut, blunt bangs, blue eyes, hairband, earrings"
     }
   }
 }

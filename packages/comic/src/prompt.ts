@@ -67,6 +67,28 @@ const ANGLE_TERMS = new Set([
 /** Framings where the scene is meant to dominate the figure. */
 const WIDE_TERMS = ['wide shot', 'scenery', 'establishing']
 
+/**
+ * How far down a panel a person's head reaches, as a fraction of its height.
+ *
+ * The energy map cannot answer this. A head against a bright sky is FLAT, so
+ * the map calls the top of the panel quiet and the letterer puts a caption
+ * straight over her face — which is exactly what happened on the owner's
+ * first three pages. Framing can answer it: the tighter the shot, the
+ * further down the head comes.
+ *
+ * Returns 0 for a panel with nobody in it, where there is no head to miss.
+ */
+export function headBand(camera: string, hasPeople: boolean): number {
+  if (!hasPeople) return 0
+  const plain = camera.toLowerCase()
+  if (plain.includes('close-up') || plain.includes('portrait') || plain.includes('face')) return 0.75
+  if (plain.includes('upper body') || plain.includes('bust')) return 0.5
+  if (plain.includes('cowboy')) return 0.36
+  // Everything wider: full body, wide shot, establishing. She is small in
+  // frame and her head is near the top of it.
+  return 0.3
+}
+
 export function isWideShot(camera: string): boolean {
   const plain = camera.toLowerCase()
   return WIDE_TERMS.some((term) => plain.includes(term))
@@ -103,10 +125,42 @@ export function weighted(text: string, weight: number, angleWeight = weight): st
     .join(', ')
 }
 
+/**
+ * Whose body words win: the panel's, else the page's, else the character's.
+ *
+ * Three rungs because a book needs all three. The character carries what she
+ * is, a page gets an override when a whole sequence should read differently,
+ * and a panel gets the last word. A blank at any rung is silence rather than
+ * an override, so a page left empty does not wipe what the character says.
+ */
+export function bodyFor(character: Character, page?: string, panel?: string): string {
+  return panel?.trim() || page?.trim() || character.body
+}
+
+/**
+ * The prompt the face pass paints with: her, and nothing about the scene.
+ *
+ * Deliberately not the panel's prompt. ADetailer applies whatever it is
+ * given to whatever it detected, so handing it a full scene description is
+ * how a false positive becomes a rooftop painted inside someone's cheek.
+ *
+ * `head` rather than `look` for the same reason one rung down: the crop
+ * stops at her neck, so her shirt, collar, shorts and shoes have no business
+ * in it. Measured on the 2026-09-21 run, where the outfit was a third of the
+ * face prompt and the repainted faces came back off.
+ */
+export function facePrompt(character: Character, config: Pick<Config, 'prompt'>): string {
+  return [config.prompt.quality, loraTag(character.lora), character.trigger, character.head || character.look]
+    .map((part) => part.trim().replace(/,\s*$/, ''))
+    .filter(Boolean)
+    .join(', ')
+}
+
 export function buildPrompt(
-  panel: Pick<Panel, 'camera' | 'scene' | 'characters' | 'reserve_space'>,
+  panel: Pick<Panel, 'camera' | 'scene' | 'characters' | 'reserve_space' | 'body'>,
   characters: Record<string, Character>,
   config: Pick<Config, 'prompt'>,
+  pageBody?: string,
 ): BuiltPrompt {
   const cast = panel.characters.map((id) => {
     const character = characters[id]
@@ -119,7 +173,11 @@ export function buildPrompt(
   parts.push(subjectTags(cast.map((c) => c.subject)))
   for (const character of cast) {
     const lora = wide ? scaleLora(character.lora, config.prompt.wide_lora_scale) : character.lora
-    parts.push(loraTag(lora), character.trigger, character.look)
+    // Unweighted on purpose. A weighted body block drags every shot toward
+    // the hips, which is the very thing the framing weight below exists to
+    // fight, and two weights pulling against each other is how `wide shot`
+    // became a cowboy shot on the boards.
+    parts.push(loraTag(lora), character.trigger, character.look, bodyFor(character, pageBody, panel.body))
   }
   // Framing words are weighted, because unweighted they lose.
   //

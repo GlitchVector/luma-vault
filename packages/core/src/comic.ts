@@ -78,6 +78,21 @@ export const comicPanelSchema = z.object({
    *  plate. Same rule: a hosted model reads it. */
   pose: z.array(z.string()).default([]),
   characters: z.array(z.string()).default([]),
+  /**
+   * Turn the face pass off for this panel alone.
+   *
+   * Unset means whatever `forge.face.enabled` says. It is here because the
+   * pass is a judgement call at the edges: it is right almost always and
+   * wrong on the odd panel, and the person looking at the panel is the one
+   * who can tell.
+   */
+  face: z.boolean().optional(),
+  /**
+   * Her build for THIS panel only, replacing the character's own and the
+   * page's. The bottom rung of the ladder: character, then page, then
+   * panel, and the most specific one that is set wins.
+   */
+  body: z.string().optional(),
   /** How many people the picture should contain, when it is not simply the
    *  number of characters in it (a crowd, an empty room). */
   figures: z.number().int().min(0).optional(),
@@ -184,6 +199,9 @@ export const comicGridSchema = z.object({
 export type ComicGrid = z.infer<typeof comicGridSchema>
 
 export const comicPageSchema = z.object({
+  /** Her build for every panel on this page, replacing the character's own
+   *  and replaced in turn by any panel that sets its own. */
+  body: z.string().optional(),
   /** A preset name from the pipeline's `layouts.ts`, or an explicit grid template. */
   layout: z.union([z.string().min(1), comicGridSchema]),
   panels: z.array(comicPanelSchema).min(1),
@@ -197,6 +215,28 @@ export const comicCharacterSchema = z.object({
   trigger: z.string().min(1),
   /** The full appearance, restated in every panel this character is in. */
   look: z.string().min(1),
+  /**
+   * Her head alone: hair, eyes, and what she wears on them.
+   *
+   * Only the face pass reads this, and it reads it INSTEAD of `look`. The
+   * pass repaints a crop that stops at her neck, so handing it the full look
+   * spends a third of the prompt on a shirt, a collar, shorts and shoes that
+   * are not in the crop, and a face repainted against words for clothes
+   * comes back worse than the one it replaced.
+   *
+   * Empty falls back to `look`, so a character without one behaves as before.
+   */
+  head: z.string().default(''),
+  /**
+   * Her build, as tags, restated in every panel.
+   *
+   * Separate from `look` because it is answering a different question. With
+   * no body words at all the checkpoint picks a body per panel, and picks a
+   * bustier one than the references; naming it is what holds it still. Keep
+   * it unweighted: a weighted body block drags every shot toward the hips,
+   * which is the whole reason the framing words carry weight here.
+   */
+  body: z.string().default(''),
   /** `1girl`, `1boy`: the subject tag the checkpoint counts figures with. */
   subject: z.enum(['1girl', '1boy', '1other']).default('1girl'),
   seed_family: z.number().int().min(0),

@@ -72,6 +72,58 @@ export const forgeConfigSchema = z.object({
    * pixels across, which is why enlarging finished panels made every face
    * worse the bigger the page got.
    */
+  /**
+   * The face pass: ADetailer finds a face, cuts it out, redraws it at a
+   * sane size and pastes it back.
+   *
+   * It exists because the second pass fixed the big faces and not the small
+   * ones. A face that occupies two percent of a wide shot is a hundred
+   * pixels of a three megapixel render however well that render is drawn,
+   * and a hundred pixels is not enough for eyes.
+   *
+   * Everything here is a guard against the one failure this house has
+   * already had with ADetailer, which is the pass repainting something that
+   * is not a face using a prompt written for one. `max_area` keeps it off
+   * close-ups that do not need it, `solo_only` keeps it off panels where one
+   * prompt would be painted onto two different people, and it never runs on
+   * a panel with nobody in it.
+   */
+  face: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** The detector. The `n` model is the small one and is enough here. */
+      model: z.string().default('face_yolov8n.pt'),
+      /** How sure the detector has to be. Lower finds more non-faces. */
+      confidence: z.number().min(0).max(1).default(0.35),
+      /** Only repaint a face SMALLER than this share of the picture. A
+       *  close-up's face is already drawn at size and repainting it only
+       *  risks changing a face that is right. */
+      max_area: z.number().min(0).max(1).default(0.1),
+      /** How much of the face may be redrawn. Past about 0.5 it stops being
+       *  her face. */
+      denoise: z.number().min(0).max(1).default(0.4),
+      /** The face is redrawn at this size whatever size it is in the
+       *  picture. This is the whole point: the model gets a full canvas for
+       *  something that was a hundred pixels. */
+      size: z.number().int().min(256).max(2048).default(1024),
+      /** Pixels of surrounding picture given to the repaint for context. */
+      padding: z.number().int().min(0).default(32),
+      /** Softness of the mask edge. His 2023 runs used a hard edge and the
+       *  joins do not show, because the repaint is only the face. */
+      mask_blur: z.number().int().min(0).default(0),
+      /** Steps for the face alone. The face pass gets more than the body
+       *  render, which is how a hundred-pixel face gets drawn properly. */
+      steps: z.number().int().min(1).default(30),
+      /** Guidance for the face alone, higher than the panel uses. */
+      cfg: z.number().min(0).default(7),
+      /** Off when a panel holds more than one character. One prompt over two
+       *  faces paints the wrong person onto one of them. */
+      solo_only: z.boolean().default(true),
+      /** A different checkpoint for the face alone. Empty reuses the
+       *  panel's; this house has painted an SD1.5 face onto an XL body. */
+      checkpoint: z.string().default(''),
+    })
+    .prefault({}),
   hires: z
     .object({
       enabled: z.boolean().default(true),

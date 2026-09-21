@@ -18,8 +18,8 @@ let dir: string
 const script: Script = {
   title: 'Plates',
   characters: {
-    ari: { lora: 'ari_adopt_v1:1.2', trigger: 'ari', look: 'white hair', subject: '1girl', seed_family: 8812 },
-    kira: { lora: 'kvoss_v2:0.9', trigger: 'kvoss', look: 'pink hair', subject: '1girl', seed_family: 4400 },
+    ari: { lora: 'ari_adopt_v1:1.2', trigger: 'ari', look: 'white hair', head: '', body: '', subject: '1girl', seed_family: 8812 },
+    kira: { lora: 'kvoss_v2:0.9', trigger: 'kvoss', look: 'pink hair', head: '', body: '', subject: '1girl', seed_family: 4400 },
   },
   locations: { rooftop: 'gravel rooftop of a brick radio building, grey dawn' },
   pages: [

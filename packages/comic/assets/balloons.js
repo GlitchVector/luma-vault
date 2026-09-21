@@ -84,11 +84,48 @@
    * balloon. The anchor still dominates: straying is charged for, so a
    * balloon only moves when what it would have covered is genuinely busy.
    */
+  /*
+   * The band down from the top of the panel where a head is.
+   *
+   * `data-head` comes from the panel's framing, because the energy map
+   * cannot see a head against a flat sky and will happily call it quiet.
+   */
+  function headBottom(panel) {
+    const band = parseFloat(panel.dataset.head)
+    return Number.isFinite(band) ? band * panel.clientHeight : 0
+  }
+
   function place(balloon, panel, taken, energy) {
     const inset = cssPx(balloon, '--balloon-inset', 24)
     const box = { width: balloon.offsetWidth, height: balloon.offsetHeight }
     const anchor = balloon.dataset.anchor || 'top-left'
     const ideal = anchorPosition(anchor, panel, box, inset)
+    const head = headBottom(panel)
+    const bottomAligned = () => ({
+      left: anchorPosition(anchor, panel, box, inset).left,
+      top: Math.max(inset, panel.clientHeight - box.height - inset),
+      width: box.width,
+      height: box.height,
+    })
+
+    /*
+     * A top anchor on a panel with a person in it goes to the BOTTOM, not to
+     * the first quiet spot below her head.
+     *
+     * Clearing the head band alone is not enough, which the owner had to say
+     * twice: the search then lands the box across her chest, because flat
+     * clothing reads as quiet to the energy map exactly like flat sky does.
+     * There is no signal here that can tell her body from the background, so
+     * the honest answer is the one he asked for — put it along the bottom,
+     * where a caption can never be over a head. The horizontal side he asked
+     * for is kept, so top-right becomes bottom-right.
+     */
+    if (head > 0 && (anchor.indexOf('top') >= 0 || anchor === 'center')) {
+      const floor = bottomAligned()
+      let clear = true
+      for (let i = 0; i < taken.length; i++) if (overlaps(floor, taken[i], 8)) clear = false
+      if (clear) return floor
+    }
 
     const maxLeft = Math.max(inset, panel.clientWidth - box.width - inset)
     const maxTop = Math.max(inset, panel.clientHeight - box.height - inset)
@@ -125,12 +162,22 @@
           Math.abs(candidate.left - ideal.left) / panel.clientWidth +
           Math.abs(candidate.top - ideal.top) / panel.clientHeight
         score += drift * 6
+        /* Sitting on her head costs more than any amount of drift can, so
+         * the search leaves the band whenever anywhere else will do. */
+        if (candidate.top < head) score += 60
         for (let i = 0; i < taken.length; i++) if (overlaps(candidate, taken[i], 8)) score += 40
         if (score < bestScore) {
           bestScore = score
           best = candidate
         }
       }
+    }
+    /* A side anchor that still could not clear her head takes the floor too. */
+    if (head > 0 && best.top < head) {
+      const floor = bottomAligned()
+      let clear = true
+      for (let i = 0; i < taken.length; i++) if (overlaps(floor, taken[i], 8)) clear = false
+      if (clear) return floor
     }
     return best
   }

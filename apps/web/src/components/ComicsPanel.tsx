@@ -963,6 +963,8 @@ export function ComicsPanel({ onClose }: ComicsPanelProps) {
         {selected && showSettings ? (
           <ComicSettingsPanel
             settings={inspection?.settings ?? null}
+            script={script}
+            onScriptChange={updateScript}
             newPanelAnchor={newPanelAnchor}
             onNewPanelAnchor={setNewPanelAnchor}
             busy={busy}
@@ -1095,6 +1097,16 @@ const PageEditor = memo(function PageEditor({ page, pageNumber, cast, plates, ne
           </MenuItem>
         </Kebab>
       </div>
+      <label className="mb-3 flex items-center gap-2 text-xs">
+        <span className="shrink-0 text-zinc-500">Body for this page</span>
+        <input
+          value={page.body ?? ''}
+          onChange={(event) => onChange((previous) => ({ ...previous, body: event.target.value || undefined }))}
+          placeholder="leave empty to use each character's own"
+          className={inputClass}
+          title="Replaces every character's body tags for the panels on this page. A panel that sets its own wins over it."
+        />
+      </label>
       <div className="grid gap-3 lg:grid-cols-2">
         {page.panels.map((panel, index) => (
           <PanelEditor
@@ -1139,6 +1151,11 @@ const PanelEditor = memo(function PanelEditor({ panel, position, cast, plates, o
         <span className="shrink-0 rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] text-zinc-300" title={panel.id}>
           {panel.id.replace(/^p/, '')}
         </span>
+        {panel.face === false ? (
+          <span className="shrink-0 rounded bg-white/5 px-1.5 py-1 text-[10px] text-zinc-500" title="The face pass is switched off for this panel.">
+            no face pass
+          </span>
+        ) : null}
         <span className="relative min-w-0 flex-1">
           <FrameIcon />
           <input
@@ -1164,6 +1181,17 @@ const PanelEditor = memo(function PanelEditor({ panel, position, cast, plates, o
           ))}
         </select>
         <Kebab label={`Panel ${panel.id}`}>
+          {/* Three states, said out loud, because "unset" and "off" are
+              different answers and a two-way toggle cannot tell them apart. */}
+          <MenuItem onClick={() => onChange((previous) => ({ ...previous, face: undefined }))}>
+            {panel.face === undefined ? '✓ ' : '\u00a0\u00a0 '}Face pass: follow settings
+          </MenuItem>
+          <MenuItem onClick={() => onChange((previous) => ({ ...previous, face: true }))}>
+            {panel.face === true ? '✓ ' : '\u00a0\u00a0 '}Face pass: on
+          </MenuItem>
+          <MenuItem onClick={() => onChange((previous) => ({ ...previous, face: false }))}>
+            {panel.face === false ? '✓ ' : '\u00a0\u00a0 '}Face pass: off
+          </MenuItem>
           <MenuItem onClick={onRemove} danger>
             Remove panel
           </MenuItem>
@@ -1231,6 +1259,17 @@ const PanelEditor = memo(function PanelEditor({ panel, position, cast, plates, o
               />
             </label>
           </div>
+        </div>
+
+        <div className="flex items-start gap-2">
+          <span className="mt-1.5 w-20 shrink-0 text-[11px] text-zinc-500">Body</span>
+          <input
+            value={panel.body ?? ''}
+            onChange={(event) => onChange((previous) => ({ ...previous, body: event.target.value || undefined }))}
+            placeholder="this panel only; empty follows the page, then the character"
+            className={inputClass}
+            title="Her build for this panel alone. The bottom rung: character, then page, then panel."
+          />
         </div>
 
         <div className="flex items-start gap-2">
@@ -1471,12 +1510,18 @@ function aspectOf(settings: ComicSettings): string {
  */
 function ComicSettingsPanel({
   settings,
+  script,
+  onScriptChange,
   newPanelAnchor,
   onNewPanelAnchor,
   busy,
   onSave,
 }: {
   settings: ComicSettings | null
+  /** The cast lives in the script, not in the config, so the body fields
+   *  edit the script the way the panel editor does. */
+  script: ComicScript | null
+  onScriptChange: (update: (previous: ComicScript) => ComicScript) => void
   newPanelAnchor: ComicPanelSpec['reserve_space']
   onNewPanelAnchor: (anchor: ComicPanelSpec['reserve_space']) => void
   busy: boolean
@@ -1623,6 +1668,32 @@ function ComicSettingsPanel({
             </label>
           ) : null}
         </div>
+
+        {script && Object.keys(script.characters).length > 0 ? (
+          <div className="space-y-2 border-t border-white/10 pt-3">
+            <span className="block font-medium text-zinc-300">Body</span>
+            <span className="block text-[11px] text-zinc-500">
+              Tags for her build, in every panel she is in. A page or a panel can override it.
+            </span>
+            {Object.entries(script.characters).map(([id, character]) => (
+              <label key={id} className="block">
+                <span className="mb-0.5 block text-zinc-500">{titleCase(id)}</span>
+                <input
+                  value={character.body}
+                  onChange={(event) =>
+                    onScriptChange((previous) => ({
+                      ...previous,
+                      characters: { ...previous.characters, [id]: { ...previous.characters[id]!, body: event.target.value } },
+                    }))
+                  }
+                  placeholder="large breasts, wide hips, thick thighs"
+                  className={inputClass}
+                  title="Unweighted on purpose: a weighted body block drags every shot toward the hips."
+                />
+              </label>
+            ))}
+          </div>
+        ) : null}
 
         <div className="space-y-2 border-t border-white/10 pt-3">
           <span className="block font-medium text-zinc-300">New panels</span>

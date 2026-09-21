@@ -17,7 +17,7 @@ let dir: string
 const script: Script = {
   title: 'Test',
   characters: {
-    ari: { lora: 'ari_adopt_v1:1.2', trigger: 'ari', look: 'white hair', subject: '1girl', seed_family: 8812 },
+    ari: { lora: 'ari_adopt_v1:1.2', trigger: 'ari', look: 'white hair', head: '', body: '', subject: '1girl', seed_family: 8812 },
   },
   locations: {},
   pages: [

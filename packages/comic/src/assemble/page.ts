@@ -10,6 +10,7 @@
  */
 
 import { resolveGrid, resolveSpans } from '../layouts.ts'
+import { headBand } from '../prompt.ts'
 import type { EnergyMap } from './energy.ts'
 export { cellPixels } from '../layouts.ts'
 import type { Anchor, Config, Dialogue, Page, Point } from '../schema.ts'
@@ -76,7 +77,11 @@ export function pageHtml(
         .join('\n')
       const map = energy?.get(panel.id)
       const busy = map ? ` data-energy="${map.cols},${map.rows},${map.cells}"` : ''
-      return `<figure class="panel" data-id="${panel.id}"${busy} style="grid-column:${span.col};grid-row:${span.row};${clip}">
+      // How far down her head reaches, so the letterer can refuse to cover
+      // it even where the art is flat enough to look empty.
+      const band = headBand(panel.camera, panel.characters.length > 0)
+      const head = band > 0 ? ` data-head="${band.toFixed(2)}"` : ''
+      return `<figure class="panel" data-id="${panel.id}"${busy}${head} style="grid-column:${span.col};grid-row:${span.row};${clip}">
   <img src="${sources?.get(panel.id) ?? `${ORIGIN}/panels/${panel.id}.png`}" alt="">
 ${balloons}
 ${sfx}

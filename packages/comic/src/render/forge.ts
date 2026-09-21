@@ -189,6 +189,11 @@ export function toPayload(request: RenderRequest, config: Pick<ForgeConfig, 'sav
   const hires = request.hires
     ? {
         enable_hr: true,
+        // Required, empty, by this Forge build. Left out, the hires branch
+        // does `x in hr_additional_modules` against a None and every panel
+        // comes back as a 500 reading "argument of type NoneType is not
+        // iterable", with no hint that it is about this field.
+        hr_additional_modules: [],
         hr_resize_x: request.hires.width,
         hr_resize_y: request.hires.height,
         hr_upscaler: request.hires.upscaler,
@@ -196,8 +201,52 @@ export function toPayload(request: RenderRequest, config: Pick<ForgeConfig, 'sav
         denoising_strength: request.hires.denoise,
       }
     : {}
+  // ADetailer is an always-on script, so it rides in `alwayson_scripts`
+  // rather than the payload proper. Its args are positional: enabled, skip
+  // img2img, then one object per unit. The shape came from this Forge's own
+  // `/sdapi/v1/script-info`, not from a guess.
+  const scripts = request.face
+    ? {
+        alwayson_scripts: {
+          ADetailer: {
+            args: [
+              true,
+              false,
+              {
+                ad_model: request.face.model,
+                ad_prompt: request.face.prompt,
+                ad_negative_prompt: request.face.negative,
+                ad_confidence: request.face.confidence,
+                // The gate that makes this a SMALL-face pass: a face larger
+                // than this share of the picture is left alone.
+                ad_mask_max_ratio: request.face.max_area,
+                ad_denoising_strength: request.face.denoise,
+                ad_mask_blur: request.face.mask_blur,
+                ad_inpaint_only_masked: true,
+                ad_inpaint_only_masked_padding: request.face.padding,
+                // The face gets its own step count and guidance, both above
+                // what the panel used. Measured off 97 of his own 2023
+                // renders, where the face pass ran at 30 steps and CFG 7
+                // over bodies drawn at fewer of both.
+                ad_use_steps: true,
+                ad_steps: request.face.steps,
+                ad_use_cfg_scale: true,
+                ad_cfg_scale: request.face.cfg,
+                ad_use_inpaint_width_height: true,
+                ad_inpaint_width: request.face.size,
+                ad_inpaint_height: request.face.size,
+                ...(request.face.checkpoint
+                  ? { ad_use_checkpoint: true, ad_checkpoint: request.face.checkpoint }
+                  : {}),
+              },
+            ],
+          },
+        },
+      }
+    : {}
   return {
     ...hires,
+    ...scripts,
     prompt: request.prompt,
     negative_prompt: request.negative,
     seed: request.seed,
@@ -228,7 +277,7 @@ export function toInpaintPayload(request: InpaintRequest, config: Pick<ForgeConf
   return {
     // Without `hires`: this pass is already an img2img at the plate's size,
     // and the hires fields would only fight its denoising strength.
-    ...toPayload({ ...request, hires: undefined }, config),
+    ...toPayload({ ...request, hires: undefined, face: undefined }, config),
     init_images: [request.init.toString('base64')],
     mask: request.mask.toString('base64'),
     denoising_strength: request.denoise,
