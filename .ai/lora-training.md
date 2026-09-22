@@ -317,6 +317,13 @@ trained and cost the owner nothing to shoot; say that in the same sentence as "t
   generator keeps them consistent across angles.
 - Rescanning a set the watcher caught mid-write leaves failed rows; `retry_failed` fixes them, a
   rescan alone never does.
+- **Pausing a training for Forge** (`D:\AI\lora-train\pause-training.py pause|resume|status`,
+  kohya venv python): suspends the trainer's process tree at the current step; the trainer keeps
+  its ~13 GB of VRAM while paused, which leaves ~11 GB - enough for Forge renders and upscales.
+  Pattern the owner uses several times a day: "pause" -> start Forge -> his renders -> "continue"
+  -> check Forge is idle (`/sdapi/v1/progress`, `/queue/status`), kill it, `resume`. A reboot while
+  paused loses everything after the last epoch file. tqdm's s/it averages the pause in; judge the
+  pace from steps between two epoch files.
 - **Trim every reference to the figure before it enters a dataset.** kohya buckets at constant
   area, so background margins shrink her: the generated Ari refs at 54 % frame width trained at
   ~450 px and lost the white shorts' colour on 8-10 of 32 frames at every epoch (`ari_gen_v1`);
