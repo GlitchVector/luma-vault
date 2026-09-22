@@ -75,7 +75,10 @@ type "1,5" when a checkbox would do.
    instead" is a new ask, not a pick.
 5. **Approve exactly what he clicked.**
    `pnpm studio character approve <id> latest <n,n> --into <facet>`
-   Quote the number list in PowerShell (`"1,5"`), or it splits into two arguments. It copies those
+   Name the proposals file, never `latest`, whenever a second brainstorm may have run since — a
+   background one writes a newer file and `latest` silently picks it (this approved a history
+   option into `relationships.md` once). Quote the number list in PowerShell (`"1,5"`), or it
+   splits into two arguments. It copies those
    items under a dated heading naming the brainstorm they came from and ticks them off, so the same
    idea cannot be approved twice. Options he did not click stay open in the file; do not pass them
    for him.
