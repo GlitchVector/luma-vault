@@ -17,7 +17,9 @@ button (in the filter bar) drives the same commands with a form in front of
 
 ## What you write
 
-`prose.md`. That is it. Stage 1 hands it to a language model with the brief
+`prose.md`. That is it. Three paragraphs make a page: stage 1 cuts the prose
+on that rule (`paginate.ts`), marks each page, and rejects a script whose page
+count differs. It hands the paged prose to a language model with the brief
 in `src/writer/brief.ts` and gets back pages, panels, camera words, scenes,
 balloons and sound effects as `script.json`. Edit that file — or the form in
 the app — when a panel needs a different camera or a line needs cutting.

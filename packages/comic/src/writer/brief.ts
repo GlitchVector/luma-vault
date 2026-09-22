@@ -50,6 +50,7 @@ PLACES
 - Each panel names its place in "location". A panel with no fixed place may leave it out.
 
 PAGES AND LAYOUTS
+- The prose arrives cut into pages by "[Page N]" lines: three paragraphs make a page. Produce exactly those pages, in that order, each telling what its own paragraphs tell — never merge two pages or split one.
 - 3 to 5 panels per page unless the prose is very short. Choose "layout" from these presets; its panel count must equal the page's number of panels:
 ${layouts}
 - Panel ids are "p<page>-<n>", 1-based.

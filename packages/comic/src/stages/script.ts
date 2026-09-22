@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { defaultLayoutFor } from '../layouts.ts'
+import { paginate } from '../paginate.ts'
 import { REPO_ROOT, formatIssues, panelId, writeJson, type Project } from '../project.ts'
 import type { Reporter } from '../report.ts'
 import { draftScriptSchema, type Character, type DraftScript, type Page, type Script } from '../schema.ts'
@@ -31,8 +32,11 @@ export async function runScript(
 ): Promise<Script> {
   const prosePath = options.prosePath ?? project.prosePath
   if (!existsSync(prosePath)) throw new Error(`${prosePath} does not exist — write the story there first`)
-  const prose = readFileSync(prosePath, 'utf8').trim()
-  if (!prose) throw new Error(`${prosePath} is empty`)
+  const written = readFileSync(prosePath, 'utf8').trim()
+  if (!written) throw new Error(`${prosePath} is empty`)
+  // Three paragraphs make a page: cut here, and hold the writer to it.
+  const paged = paginate(written)
+  const prose = paged.text
 
   const writer = options.writer ?? writerFor(project.config.writer.backend)
   // Draft 7 without the `$schema` line: the CLI's validator rejects the
@@ -51,6 +55,10 @@ export async function runScript(
     if (parsed.success) {
       try {
         draft = finishDraft(parsed.data, project.config.characters)
+        if (draft.pages.length !== paged.pages) {
+          lastError = `the prose is cut into ${paged.pages} page(s) ([Page N] lines) but the script has ${draft.pages.length}; make exactly ${paged.pages}, in order`
+          draft = undefined
+        }
       } catch (error) {
         lastError = (error as Error).message
       }

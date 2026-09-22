@@ -107,3 +107,11 @@ Image generation, inpainting, candidates, lettering: `@luma/comic` has the
 pieces (Forge render and mask inpaint, plates, seeds and sidecars, QA,
 deterministic lettering) and Milestone 4 wires a panel spec to them. Nothing
 from the plan's later stages.
+
+## From story to prose.md
+
+`/story` in Claude Code develops a comic's prose with the author from a seed of one to three
+paragraphs: a studio comic per app project, `story brainstorm` for depth and then one page at a
+time (`--explicit` when the material calls for it), his clicks approved into `outline.md` and
+`story.md`, and `story prose <comic> --out <prose.md>` writing the approved paragraphs, title
+first, into the app project. Three paragraphs make a page; the picture pipeline enforces it.

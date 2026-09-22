@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { facetAsk } from './briefs.ts'
+import { proseFromStory } from './prose.ts'
 import { approve, parseProposals, pass, writeProposals } from './canon.ts'
 import { assemble, render } from './context.ts'
 import { applyPatch, describe as describePatch, lockPath, patchReplySchema } from './director.ts'
@@ -245,6 +246,32 @@ describe('context and status', () => {
   it('numbers the next scene and panel', () => {
     expect(nextId([], 'scene')).toBe('scene_001')
     expect(nextId(['panel_001', 'panel_017'], 'panel')).toBe('panel_018')
+  })
+})
+
+describe('story prose', () => {
+  it('keeps only the approved paragraphs, in order, without headings or bold titles', () => {
+    const story = [
+      '# Lost in Space — story',
+      '',
+      '_Scene uses are illustrations._',
+      '',
+      '## Approved 2026-09-22 (from 20260922-x.md)',
+      '',
+      '**Page one.** She wakes in the cabin.',
+      '',
+      'The window shows the gas clouds.',
+      '',
+      '**Page one, part three.** She reaches for the console.',
+      '',
+    ].join('\n')
+    expect(proseFromStory(story, 'Lost in Space')).toBe(
+      '# Lost in Space\n\nShe wakes in the cabin.\n\nThe window shows the gas clouds.\n\nShe reaches for the console.\n',
+    )
+  })
+
+  it('is a title alone when nothing is approved yet', () => {
+    expect(proseFromStory('# T — story\n\n_Nothing established yet._\n', 'T')).toBe('# T\n\n\n')
   })
 })
 

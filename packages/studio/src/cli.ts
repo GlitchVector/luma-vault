@@ -13,6 +13,7 @@
  *   comic new <id> --title "…" --characters ari,maya
  *   story brainstorm <comic> "<ask>" [--count N]       proposals → comics/<id>/proposals/
  *   story approve <comic> <file|latest> <n,n> --into concept|outline|story|continuity
+ *   story prose <comic> [--out <file>]           story.md as plain prose for a comic project
  *   scene draft <comic> "<approved direction>"         → scenes/scene_NNN.yaml (status planned)
  *   panels plan <comic> <scene_NNN> [--count N]        → panels/panel_NNN.yaml (PLANNED)
  *   direct <comic> <panel_NNN> "<instruction>" [--dry-run]
@@ -26,7 +27,7 @@
  * picked ones into the file you name, and that is the only way in.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { z } from 'zod'
@@ -52,6 +53,7 @@ import { ClaudeCliModel } from './model/claude-cli.ts'
 import { extractJson, type StoryModel } from './model/model.ts'
 import { OpenAiCompatibleModel } from './model/openai-compatible.ts'
 import { formatPlan, nextAsk, openProposals, plan } from './plan.ts'
+import { proseFromStory } from './prose.ts'
 import { addSheets, listSheets } from './sheets.ts'
 import { FACET_HINTS, assertId, comicDir, initStudio, modelConfigFor, openStudio, resolveUserPath, scaffoldCharacter, studioRoot, writeText, type ModelConfig, type Studio } from './root.ts'
 import { seedAri } from './seed-ari.ts'
@@ -80,6 +82,7 @@ const { values, positionals } = parseArgs({
     title: { type: 'string' },
     characters: { type: 'string' },
     into: { type: 'string' },
+    out: { type: 'string' },
     count: { type: 'string' },
     /** Repeatable: character sheets to file against a character. */
     sheet: { type: 'string', multiple: true },
@@ -104,6 +107,7 @@ function usage(): never {
   comic new <id> --title "…" --characters a,b
   story brainstorm <comic> "<ask>" [--explicit]
                                     story approve <comic> <file|latest> <n,n> --into concept|outline|story|continuity
+  story prose <comic> [--out <file>]  the approved story as # Title + paragraphs, for prose.md
   scene draft <comic> "<direction>" panels plan <comic> <scene_NNN> [--count N]
   direct <comic> <panel> "<instruction>" [--dry-run]     lock|unlock <comic> <panel> <name…>
   state <comic> <panel> <STATE>     export <comic> [dir]                 cliches <comic> <scene|panel>
@@ -382,6 +386,20 @@ async function main(): Promise<void> {
         case 'pass': {
           pass(studio, { comic }, need(3, 'proposals file'), numbers(positionals[4]))
           console.log('marked as passed')
+          return
+        }
+        case 'prose': {
+          // What the picture pipeline reads. The studio's story.md keeps its
+          // dated headings and bold titles; prose.md must be only the story,
+          // because the writer counts its paragraphs into pages.
+          const spec = readComic(studio, comic)
+          const text = proseFromStory(readFileSync(join(comicDir(studio, comic), 'story.md'), 'utf8'), spec.title || comic)
+          if (values.out) {
+            writeText(resolveUserPath(values.out), text)
+            console.log(`${text.split(/\n\s*\n/).length - 1} paragraph(s) → ${resolveUserPath(values.out)}`)
+          } else {
+            process.stdout.write(text)
+          }
           return
         }
         default:
