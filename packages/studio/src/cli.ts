@@ -50,6 +50,8 @@ import { DIRECTOR_BRIEF, PATCH_JSON_SCHEMA, applyPatch, describe, lockPath, patc
 import { ClaudeCliModel } from './model/claude-cli.ts'
 import { extractJson, type StoryModel } from './model/model.ts'
 import { OpenAiCompatibleModel } from './model/openai-compatible.ts'
+import { formatPlan, nextAsk, openProposals, plan } from './plan.ts'
+import { addSheets, listSheets } from './sheets.ts'
 import { assertId, comicDir, initStudio, openStudio, resolveUserPath, scaffoldCharacter, studioRoot, writeText, type Studio } from './root.ts'
 import { seedAri } from './seed-ari.ts'
 import {
@@ -78,6 +80,9 @@ const { values, positionals } = parseArgs({
     characters: { type: 'string' },
     into: { type: 'string' },
     count: { type: 'string' },
+    /** Repeatable: character sheets to file against a character. */
+    sheet: { type: 'string', multiple: true },
+    force: { type: 'boolean', default: false },
     'no-ari': { type: 'boolean', default: false },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
@@ -86,9 +91,12 @@ const { values, positionals } = parseArgs({
 
 function usage(): never {
   console.error(
-    `usage: studio <init|status|context|character|comic|story|scene|panels|direct|lock|unlock|state|export|continuity|cliches> …
+    `usage: studio <init|status|model|plan|context|character|comic|story|scene|panels|direct|lock|unlock|state|export|continuity|cliches> …
   init [root] [--no-ari]            character new <id> --name "…"
-  status [comic]                    character brainstorm <id> "<ask>" [--count N]
+  status [comic]                    character next <id> [--force]   the wizard: next question, asked
+  plan <character>                  character sheets <id> [--sheet <path>…]
+  model                             which model answers, whether it can, and what it offers
+  plan <character>                  character brainstorm <id> "<ask>" [--count N]
   context <task> …                  character approve <id> <file|latest> <n,n> --into <file>
   comic new <id> --title "…" --characters a,b
   story brainstorm <comic> "<ask>"  story approve <comic> <file|latest> <n,n> --into concept|outline|story|continuity
@@ -169,6 +177,52 @@ async function main(): Promise<void> {
       else console.log(overview(studio))
       return
     }
+    case 'model': {
+      // Which model answers, and whether it can. Worth its own command
+      // because the alternative is finding out through a failed brainstorm
+      // after the context has been assembled.
+      const m = studio.config.model
+      console.log(`backend : ${m.backend}`)
+      if (m.backend === 'claude-cli') {
+        console.log(`model   : ${m.model}`)
+        console.log('note    : the fallback. It refuses explicit material, so it is only useful for')
+        console.log('          the non-explicit facets.')
+        return
+      }
+      const remote = !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/.test(m.url)
+      const key = process.env[m.api_key_env]
+      console.log(`url     : ${m.url}${remote ? '  (someone else\'s server)' : '  (this machine)'}`)
+      console.log(`model   : ${m.model}`)
+      console.log(`key     : ${m.api_key_env} ${key ? 'is set' : remote ? 'is NOT set — put it in the repo .env' : 'not needed'}`)
+      if (remote && !key) return
+      // What it actually offers, so nobody guesses a model name.
+      try {
+        const response = await fetch(`${m.url.replace(/\/+$/, '')}/models`, {
+          headers: key ? { authorization: `Bearer ${key}` } : {},
+          signal: AbortSignal.timeout(30_000),
+        })
+        if (!response.ok) {
+          console.log(`models  : ${m.url}/models answered ${response.status}`)
+          return
+        }
+        const list = (await response.json()) as { data?: Array<{ id?: string }> }
+        const names = (list.data ?? []).map((entry) => entry.id).filter(Boolean)
+        console.log(`models  : ${names.length ? names.join(', ') : '(none reported)'}`)
+        if (names.length > 0 && !names.includes(m.model)) {
+          console.log(`          ! "${m.model}" is not among them`)
+        }
+      } catch (error) {
+        console.log(`models  : could not ask — ${(error as Error).message}`)
+      }
+      return
+    }
+    case 'plan': {
+      // What is still to develop about a character, and the asks to develop
+      // it with. The order comes from `facets.ts`, so this and the app's
+      // character page cannot disagree about what is next.
+      console.log(formatPlan(plan(studio, need(1, 'a character id'))))
+      return
+    }
     case 'context': {
       const task = taskFromArgs(positionals.slice(1))
       console.log(render(assemble(studio, task)) || '(no context: every relevant file is still a stub)')
@@ -191,6 +245,60 @@ async function main(): Promise<void> {
           console.log(`${reply.proposals.length} proposals → ${path}\n`)
           reply.proposals.forEach((p, i) => console.log(`${i + 1}. ${p.title}\n   ${p.text.replace(/\n/g, '\n   ')}\n`))
           console.log(`approve with: pnpm studio character approve ${id} latest <n,n> --into <${'core|personality|history|…'}>`)
+          return
+        }
+        case 'sheets': {
+          // The pictures she is developed from, filed with her. The text
+          // model cannot see them; a person or a vision-capable assistant
+          // reads them and writes what they see into a proposal.
+          const given = values.sheet ?? []
+          if (given.length > 0) {
+            const { added, skipped } = addSheets(studio, id, given)
+            for (const path of added) console.log(`  + ${path}`)
+            for (const why of skipped) console.log(`  ! ${why}`)
+          }
+          const sheets = listSheets(studio, id)
+          if (sheets.length === 0) {
+            console.log(`no sheets for ${id}. Add one: pnpm studio character sheets ${id} --sheet <path> [--sheet <path>]`)
+            return
+          }
+          console.log(`${sheets.length} sheet(s) for ${id}:`)
+          for (const path of sheets) console.log(`  ${path}`)
+          console.log('\nThe story model is text only and cannot see these. Open them, then write what you see')
+          console.log('into appearance or outfits as a proposal.')
+          return
+        }
+        case 'next': {
+          // The wizard in one step: work out what is still missing, ask that
+          // question, and print the approve line for the answer. Splitting
+          // "what next" from "ask it" only made two commands to remember.
+          const waiting = openProposals(studio, id)
+          if (waiting.length > 0 && !values.force) {
+            console.log(`${waiting.length} proposal file(s) still waiting on you:`)
+            for (const name of waiting) console.log(`  ${name}`)
+            console.log('\nApprove or pass from those first, or pass --force to ask anyway.')
+            return
+          }
+          const step = nextAsk(studio, id)
+          if (!step) {
+            console.log(formatPlan(plan(studio, id)))
+            return
+          }
+          if (step.explicit && studio.config.model.backend === 'claude-cli') {
+            // A refusal from the fallback comes back shaped like an answer
+            // and is written into a proposals file as though it were one.
+            console.error(`${step.facet} needs a model that does not refuse adult material, and the backend is claude-cli.`)
+            console.error('Point studio.config.json at the local model or at xAI, then try again. See: pnpm studio model')
+            process.exitCode = 1
+            return
+          }
+          const n = count(studio)
+          console.log(`${step.facet} — ${step.ask}\n`)
+          const reply = await ask(studio, { kind: 'character.brainstorm', character: id }, characterBrief(id, n), step.ask, PROPOSALS_JSON_SCHEMA(n), proposalsSchema)
+          const path = writeProposals(studio, { character: id }, step.ask, reply.proposals)
+          console.log(`${reply.proposals.length} proposals → ${path}\n`)
+          reply.proposals.forEach((p, i) => console.log(`${i + 1}. ${p.title}\n   ${p.text.replace(/\n/g, '\n   ')}\n`))
+          console.log(`approve with: pnpm studio character approve ${id} latest <n,n> --into ${step.facet}`)
           return
         }
         case 'approve': {
