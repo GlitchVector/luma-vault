@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { autofix, autofixCast, entryFor, loraNameOf } from './comic-autofix.ts'
+import { autofix, autofixCast, entryFor, loraNameOf, trainedWordsFrom } from './comic-autofix.ts'
 import type { LoraEntry } from './loras.ts'
 import type { ComicCharacter } from './comic.ts'
 
@@ -118,5 +118,44 @@ describe('reading a lora reference', () => {
   it('takes the name off the weight', () => {
     expect(loraNameOf('ari_adopt_v4:1.2')).toBe('ari_adopt_v4')
     expect(loraNameOf('plain')).toBe('plain')
+  })
+})
+
+describe('against what the LoRA was actually captioned with', () => {
+  // `ari_adopt_v4` really does carry two garment words: `white shorts` on 36
+  // of 235 frames and `topless` on 40. The rest of her outfit appears zero
+  // times. A captioned constant binds to its word and the trigger stops
+  // owning it, so those two are load-bearing and the rest are noise.
+  const trained = trainedWordsFrom([
+    'ari, 1girl, solo, full body, standing, looking at viewer',
+    'ari, 1girl, solo, full body, standing, topless, breasts out',
+    'ari, 1girl, solo, cowboy shot, white shorts, topless',
+  ])
+
+  it('keeps a word it was taught and drops one it never saw', () => {
+    const fixed = autofix(character({ look: 'aqua shirt, white shorts, black collar' }), catalogue, trained)
+    expect(fixed.character.look).toBe('white shorts')
+    expect(fixed.changes[0]).toMatch(/aqua shirt/)
+    expect(fixed.changes[0]).toMatch(/kept white shorts/)
+  })
+
+  it('leaves a look alone when every word was taught', () => {
+    const fixed = autofix(character({ look: 'white shorts' }), catalogue, trained)
+    expect(fixed.character.look).toBe('white shorts')
+    expect(fixed.changes).toEqual([])
+  })
+
+  it('is case-insensitive, because a caption is not a spelling test', () => {
+    const fixed = autofix(character({ look: 'White Shorts' }), catalogue, trained)
+    expect(fixed.character.look).toBe('White Shorts')
+  })
+
+  it('falls back to the status when the captions are not on this machine', () => {
+    const fixed = autofix(character({ look: 'aqua shirt, white shorts' }), catalogue, null)
+    expect(fixed.character.look).toBe('')
+  })
+
+  it('reads a caption pile into the words it contains', () => {
+    expect([...trainedWordsFrom(['a, B ,, c'])].sort()).toEqual(['a', 'b', 'c'])
   })
 })

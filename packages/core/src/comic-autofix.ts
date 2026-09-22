@@ -20,12 +20,32 @@
  *   way round with the identity dropped and the outfit kept. Those NEED
  *   their outfit named at render time, and stripping it would undress them.
  *
- * So autofix is not "add words" or "remove words". It reads which kind of
- * LoRA this is and makes the prompt match how that one was taught.
+ * And the split is not clean even inside one LoRA, which is the third thing
+ * this learned. `ari_adopt_v4` is `final` and still captioned two garment
+ * words: `white shorts` on 36 of its 235 frames and `topless` on 40. The
+ * training note says what that does — a captioned constant binds to its word
+ * and the trigger stops owning it, which is how v6's shorts went teal — and
+ * it was watched happening here: dropping the whole look gave a render with
+ * teal shorts.
+ *
+ * So the real rule is per WORD, and it is measurable: a look word that
+ * appears in the LoRA's own training captions is load-bearing and stays; one
+ * that never appears is already owned by the trigger and competes with it.
+ * `status` is only the fallback for when the captions are not on this
+ * machine to read.
  */
 
 import { CUSTOM_LORAS, type LoraEntry } from './loras.ts'
 import type { ComicCharacter } from './comic.ts'
+
+/**
+ * The words a LoRA was actually captioned with, lowercased.
+ *
+ * Read from its dataset folder by the caller, because core does no I/O. An
+ * empty set is not the same as no set: `null` means "not known, fall back to
+ * the status", while an empty set means "read, and it captioned nothing".
+ */
+export type TrainedWords = ReadonlySet<string> | null
 
 export interface Autofix {
   character: ComicCharacter
@@ -79,7 +99,11 @@ export function carriesItsOutfit(entry: LoraEntry): boolean {
  * Whether the look is dropped or demanded depends on how the LoRA was
  * taught. See the note at the top of this file.
  */
-export function autofix(character: ComicCharacter, entries: readonly LoraEntry[] = CUSTOM_LORAS): Autofix {
+export function autofix(
+  character: ComicCharacter,
+  entries: readonly LoraEntry[] = CUSTOM_LORAS,
+  trained: TrainedWords = null,
+): Autofix {
   const entry = entryFor(character, entries)
   if (!entry) {
     return { character, changes: [], problem: `no LoRA in the catalogue matches "${character.lora}"` }
@@ -100,6 +124,21 @@ export function autofix(character: ComicCharacter, entries: readonly LoraEntry[]
     next.trigger = entry.trigger
   }
 
+  if (trained) {
+    // Word by word, against what it was actually taught.
+    const words = next.look.split(',').map((word) => word.trim()).filter(Boolean)
+    const keep = words.filter((word) => trained.has(word.toLowerCase()))
+    const drop = words.filter((word) => !trained.has(word.toLowerCase()))
+    if (drop.length > 0) {
+      next.look = keep.join(', ')
+      changes.push(
+        `dropped ${drop.length} word(s) the trigger already owns (${drop.join(', ')})` +
+          (keep.length > 0 ? `; kept ${keep.join(', ')}, which ${entry.name} was captioned with` : ''),
+      )
+    }
+    return { character: next, changes }
+  }
+
   if (carriesItsOutfit(entry)) {
     if (next.look.trim()) {
       changes.push(`dropped the look: "${entry.trigger}" already carries it, and restating it competes with the LoRA`)
@@ -118,16 +157,36 @@ export function autofix(character: ComicCharacter, entries: readonly LoraEntry[]
   return { character: next, changes }
 }
 
+/**
+ * The set of words in a pile of captions.
+ *
+ * Split on commas, trimmed, lowercased. Nothing clever: a caption in this
+ * house is a comma-separated tag list and that is the whole format.
+ */
+export function trainedWordsFrom(captions: readonly string[]): ReadonlySet<string> {
+  const words = new Set<string>()
+  for (const caption of captions) {
+    for (const word of caption.split(',')) {
+      const trimmed = word.trim().toLowerCase()
+      if (trimmed) words.add(trimmed)
+    }
+  }
+  return words
+}
+
 /** Every character in a cast, in one go. */
 export function autofixCast(
   characters: Record<string, ComicCharacter>,
   entries: readonly LoraEntry[] = CUSTOM_LORAS,
+  /** Per LoRA NAME, the words it was captioned with. Missing is "not known". */
+  trained: ReadonlyMap<string, ReadonlySet<string>> = new Map(),
 ): { characters: Record<string, ComicCharacter>; changes: string[]; problems: string[] } {
   const out: Record<string, ComicCharacter> = {}
   const changes: string[] = []
   const problems: string[] = []
   for (const [id, character] of Object.entries(characters)) {
-    const fixed = autofix(character, entries)
+    const entry = entryFor(character, entries)
+    const fixed = autofix(character, entries, entry ? (trained.get(entry.name) ?? null) : null)
     out[id] = fixed.character
     for (const change of fixed.changes) changes.push(`${id}: ${change}`)
     if (fixed.problem) problems.push(`${id}: ${fixed.problem}`)

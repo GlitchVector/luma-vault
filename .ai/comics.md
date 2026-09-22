@@ -399,6 +399,15 @@ the thing this whole day was spent removing. **Pose / Action** is in the
 mockup and is in the code, but only appears when the plate pass is on — it
 is read by `plates/prompt.ts` and by nothing else.
 
+**The letterer's two detectors are not in git.** `models/` is ignored, and a
+45 MB plus a 47 MB ONNX file do not belong there. A fresh machine runs
+`python scripts/export-face-detectors.py` once; it re-exports them from the
+`.pt` files ADetailer already downloaded, using Forge's Python because that
+is where ultralytics lives. Nothing there touches the GPU, so it is safe
+during a training. Without them the letterer still runs, falls back to the
+energy map and says so in a note — and captions land on faces again, which
+is the thing it was built to stop.
+
 **Nothing in this panel links straight at a file.** An `<a href>` to a
 `luma://` image NAVIGATES the webview to it, and the shell has no back
 button, so the app was gone until it was restarted — which is what the page

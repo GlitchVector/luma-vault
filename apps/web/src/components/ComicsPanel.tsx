@@ -2,6 +2,8 @@ import { Button, ProgressBar, Spinner, cn } from '@luma/ui'
 import {
   COMIC_ANCHORS,
   autofixCast,
+  entryFor,
+  trainedWordsFrom,
   COMIC_BALLOON_KINDS,
   COMIC_LAYOUTS,
   comicScriptSchema,
@@ -29,6 +31,7 @@ import {
   comicRead,
   comicRestorePanel,
   comicRun,
+  loraDataset,
   comicSave,
   comicSaveSettings,
   comicStatus,
@@ -1544,6 +1547,43 @@ function ComicSettingsPanel({
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(settings)
   const set = (patch: Partial<ComicSettings>) => setDraft((previous) => (previous ? { ...previous, ...patch } : previous))
+
+  /**
+   * Read each character's training captions, then reconcile.
+   *
+   * The captions are the whole point: a look word the LoRA was taught is
+   * load-bearing and stays, one it never saw is already owned by the trigger.
+   * A dataset that is not on this machine simply is not read, and that
+   * character falls back to the catalogue's status.
+   */
+  const runAutofix = async () => {
+    if (!script) return
+    const trained = new Map<string, ReadonlySet<string>>()
+    for (const character of Object.values(script.characters)) {
+      const entry = entryFor(character)
+      if (!entry?.dataset || trained.has(entry.name)) continue
+      try {
+        // Sequential on purpose: a cast is two or three characters and each
+        // read walks a folder on a network share.
+        // eslint-disable-next-line no-await-in-loop
+        const dataset = await loraDataset(entry.dataset)
+        const captions = dataset.subsets.flatMap((subset) =>
+          subset.images.map((image) => image.caption ?? '').filter(Boolean),
+        )
+        if (captions.length > 0) trained.set(entry.name, trainedWordsFrom(captions))
+      } catch {
+        // Not on this machine, or the trainer moved it. The status rule covers it.
+      }
+    }
+    const fixed = autofixCast(script.characters, undefined, trained)
+    if (fixed.problems.length > 0) void showMessage(fixed.problems.join('\n'), { title: 'Autofix' })
+    if (fixed.changes.length === 0) {
+      if (fixed.problems.length === 0) toast('already matches the LoRA catalogue')
+      return
+    }
+    onScriptChange((previous) => ({ ...previous, characters: fixed.characters }))
+    void showMessage(fixed.changes.join('\n'), { title: 'Autofix' })
+  }
   const tags = draft.globalTags.split(',').map((tag) => tag.trim()).filter(Boolean)
   const setTags = (next: string[]) => set({ globalTags: next.join(', ') })
 
@@ -1693,28 +1733,17 @@ function ComicSettingsPanel({
               <Button
                 size="sm"
                 className="ml-auto"
-                onClick={() => {
-                  const fixed = autofixCast(script.characters)
-                  if (fixed.problems.length > 0) {
-                    void showMessage(fixed.problems.join('\n'), { title: 'Autofix' })
-                  }
-                  if (fixed.changes.length === 0) {
-                    if (fixed.problems.length === 0) toast('already matches the LoRA catalogue')
-                    return
-                  }
-                  onScriptChange((previous) => ({ ...previous, characters: fixed.characters }))
-                  void showMessage(fixed.changes.join('\n'), { title: 'Autofix' })
-                }}
-                title="Put every character back in step with the LoRA catalogue: the version it names, at the weight it names, and without the appearance words the trigger already carries."
+                onClick={() => void runAutofix()}
+                title="Put every character back in step with the LoRA catalogue, and measure her words against what her LoRA was actually captioned with: a word it was taught stays, a word it never saw is already carried by the trigger and only competes with it."
               >
                 Autofix prompt
               </Button>
             </div>
             <span className="block text-[11px] leading-relaxed text-zinc-500">
-              Autofix moves each character to the version and weight the LoRA catalogue names, and makes her words
-              match how that LoRA was taught. A trigger-only LoRA carries hair, eyes and the default outfit by itself,
-              so naming the outfit again competes with it; an older sheet-crop LoRA was captioned the other way round
-              and needs its outfit named.
+              Autofix moves each character to the version and weight the LoRA catalogue names, then checks her words
+              against that LoRA&apos;s own training captions. A word it was taught stays; a word it never saw is
+              already carried by the trigger and only competes with it. Where the dataset is not on this machine it
+              falls back to how the LoRA was trained.
             </span>
 
             <span className="block pt-1 font-medium text-zinc-300">Body</span>
