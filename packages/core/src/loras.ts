@@ -93,7 +93,7 @@ export const CUSTOM_LORAS: readonly LoraEntry[] = [
     status: 'wip',
     weight: 1.2,
     olderVersions: [],
-    note: 'Stage 1 of the ari_gen line: dressed data only, rank 32, 20 epochs. Its one job is to render the undressed candidates the owner stars; the final `ari_gen_v1` trains on both.',
+    note: 'Stage 1 of the ari_gen line: dressed data only, rank 32, 20 epochs; held the outfit 14/20 from the trigger alone. Its candidate rounds gave the undressed frames; the final `ari_gen_v1` (rank 64, 30 epochs) is training on both.',
   },
   {
     name: 'celoracle_v3',

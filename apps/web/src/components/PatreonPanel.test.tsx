@@ -157,6 +157,57 @@ describe('PatreonPanel', () => {
     await vi.waitFor(() => expect(onReordered).toHaveBeenCalledOnce())
   })
 
+  it('reverses the whole list with one button and writes it back', async () => {
+    const onReordered = vi.fn()
+    render(
+      <PatreonPanel items={items} sets={['run-a']} members={members} setTitle={null} onClose={vi.fn()} onReordered={onReordered} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Reverse order' }))
+    expect(names()).toEqual(['03.png', '02.png', '01.png'])
+    expect(reorderSet).toHaveBeenCalledWith('run-a', ['/vault/03.png', '/vault/02.png', '/vault/01.png'])
+    await vi.waitFor(() => expect(onReordered).toHaveBeenCalledOnce())
+  })
+
+  // Ticked rows travel together when one of them is dragged, in their own order,
+  // to wherever the dragged one is dropped - a post of eighty-seven is not
+  // reordered one row at a time.
+  it('moves every ticked row as one block when one of them is dragged', () => {
+    const five = [item(1, '01.png'), item(2, '02.png'), item(3, '03.png'), item(4, '04.png'), item(5, '05.png')]
+    render(<PatreonPanel items={five} sets={['run-a']} members={[]} setTitle={null} onClose={vi.fn()} onReordered={vi.fn()} />)
+    fireEvent.click(screen.getByLabelText(/Move 02.png together/))
+    fireEvent.click(screen.getByLabelText(/Move 05.png together/))
+    expect(screen.getByText('2 ticked')).toBeTruthy()
+    drag(4, 0)
+    expect(names()).toEqual(['02.png', '05.png', '01.png', '03.png', '04.png'])
+    expect(reorderSet).toHaveBeenCalledWith('run-a', [
+      '/vault/02.png',
+      '/vault/05.png',
+      '/vault/01.png',
+      '/vault/03.png',
+      '/vault/04.png',
+    ])
+  })
+
+  // A tick must never be a trap: dragging a row that is NOT ticked moves it alone.
+  it('moves an unticked row alone even while others are ticked', () => {
+    render(<PatreonPanel items={items} sets={[]} members={[]} setTitle={null} onClose={vi.fn()} onReordered={vi.fn()} />)
+    fireEvent.click(screen.getByLabelText(/Move 01.png together/))
+    drag(2, 1)
+    expect(names()).toEqual(['01.png', '03.png', '02.png'])
+    fireEvent.click(screen.getByText('untick all'))
+    expect(screen.queryByText(/ticked/)).toBeNull()
+  })
+
+  // Dropping a row where it already sits is not a reorder, so nothing is written.
+  it('does not write the set when a drop changes nothing', () => {
+    render(
+      <PatreonPanel items={items} sets={['run-a']} members={members} setTitle={null} onClose={vi.fn()} onReordered={vi.fn()} />,
+    )
+    drag(1, 1)
+    expect(names()).toEqual(['01.png', '02.png', '03.png'])
+    expect(reorderSet).not.toHaveBeenCalled()
+  })
+
   // With several sets the drag is split per set; this panel only has to hand
   // the whole merged order to the backend, which knows the membership.
   it('hands a merged drag to reorderSets when several sets are showing', () => {

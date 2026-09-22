@@ -91,8 +91,12 @@ trains in between).
 6. **`pnpm refs collect <name>`** copies the starred frames into `sheets/<name>-refs-gen/` and
    `sheets/<name>-face-refs-gen/`, a `.tags.txt` beside each with that view's caption words.
    `--all` when he accepted the whole set in words instead of stars.
-7. **Prep** (`prep-<name>.py`, model: `prep-ari-gen.py`): refs whole, plus an upper-body (0.42) and
-   a cowboy (0.66) crop of every standing view, everything mirrored, portraits whole. Captions per
+7. **Prep** (`prep-<name>.py`, model: `prep-ari-gen-v2.py`): every body reference TRIMMED TO THE
+   FIGURE first (`tight()`, per-row edge comparison), then used whole, plus an upper-body (0.42) and
+   a cowboy (0.66) crop of every standing view, everything mirrored, portraits whole. The trim is
+   not cosmetic: kohya buckets at constant area, so a figure at 54 % of the frame trains at ~450 px
+   and at 92 % at ~530x1790 - `ari_gen_v1` lost the shorts' colour on 8-10 of 32 frames to exactly
+   that margin (2026-09-22). Measure it: median figure width over the frame must be > 0.85. Captions per
    §5. Repeats balance the rungs: full-body refs highest (they alone carry the outfit's colour
    layout), then faces, then crops. Run `check-crops.py datasets/<name>` and OPEN `edge-strips.png`.
 8. **Audit the dataset against the board table** (§6) BEFORE the first train. A row the data cannot
@@ -192,6 +196,7 @@ against the folder at the scale it will be rendered:
 | upper body, cowboy | crops of the references at those rungs, or references at that framing |
 | each undressed state | that state captioned, front AND side AND back, at the scale the board renders it |
 | colour | measured against the references, no render cast |
+| the outfit's small parts (shorts, yoke, cuffs) | the figure fills the frame - `check-crops.py` FILL >= 0.85 per refs subset; a reference with margins trains the garment at half size |
 
 **Look at the crops.** `check-crops.py` prints any panel over 60 % one colour and writes
 `edge-strips.png`. A 71 %-flat lips panel taught a surgical mask; the sheet's own "FRONT"/"BACK"
@@ -310,6 +315,12 @@ trained and cost the owner nothing to shoot; say that in the same sentence as "t
   generator keeps them consistent across angles.
 - Rescanning a set the watcher caught mid-write leaves failed rows; `retry_failed` fixes them, a
   rescan alone never does.
+- **Trim every reference to the figure before it enters a dataset.** kohya buckets at constant
+  area, so background margins shrink her: the generated Ari refs at 54 % frame width trained at
+  ~450 px and lost the white shorts' colour on 8-10 of 32 frames at every epoch (`ari_gen_v1`);
+  the adopt refs at 92 % (`tight()` in the prep) held 20/20. `check-crops.py` now prints a FILL
+  line per refs subset and flags anything under 0.85 - run it and fix the prep BEFORE the first
+  train, never after a sweep. Model prep: `prep-ari-gen-v2.py` (2026-09-22).
 
 ## 10. What the Ari week established (the evidence behind §4-§6)
 

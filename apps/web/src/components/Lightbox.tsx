@@ -161,6 +161,13 @@ interface LightboxProps {
    */
   onOpenInLibrary: (id: number) => void
   /**
+   * Post this one picture: opens the DeviantArt review or the Patreon post
+   * panel over it, the same panels the selection uses, with this item as the
+   * whole selection. Both stop at a draft / a review step; nothing here posts
+   * on its own click.
+   */
+  onPostTo: (target: 'deviantart' | 'patreon', item: MediaItem) => void
+  /**
    * Pick this row for the grid's selection, without leaving the lightbox.
    *
    * The point of doing it from here: reviewing a folder is one pass, and
@@ -333,6 +340,7 @@ export function Lightbox({
   onToggleGeneration,
   onDeleted,
   onOpenInLibrary,
+  onPostTo,
   onOpenId,
   onUpscale,
   onToggleSelect,
@@ -1888,6 +1896,27 @@ export function Lightbox({
           className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-white/20"
         >
           Open in library
+        </button>
+
+        {/* Stills only for DeviantArt: everything downstream of that panel is
+            written for an image. Patreon takes a video as a post attachment. */}
+        {item.kind === 'image' ? (
+          <button
+            type="button"
+            onClick={() => onPostTo('deviantart', item)}
+            title="Review title, tags and mature flag, then upload this picture to DeviantArt. Nothing is posted without a second click."
+            className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-white/20"
+          >
+            DeviantArt…
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => onPostTo('patreon', item)}
+          title="Write a Patreon post with this picture. It stops at a draft in your browser; publishing is yours."
+          className="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-[11px] text-zinc-300 hover:bg-white/20"
+        >
+          Patreon…
         </button>
 
         <span

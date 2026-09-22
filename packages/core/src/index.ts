@@ -256,6 +256,7 @@ export type {
   ComicLayout,
 } from './comic.ts'
 export { actKeyOf, actLabelOf, mergeSetOrder } from './setorder.ts'
+export { moveRows, reverseRows } from './reorder.ts'
 export type { ActKey, SetMember } from './setorder.ts'
 
 export {
@@ -277,5 +278,5 @@ export {
 } from './loras.ts'
 export type { LoraEntry, LoraGroup, LoraKind, LoraStatus } from './loras.ts'
 
-export { autofix, autofixCast, carriesItsOutfit, entryFor, loraNameOf, loraRef } from './comic-autofix.ts'
-export type { Autofix } from './comic-autofix.ts'
+export { autofix, autofixCast, carriesItsOutfit, entryFor, loraNameOf, loraRef, trainedWordsFrom } from './comic-autofix.ts'
+export type { Autofix, TrainedWords } from './comic-autofix.ts'

@@ -1,4 +1,4 @@
-import { Button, EmptyState } from '@luma/ui'
+import { Button, EmptyState, ProgressBar } from '@luma/ui'
 import {
   hasRecycleBin,
   isFourK,
@@ -158,8 +158,12 @@ export function App() {
   useEffect(() => {
     const set = readSet(globalThis.location?.search ?? '')
     if (set === null) return
-    // The sidebar opens the section that holds the set by itself.
-    applyQuery({ set })
+    // Both fields: the index falls back to `set` when `sets` is empty, but the
+    // sidebar's highlight and the accordion that opens on a selection read
+    // `sets` - with only `set` filled, a link opened on a grid nobody could see
+    // was filtered, and the set it named was nowhere in the sidebar (owner,
+    // 2026-09-21).
+    applyQuery({ set, sets: [set] })
   }, [applyQuery])
 
   // Written on change, never in the same effect that reads: `replaceState` so
@@ -1318,7 +1322,26 @@ export function App() {
                 </div>
               ) : null}
 
-              <div ref={gridScroller} data-testid="grid-scroller" className="min-h-0 flex-1 overflow-y-auto">
+              {/* A filter change keeps the old rows on screen until the new
+                  ones land, which reads as "nothing happened" when the query
+                  takes a second. The bar says it is working. Its row is always
+                  there, at the bar's own height, so nothing below moves when it
+                  appears or goes (owner, 2026-09-21: no layout shifts, ever);
+                  and the rows stay solid - the old answer is still the answer
+                  until the new one lands. Only for a fresh query - paging
+                  appends quietly below the fold. */}
+              <div data-testid="grid-progress" className="h-1 shrink-0">
+                {library.loading && items.length > 0 ? (
+                  <ProgressBar done={0} total={0} indeterminate className="rounded-none" />
+                ) : null}
+              </div>
+              <div
+                ref={gridScroller}
+                data-testid="grid-scroller"
+                aria-busy={library.loading || undefined}
+                className="relative min-h-0 flex-1 overflow-y-auto"
+              >
+                <div>
                 {folders.length === 0 ? (
                   <EmptyState
                     title="No folders watched yet"
@@ -1382,6 +1405,7 @@ export function App() {
                     </div>
                   </>
                 )}
+                </div>
               </div>
             </>
           )}
@@ -1417,6 +1441,13 @@ export function App() {
             setShowLoras(false)
             setShowComics(false)
             void library.jumpToItem(id).then(() => setFocusId(id))
+          }}
+          onPostTo={(target, item) => {
+            // The same panels the selection opens, over this one picture. The
+            // lightbox closes first so the panel is not stacked on a viewer.
+            setOpenId(null)
+            if (target === 'deviantart') setPublishing([item])
+            else setPosting([item])
           }}
           onStep={step}
           // Reaches a row the grid is not showing — the original behind an

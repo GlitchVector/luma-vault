@@ -1,9 +1,10 @@
 import type { MediaItem } from '@luma/core'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDialogs } from '#/lib/dialogs.ts'
 import { resetInViewRegistry } from '#/lib/useInView.ts'
 import { App, DOUBLE_TAP_MS, FORGE_RETRY_MS } from './App.tsx'
+import { useLibrary } from './lib/useLibrary.ts'
 
 /**
  * Deleting a file, end to end, against a fake backend.
@@ -70,6 +71,8 @@ let topCharactersState: Array<{ name: string; count: number }> = []
 /** Every query the leaderboard was asked with, so following can be asserted. */
 const topCharacterQueries: Array<Record<string, unknown>> = []
 /** The command runs the sidebar can offer. Empty unless a case sets it. */
+/** When set, every `queryMedia` waits on it before answering. */
+let queryGate: Promise<void> | null = null
 let librarySetsState: Array<{
   run: string
   command: string
@@ -166,16 +169,18 @@ vi.mock('#/lib/native.ts', () => {
         mediaCount: library.length,
       },
     ]),
-  queryMedia: (query: { offset: number; limit: number; minStars?: number | null }) => {
+  queryMedia: async (query: { offset: number; limit: number; minStars?: number | null }) => {
     queries.push(query)
-    if (queryHostDown) return Promise.reject(new HostUnreachableError(queryHostDown))
+    if (queryHostDown) throw new HostUnreachableError(queryHostDown)
+    // A test can hold the answer back to look at the grid mid-query.
+    if (queryGate) await queryGate
     const matching =
       query.minStars == null ? library : library.filter((item) => (item.stars ?? 0) >= query.minStars!)
-    return Promise.resolve({
+    return {
       items: matching.slice(query.offset, query.offset + query.limit),
       total: matching.length,
       offset: query.offset,
-    })
+    }
   },
   recentMedia: (limit: number) => Promise.resolve(library.slice(0, limit)),
   mediaTimeline: (query: Record<string, unknown>) => {
@@ -198,6 +203,8 @@ vi.mock('#/lib/native.ts', () => {
     )
   },
   mediaById: (id: number) => Promise.resolve(library.find((item) => item.id === id) ?? null),
+  // The Patreon panel reads the campaign's access rules on open; none is enough for it to stand.
+  patreonTiers: () => Promise.resolve([]),
   // The position in the cleared, newest-first order: the mock library is in id order, newest last.
   mediaPosition: (_query: Record<string, unknown>, id: number) => {
     const index = [...library].sort((a, b) => b.id - a.id).findIndex((item) => item.id === id)
@@ -352,6 +359,7 @@ beforeEach(() => {
   topCharactersState = []
   topCharacterQueries.length = 0
   librarySetsState = []
+  queryGate = null
   librarySetQueries.length = 0
   excludeCalls.length = 0
   excludeFailure = null
@@ -2723,6 +2731,52 @@ describe('browsing by set', () => {
     expect(screen.getByRole('button', { name: /photostory/ })).toBeTruthy()
   })
 
+  it('says it is working while a filter query is out, in a row that is always there, with the rows left solid', async () => {
+    render(<App />)
+    await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
+    // The bar's row exists before anything loads, so its appearance moves nothing.
+    const row = screen.getByTestId('grid-progress')
+    expect(row.className).toContain('h-1')
+    let open: () => void = () => {}
+    queryGate = new Promise<void>((resolve) => {
+      open = resolve
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Videos' }))
+    // Mid-query: the bar inside its row, the previous rows still there and not faded, the scroller marked busy.
+    const bar = await screen.findByRole('progressbar')
+    expect(row.contains(bar)).toBe(true)
+    const tile = screen.getByTitle(`image-${LIBRARY_SIZE}.png`)
+    expect(tile).toBeTruthy()
+    expect(tile.closest('[class*="opacity-"]')).toBeNull()
+    expect(screen.getByTestId('grid-scroller').getAttribute('aria-busy')).toBe('true')
+
+    open()
+    await waitFor(() => expect(screen.queryByRole('progressbar')).toBeNull())
+    expect(screen.getByTestId('grid-progress')).toBe(row)
+    expect(screen.getByTestId('grid-scroller').getAttribute('aria-busy')).toBeNull()
+  })
+
+  it('does not raise the loading state for a refresh of the rows already on screen', async () => {
+    // Straight at the hook: `reload` is what a scan tick, a rating correction and an upscale call,
+    // and a loading bar on each of those would flicker through a whole classification.
+    const { result } = renderHook(() => useLibrary())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    let open: () => void = () => {}
+    queryGate = new Promise<void>((resolve) => {
+      open = resolve
+    })
+
+    act(() => result.current.reload())
+    expect(result.current.loading).toBe(false)
+
+    // A filter change is the person asking for something new, and does show it.
+    act(() => result.current.setQuery({ kind: 'video' }))
+    expect(result.current.loading).toBe(true)
+    open()
+    await waitFor(() => expect(result.current.loading).toBe(false))
+  })
+
   it('scrolls the grid back to the top when a set is picked', async () => {
     librarySetsState = RUNS
     render(<App />)
@@ -2773,6 +2827,29 @@ describe('browsing by set', () => {
     setsTab()
 
     expect(await screen.findByRole('heading', { level: 4, name: 'Other' })).toBeTruthy()
+  })
+
+  it('opens a deep link into a training round with the LoRA sets section open and the row marked', async () => {
+    // The link fills both `set` and `sets`: the index would filter on `set` alone, but the sidebar's
+    // highlight and the accordion that opens on a selection read `sets` - a link into a folded
+    // section showed a filtered grid and no visible set (owner, 2026-09-21).
+    librarySetsState = [
+      ...RUNS,
+      { run: 'lora-ari-gen-candidates-1', command: 'lora', character: 'ari-gen-candidates', title: null, createdAt: 1_772_600_000_000, count: 64, posterId: 4 },
+    ]
+    window.history.replaceState(null, '', '/?set=lora-ari-gen-candidates-1')
+    try {
+      render(<App />)
+      await waitFor(() => expect((queries.at(-1) as { sets?: string[] } | undefined)?.sets).toEqual(['lora-ari-gen-candidates-1']))
+      // The section opens once the set list has arrived and shows the selection is inside it.
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /^LoRA sets/ }).getAttribute('aria-expanded')).toBe('true'),
+      )
+      const row = (await screen.findByText('ari-gen-candidates')).closest('section')?.querySelector('[aria-pressed="true"]')
+      expect(row).toBeTruthy()
+    } finally {
+      window.history.replaceState(null, '', '/')
+    }
   })
 
   it('filters the grid to one run, and the same click again clears it', async () => {
@@ -3187,6 +3264,16 @@ describe('the phone layout', () => {
       const tile = screen.getByTitle(`image-${LIBRARY_SIZE}.png`)
       expect(tile.className).toContain('ring-indigo-400')
     })
+  })
+
+  it('"Patreon…" in the lightbox closes it and opens the post panel over that one picture', async () => {
+    render(<App />)
+    ;(await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)).click()
+    await screen.findByRole('dialog', { name: `image-${LIBRARY_SIZE}.png` })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Patreon…' }))
+    expect(screen.queryByRole('dialog', { name: `image-${LIBRARY_SIZE}.png` })).toBeNull()
+    await screen.findByLabelText('Who can see it')
   })
 
   it('takes the history entry back out when the lightbox closes from inside', async () => {

@@ -130,10 +130,15 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(25);
 /// Operations that genuinely run for minutes, and would be broken by the limit
 /// above. Each reports progress separately, so a person is never watching a
 /// still window while one of these runs.
-const SLOW_OPERATIONS: [&str; 4] = [
+const SLOW_OPERATIONS: [&str; 5] = [
     "upscale_media",
     "find_duplicates",
     "deviantart_send",
+    // A post is minutes of uploading through the Node client. Under the short
+    // limit the Mac gave up after 25 s while the host carried on uploading 87
+    // files - the draft existed, the window said the host had stopped sharing
+    // (owner, 2026-09-21).
+    "patreon_post",
     "import_image_browser_db",
 ];
 

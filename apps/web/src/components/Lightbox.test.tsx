@@ -207,6 +207,7 @@ function renderLightbox(props: Partial<React.ComponentProps<typeof Lightbox>> = 
       onToggleGeneration={() => {}}
       onDeleted={() => {}}
       onOpenInLibrary={() => {}}
+      onPostTo={() => {}}
       onOpenId={() => {}}
       onUpscale={() => {}}
       onToggleSelect={() => {}}
@@ -286,6 +287,7 @@ describe('the dwell before the original is fetched', () => {
         onToggleGeneration={() => {}}
         onDeleted={() => {}}
         onOpenInLibrary={() => {}}
+        onPostTo={() => {}}
       onOpenId={() => {}}
       onUpscale={() => {}}
       onToggleSelect={() => {}}
@@ -638,6 +640,7 @@ describe('zooming and panning', () => {
         onToggleGeneration={() => {}}
         onDeleted={() => {}}
         onOpenInLibrary={() => {}}
+        onPostTo={() => {}}
       onOpenId={() => {}}
       onUpscale={() => {}}
       onToggleSelect={() => {}}
@@ -800,6 +803,7 @@ describe('warming the neighbours', () => {
           onToggleGeneration={() => {}}
           onDeleted={() => {}}
           onOpenInLibrary={() => {}}
+          onPostTo={() => {}}
       onOpenId={() => {}}
       onUpscale={() => {}}
       onToggleSelect={() => {}}
@@ -1677,5 +1681,23 @@ describe('the direction the judgement keys move in', () => {
     fireEvent.click(toggle())
     press('ArrowUp')
     expect(onStep).toHaveBeenLastCalledWith(1)
+  })
+})
+
+describe('posting from the footer', () => {
+  it('offers DeviantArt and Patreon for a still, and hands the item over with the target', () => {
+    const onPostTo = vi.fn()
+    const item = makeItem(7)
+    renderLightbox({ seed: item, onPostTo })
+    fireEvent.click(screen.getByRole('button', { name: 'DeviantArt…' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Patreon…' }))
+    expect(onPostTo).toHaveBeenNthCalledWith(1, 'deviantart', item)
+    expect(onPostTo).toHaveBeenNthCalledWith(2, 'patreon', item)
+  })
+
+  it('offers only Patreon for a video, since the DeviantArt panel is written for a still', () => {
+    renderLightbox({ seed: makeItem(8, { kind: 'video', path: '/media/clip-8.mp4', name: 'clip-8.mp4' }) })
+    expect(screen.queryByRole('button', { name: 'DeviantArt…' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Patreon…' })).toBeTruthy()
   })
 })

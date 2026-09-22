@@ -2,6 +2,8 @@ import { Button, Spinner } from '@luma/ui'
 import {
   actLabelOf,
   isFourK,
+  moveRows,
+  reverseRows,
   type MediaItem,
   type PatreonAccessRule,
   type PatreonSummary,
@@ -87,11 +89,18 @@ const INDEX_POLL_MS = 1_000
  * Compose a Patreon draft from a selection, and reorder it by hand.
  *
  * The order shown is the order posted, and it starts as the collation the grid
- * worked out — every set's stage 1 before any set's stage 2. Dragging a row is
+ * worked out — every set's stage 1 before any set's stage 2. A reorder here is
  * the final word: with one set showing the new order is written straight back
  * to that set's manifest, and with several each set gets its own members' new
  * relative order while the interleaving stays with the post. That split is not
  * a compromise; a manifest cannot express where another set's frame sits.
+ *
+ * Three ways to reorder, because a post of eighty-seven is not reordered one
+ * drag at a time: a row drags on its own; rows ticked together move as one
+ * block when any of them is dragged, keeping their order; and the whole list
+ * flips with one button (the runs come out newest-first and a story reads the
+ * other way). The drag carries a payload on `dataTransfer` because WebKit does
+ * not start a drag without one — the panel is used from the Mac over the LAN.
  *
  * What goes up is 4K. The grid shows originals and hides their 4K variants, so
  * a selection is always originals; the panel swaps each for its variant where
@@ -121,6 +130,10 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
   const [summary, setSummary] = useState<PatreonSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState<number | null>(null)
+  /** The gap (0…rows.length) the drag would drop into, for the insertion line. */
+  const [dropGap, setDropGap] = useState<number | null>(null)
+  /** Rows ticked to move together, by media id. */
+  const [checked, setChecked] = useState<Set<number>>(new Set())
   const [writingOrder, setWritingOrder] = useState(false)
   const [decision, setDecision] = useState<FourKDecision>('pending')
   const [upscaling, setUpscaling] = useState<UpscaleProgress | null>(null)
@@ -268,29 +281,19 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
   }
 
   /**
-   * Drop a dragged row before `target`, then write the order back.
+   * Show a new order, then write it back.
    *
    * Written after the local move rather than before, so the list does not
    * snap back while the manifest is being rewritten. If the write fails the
-   * rows stay where they were dropped and the error says the manifest did not
+   * rows stay where they were put and the error says the manifest did not
    * follow — which is the truthful state.
    *
    * The paths written are the *originals'*: the set names those, and a 4K
    * variant standing in here is the post's business, not the manifest's.
    */
-  const dropAt = useCallback(
-    (target: number) => {
-      if (dragging === null || dragging === target) {
-        setDragging(null)
-        return
-      }
-      const next = [...rows]
-      const [moved] = next.splice(dragging, 1)
-      if (moved === undefined) return
-      next.splice(target > dragging ? target - 1 : target, 0, moved)
-      setRows(next)
-      setDragging(null)
-
+  const commitOrder = useCallback(
+    (next: readonly MediaItem[]) => {
+      setRows([...next])
       if (sets.length === 0) return
       setWritingOrder(true)
       const paths = next.map((item) => item.upscaledFrom ?? item.path)
@@ -306,8 +309,44 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
         },
       )
     },
-    [dragging, rows, sets, onReordered],
+    [sets, onReordered],
   )
+
+  /**
+   * Drop the drag into gap `gap`. A dragged row that is ticked takes every
+   * ticked row with it, as one block in their current order; an unticked row
+   * moves alone even when others are ticked, so a tick is never a trap.
+   */
+  const dropAt = useCallback(
+    (gap: number) => {
+      setDragging(null)
+      setDropGap(null)
+      if (dragging === null) return
+      const dragged = rows[dragging]
+      const moving =
+        dragged !== undefined && checked.has(dragged.id)
+          ? rows.flatMap((row, index) => (checked.has(row.id) ? [index] : []))
+          : [dragging]
+      const next = moveRows(rows, moving, gap)
+      if (next !== rows) commitOrder(next)
+    },
+    [dragging, rows, checked, commitOrder],
+  )
+
+  /** The gap a pointer over row `index` means: above its middle is before it, below is after. */
+  const gapFor = (index: number, event: React.DragEvent<HTMLElement>) => {
+    const box = event.currentTarget.getBoundingClientRect()
+    return event.clientY - box.top > box.height / 2 ? index + 1 : index
+  }
+
+  const toggleChecked = useCallback((id: number) => {
+    setChecked((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
 
   const send = () => {
     if (adult === null) return
@@ -532,17 +571,35 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
             />
           </label>
 
-          <p className="shrink-0 px-4 py-1.5 text-xs text-zinc-500">
-            {fourKCount === rows.length
-              ? 'All 4K. '
-              : `${fourKCount.toLocaleString()} of ${rows.length.toLocaleString()} are 4K. `}
-            Drag to reorder. The first picture is the preview non-patrons see.
-            {sets.length > 0
-              ? sets.length === 1
-                ? ' A drag is written back to the set.'
-                : ' A drag is written back to each set; how the sets interleave stays with this post.'
-              : ''}
-          </p>
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-xs text-zinc-500">
+            <p className="min-w-0 flex-1">
+              {fourKCount === rows.length
+                ? 'All 4K. '
+                : `${fourKCount.toLocaleString()} of ${rows.length.toLocaleString()} are 4K. `}
+              Drag a row to move it; tick several and drag one of them to move them together. The first picture is the
+              preview non-patrons see.
+              {sets.length > 0
+                ? sets.length === 1
+                  ? ' Every reorder is written back to the set.'
+                  : ' Every reorder is written back to each set; how the sets interleave stays with this post.'
+                : ''}
+            </p>
+            {checked.size > 0 ? (
+              <span className="flex items-center gap-2 text-zinc-400">
+                {checked.size.toLocaleString()} ticked
+                <button
+                  type="button"
+                  onClick={() => setChecked(new Set())}
+                  className="text-indigo-300 underline decoration-dotted hover:text-indigo-200"
+                >
+                  untick all
+                </button>
+              </span>
+            ) : null}
+            <Button size="sm" disabled={busy || rows.length < 2} onClick={() => commitOrder(reverseRows(rows))} title="Last picture first">
+              Reverse order
+            </Button>
+          </div>
 
           <ol className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-4">
             {rows.map((item, index) => {
@@ -556,11 +613,28 @@ export function PatreonPanel({ items, sets, members, setTitle, onClose, onReorde
                   heading={heading !== null && heading !== previousHeading ? heading : null}
                   label={labelOf(item.id)}
                   fourK={!needsFourK(item)}
-                  dragging={dragging === index}
+                  dragging={
+                    dragging !== null &&
+                    (dragging === index || (checked.has(item.id) && checked.has(rows[dragging]?.id ?? -1)))
+                  }
+                  dropLine={dropGap === index ? 'before' : dropGap === index + 1 && index === rows.length - 1 ? 'after' : null}
+                  checked={checked.has(item.id)}
                   disabled={busy}
-                  onDragStart={() => setDragging(index)}
-                  onDrop={() => dropAt(index)}
+                  onToggle={() => toggleChecked(item.id)}
+                  onDragStart={(event) => {
+                    // WebKit needs a payload or the drag never starts; the id is as good as any.
+                    event.dataTransfer?.setData('text/plain', String(item.id))
+                    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+                    setDragging(index)
+                  }}
+                  onDragOver={(event) => setDropGap(gapFor(index, event))}
+                  onDrop={(event) => dropAt(gapFor(index, event))}
+                  onDragEnd={() => {
+                    setDragging(null)
+                    setDropGap(null)
+                  }}
                   onDropAfterLast={index === rows.length - 1 ? () => dropAt(rows.length) : undefined}
+                  onDragOverAfterLast={index === rows.length - 1 ? () => setDropGap(rows.length) : undefined}
                 />
               )
             })}
@@ -600,11 +674,19 @@ interface RowProps {
   heading: string | null
   label: string | null
   fourK: boolean
+  /** Part of the drag in flight — the row itself or a ticked row travelling with it. */
   dragging: boolean
+  /** Where the insertion line shows while a drag hovers: above this row, or below the last one. */
+  dropLine: 'before' | 'after' | null
+  checked: boolean
   disabled: boolean
-  onDragStart: () => void
-  onDrop: () => void
+  onToggle: () => void
+  onDragStart: (event: React.DragEvent<HTMLElement>) => void
+  onDragOver: (event: React.DragEvent<HTMLElement>) => void
+  onDrop: (event: React.DragEvent<HTMLElement>) => void
+  onDragEnd: () => void
   onDropAfterLast?: () => void
+  onDragOverAfterLast?: () => void
 }
 
 /** One picture in the post. `memo`, because a drag re-renders the list on every hover. */
@@ -615,10 +697,16 @@ const Row = memo(function Row({
   label,
   fourK,
   dragging,
+  dropLine,
+  checked,
   disabled,
+  onToggle,
   onDragStart,
+  onDragOver,
   onDrop,
+  onDragEnd,
   onDropAfterLast,
+  onDragOverAfterLast,
 }: RowProps) {
   return (
     <>
@@ -630,17 +718,35 @@ const Row = memo(function Row({
       <li
         draggable={!disabled}
         onDragStart={onDragStart}
-        onDragOver={(event) => event.preventDefault()}
+        onDragOver={(event) => {
+          event.preventDefault()
+          onDragOver(event)
+        }}
         onDrop={(event) => {
           event.preventDefault()
-          onDrop()
+          onDrop(event)
         }}
+        onDragEnd={onDragEnd}
         data-testid={`patreon-row-${item.id}`}
+        data-drop-line={dropLine ?? undefined}
         className={[
-          'flex cursor-grab items-center gap-3 rounded px-1 py-1 text-sm',
-          dragging ? 'opacity-40' : 'hover:bg-white/5',
+          'relative flex cursor-grab items-center gap-3 rounded px-1 py-1 text-sm',
+          dragging ? 'opacity-40' : checked ? 'bg-indigo-500/10 hover:bg-indigo-500/15' : 'hover:bg-white/5',
+          // The insertion line lives on the row's edge so the list never reflows under a drag.
+          dropLine === 'before' ? 'shadow-[inset_0_2px_0_0_theme(colors.indigo.400)]' : '',
+          dropLine === 'after' ? 'shadow-[inset_0_-2px_0_0_theme(colors.indigo.400)]' : '',
         ].join(' ')}
       >
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={onToggle}
+          // A click on the box must not start a drag.
+          onPointerDown={(event) => event.stopPropagation()}
+          aria-label={`Move ${item.name} together with the other ticked pictures`}
+          className="h-3.5 w-3.5 shrink-0 accent-indigo-400"
+        />
         <span className="w-6 shrink-0 text-right tabular-nums text-zinc-600">{index + 1}</span>
         {/* Sized before it loads, like a tile: a list that reflows as thumbnails
             arrive is a list you cannot drop into. */}
@@ -673,7 +779,10 @@ const Row = memo(function Row({
       </li>
       {onDropAfterLast ? (
         <li
-          onDragOver={(event) => event.preventDefault()}
+          onDragOver={(event) => {
+            event.preventDefault()
+            onDragOverAfterLast?.()
+          }}
           onDrop={(event) => {
             event.preventDefault()
             onDropAfterLast()

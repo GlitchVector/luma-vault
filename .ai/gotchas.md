@@ -594,3 +594,13 @@ broke. The Rust checks are run by cargo directly, in their own job.
 **oxlint's `no-unassigned-import` is disabled for `**/main.tsx` via an override,
 not an inline comment.** The `// oxlint-disable-next-line` form did not take
 effect there; the config override does.
+
+## A Rust edit under `tauri dev` restarts the app and kills its children
+
+`pnpm dev:desktop` watches `apps/desktop/src`. Saving any Rust file there rebuilds the binary and
+relaunches the app; the Patreon client, a comic run and an upscale are child processes of the app
+and die with it, and nothing keeps their last error (2026-09-21: a Patreon post stopped at 23 of 87
+files at the moment `remote.rs` was saved). Before touching Rust while the owner's app is up, check
+`%LOCALAPPDATA%
+et.glitchvector.luma-vault\patreon\*.job.json` for a job with a fresh state
+file, and the comics panel for a run. Web edits are safe: Vite hot-reloads in place.

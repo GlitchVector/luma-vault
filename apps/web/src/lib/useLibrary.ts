@@ -150,30 +150,49 @@ export function useLibrary() {
     setSets(nextSets)
   }, [])
 
-  const runQuery = useCallback(async (next: MediaQuery, append: boolean) => {
+  /**
+   * `silent` is for a refresh of what is already on screen: the rows are
+   * replaced in place, so there is nothing to wait for and the loading state
+   * stays off. A filter change or a jump is not silent - the person asked for
+   * something new and the bar says it is on its way.
+   */
+  const runQuery = useCallback(async (next: MediaQuery, append: boolean, silent = false) => {
     const ticket = ++generation.current
-    if (!append) setLoading(true)
+    if (!append && !silent) setLoading(true)
 
     try {
       queryRef.current = next
-      const [page, nextCharacters, nextSets] = await Promise.all([
-        native.queryMedia(next),
-        // The leaderboard follows the grid's filters — except the search term.
-        // Clicking a character IS a search, so a leaderboard narrowed by it
-        // would collapse to that one name and there would be no way to hop to
-        // another character from the list that just navigated you here.
-        native.topCharacters({ ...next, search: '' }, 30),
-        // And the sets follow it minus the *sets*, for exactly the same reason
-        // one step further on: opening a set filters the grid to that run, and
-        // a list narrowed by it would collapse to the one run you are already
-        // looking at — leaving no way back to the others, and no way to see
-        // that the set you opened is one of five that day. Both fields: the
-        // grid reads `sets`, the deep link `set`, and the list collapsed again
-        // the day the grid switched (owner, 2026-09-21).
-        native.librarySets({ ...next, search: '', set: null, sets: [] }, null, 100),
-      ])
-      setCharacters(nextCharacters)
-      setSets(nextSets)
+      // The sidebar's two lists follow the same filters but are fetched beside
+      // the page, not in front of it: the grid shows the new rows the moment
+      // they arrive, and the leaderboard and the set list catch up on their
+      // own. Awaited together, a slow aggregate held a 100 ms page hostage and
+      // the filter looked as if it had done nothing (owner, 2026-09-21).
+      //
+      // The leaderboard follows the grid's filters — except the search term.
+      // Clicking a character IS a search, so a leaderboard narrowed by it
+      // would collapse to that one name and there would be no way to hop to
+      // another character from the list that just navigated you here.
+      void native
+        .topCharacters({ ...next, search: '' }, 30)
+        .then((nextCharacters) => {
+          if (ticket === generation.current) setCharacters(nextCharacters)
+        })
+        .catch(() => undefined)
+      // And the sets follow it minus the *sets*, for exactly the same reason
+      // one step further on: opening a set filters the grid to that run, and
+      // a list narrowed by it would collapse to the one run you are already
+      // looking at — leaving no way back to the others, and no way to see
+      // that the set you opened is one of five that day. Both fields: the
+      // grid reads `sets`, the deep link `set`, and the list collapsed again
+      // the day the grid switched (owner, 2026-09-21).
+      void native
+        .librarySets({ ...next, search: '', set: null, sets: [] }, null, 100)
+        .then((nextSets) => {
+          if (ticket === generation.current) setSets(nextSets)
+        })
+        .catch(() => undefined)
+
+      const page = await native.queryMedia(next)
       if (ticket !== generation.current) return
       setFailure(null)
       setItems((previous) => {
@@ -333,7 +352,11 @@ export function useLibrary() {
       // starts part-way down, and refetching from the top would swap the rows
       // under the person for the ones they jumped away from.
       const from = earliestRef.current
-      void runQuery({ ...previous, offset: from, limit: window }, false)
+      // Silent: a scan publishes progress four times a second and this runs
+      // on each; a loading bar on every tick would flicker through a whole
+      // classification (owner, 2026-09-21: the bar is for filtering and
+      // searching only).
+      void runQuery({ ...previous, offset: from, limit: window }, false, true)
       // Leave `offset` where the next append should continue from, which is the
       // end of the window just re-fetched — not the end of one page.
       return { ...previous, offset: Math.max(from, from + window - previous.limit) }
