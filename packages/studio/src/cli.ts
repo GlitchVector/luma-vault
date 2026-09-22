@@ -46,6 +46,7 @@ import {
   storyBrief,
 } from './briefs.ts'
 import { approve, pass, writeProposals } from './canon.ts'
+import { formatCharacters, listCharacters } from './characters.ts'
 import { assemble, render, type Task } from './context.ts'
 import { defaultExportDir, exportComic } from './export.ts'
 import { DIRECTOR_BRIEF, PATCH_JSON_SCHEMA, applyPatch, describe, lockPath, patchReplySchema } from './director.ts'
@@ -97,9 +98,10 @@ const { values, positionals } = parseArgs({
 
 function usage(): never {
   console.error(
-    `usage: studio <init|status|model|plan|context|character|comic|story|scene|panels|direct|lock|unlock|state|export|continuity|cliches> …
+    `usage: studio <init|status|characters|model|plan|context|character|comic|story|scene|panels|direct|lock|unlock|state|export|continuity|cliches> …
   init [root] [--no-ari]            character new <id> --name "…"
   status [comic]                    character next <id> [--force]   the wizard: next question, asked
+  characters                        who can be cast: canon developed AND a LoRA in the catalogue
   plan <character>                  character sheets <id> [--sheet <path>…]
   model                             which model answers, whether it can, and what it offers
   plan <character>                  character brainstorm <id> "<ask>" [--count N] [--explicit]
@@ -225,6 +227,10 @@ async function main(): Promise<void> {
     case 'status': {
       if (sub) console.log(formatStatus(comicStatus(studio, sub)))
       else console.log(overview(studio))
+      return
+    }
+    case 'characters': {
+      console.log(formatCharacters(listCharacters(studio)))
       return
     }
     case 'model': {

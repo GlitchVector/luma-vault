@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { facetAsk } from './briefs.ts'
+import { formatCharacters, listCharacters, lorasFor } from './characters.ts'
 import { proseFromStory } from './prose.ts'
 import { approve, parseProposals, pass, writeProposals } from './canon.ts'
 import { assemble, render } from './context.ts'
@@ -246,6 +247,35 @@ describe('context and status', () => {
   it('numbers the next scene and panel', () => {
     expect(nextId([], 'scene')).toBe('scene_001')
     expect(nextId(['panel_001', 'panel_017'], 'panel')).toBe('panel_018')
+  })
+})
+
+describe('castable characters', () => {
+  const loras = [
+    { name: 'ari_adopt_v4', trigger: 'ari', character: 'Ari', status: 'final' },
+    { name: 'celoracle_v3', trigger: 'celoracle', character: 'Celestial Oracle', status: 'wip' },
+  ] as never[]
+
+  it('finds a LoRA by trigger or by the character name slug', () => {
+    expect(lorasFor('ari', loras).map((l) => l.name)).toEqual(['ari_adopt_v4'])
+    expect(lorasFor('celestial-oracle', loras).map((l) => l.name)).toEqual(['celoracle_v3'])
+    expect(lorasFor('nobody', loras)).toEqual([])
+  })
+
+  it('is ready only with every facet developed and a LoRA', () => {
+    scaffoldCharacter(studio, 'ari', 'Ari')
+    scaffoldCharacter(studio, 'mira', 'Mira Solen')
+    const before = listCharacters(studio, loras)
+    expect(before.map((c) => [c.id, c.ready])).toEqual([['ari', false], ['mira', false]])
+    expect(before[0]!.facets.missing).toContain('personality')
+    expect(formatCharacters(before)).toContain('[ ] mira — Mira Solen: canon 0/10 (missing')
+    expect(formatCharacters(before)).toContain('no LoRA')
+    for (const facet of before[0]!.facets.missing) {
+      writeFileSync(join(root, 'characters', 'ari', `${facet}.md`), `# Ari — ${facet}\n\nSomething approved.\n`)
+    }
+    const after = listCharacters(studio, loras)
+    expect(after[0]!.ready).toBe(true)
+    expect(formatCharacters(after)).toContain('[x] ari — Ari: canon 10/10; ari_adopt_v4 [final]')
   })
 })
 

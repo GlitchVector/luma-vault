@@ -15,9 +15,18 @@ He gives one to three paragraphs (one is enough). If `/story` came with a comic 
 the seed; if it came with nothing, ask for the text in the chat — this is the one input that is his
 and it should be typed, not clicked.
 
-Then one `AskUserQuestion`, two questions: **who is in it** (the characters the studio has,
-`ls D:\Development\comic-studio\characters`, multi-select) and **how many pages** (2 / 4 / 6 / 8;
-three paragraphs each). A comic in the studio is created or reused for it:
+Then one `AskUserQuestion`, two questions: **who is in it** and **how many pages** (2 / 4 / 6 / 8;
+three paragraphs each). The cast options come from
+
+```
+pnpm studio characters
+```
+
+which lists every studio character with her canon count and her LoRAs, and ticks the ones that have
+BOTH a developed canon and a LoRA in the catalogue. Only the ticked ones are options, multi-select,
+with the LoRA name in the description. Say in the chat who was left out and why (canon missing which
+facets, or no LoRA), so a character he expected is a `/canon` or a training away, not a mystery. If
+nobody is ready, stop there and say so. A comic in the studio is created or reused for it:
 
 ```
 pnpm studio comic new <id> --title "<title>" --characters a,b
