@@ -27,6 +27,7 @@ Two documents sit beside this one and stay authoritative for their part:
 | owner references | `D:\AI\lora-train\sheets\<name>-refs-gen\` and `<name>-face-refs-gen\` (written by `pnpm refs collect`), older hand-made sets `sheets\<name>-refs*`, sheets `sheets\<name>-sheet-*.png` |
 | checks | `D:\AI\lora-train\check-crops.py` (flat panels, edge strips, skin saturation), `audit-frames.py` (tagger audit of candidates), `correct-skin.py`, `make-face-masks.py`, `crop-sheet.py`, `tag-dataset.py` |
 | tag checker | `scripts/check-tags.mjs <board-script.mjs>` in this repo |
+| epoch sweep | `pnpm lora sweep <name> --trigger <word> [--epochs 20,28,final]` (`scripts/lora.mjs`): the fixed 32-frame check per saved epoch on both checkpoints, frames in `D:\AI\lora-train\checks\<name>\`, sheets beside them; `pnpm lora status <name>` for what exists. Refuses while a trainer runs. `/lora` is the command that walks the whole line with the owner |
 | dataset viewer | the app's LoRAs page, "Training images" on a card: `lora_dataset` (`apps/desktop/src/lora.rs`) reads the dataset's `.toml` and shows every subset, repeat count and caption; the folder name per LoRA is `dataset` in `packages/core/src/loras.ts` |
 | tag vocabulary | `models/anime-tagger/selected_tags.csv` (the tagger's filtered list, so absence is not proof a word is inert; presence is proof it is a tag) |
 | reference generator | `openai-character-dataset/` (`pnpm refs init|generate|collect|status <name>`), key in the repo `.env` |
@@ -111,7 +112,8 @@ trains in between).
 11. **Final train**: rank 64 / alpha 32, ~28-30 epochs, TE lr 1e-4, undressed folders at repeats
     that put them near 15 % of an epoch. Forge OFF for the whole run.
 12. **Epoch sweep**: the same 32-frame check on the saved epoch files (e.g. 20 / 28 / final), both
-    checkpoints. Pick the file by the sheets, never by the loss and never by the final file alone.
+    checkpoints — `pnpm lora sweep <name> --trigger <word>`, which queues only missing frames and
+    drains until none are, then builds the sheets. Pick the file by the sheets, never by the loss and never by the final file alone.
 13. **The owner's verdict.** Then: copy the file into `models/Lora/final/` (the older versions to
     `wip/`), update the row in `docs/loras.md`, the entry in `packages/core/src/loras.ts`, commit and
     push with the work.
