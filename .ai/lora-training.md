@@ -344,3 +344,9 @@ trained and cost the owner nothing to shoot; say that in the same sentence as "t
   later character inherits (per-view backgrounds, a collarbone crop guard on all face views, explicit
   camera-angle wording), the set accepted in full, `prep-ari-gen.py` written (674 images per epoch,
   337 steps at batch 2). Training waits for the owner to free the GPU.
+- 2026-09-22: `ari_gen_v1` (30 epochs) and `ari_gen_v2` (same, every reference trimmed to the
+  figure) both hold identity on 32/32 and both lose the white shorts on 8-10 of the dressed frames at
+  every saved epoch (v2 sweep e20/e28/e30: 8/8/10 of 24, 1.2 always better than 1.0). Doubling the
+  figure's pixels changed nothing about the shorts, so the lever is the references' CONTENT (how
+  many views show the shorts clearly, front and side, against the undressed share), not their
+  scale - audit that before anything trains again (stop rule, §3).
