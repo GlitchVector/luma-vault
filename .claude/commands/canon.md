@@ -47,30 +47,52 @@ say I cannot see rather than filling in. `studio plan` lists the sheets so this 
 
 ## The loop
 
-1. **Show him where he is.** `studio plan <character>`, and if proposals are waiting, deal with those
-   before making more. A pile of unapproved brainstorms is the failure mode to avoid.
+Every choice he makes in this loop is a click, not typed numbers. `AskUserQuestion` is the way he
+picks; the chat is where the options are explained. Never make him open a file, and never make him
+type "1,5" when a checkbox would do.
+
+1. **Show him where he is.** `studio plan <character>`. If proposals are waiting, ask him what to do
+   with them before making more — one `AskUserQuestion`, options: pass the unpicked ones (they are
+   marked passed and stop counting as waiting), keep them open and ask anyway (`--force`), or go back
+   and choose from them now. A pile of unapproved brainstorms is the failure mode to avoid, and a
+   file he has already chosen from does not need `--force` every session.
 2. **Ask one narrow question.** `pnpm studio character next <id>` does the whole step: works out the
    next missing facet, picks an ask that has not been asked before, runs the brainstorm, and prints
-   the approve line. It refuses while proposals are waiting unless given `--force`, which is the
-   behaviour to want. Use `character brainstorm <id> "<ask>"` when he wants a question of his own
+   the approve line. Use `character brainstorm <id> "<ask>"` when he wants a question of his own
    instead. Never ask a whole facet at once: "how she behaves when embarrassed" gave four genuinely
    different answers, "tell me about her personality" gives mush.
-3. **Put the proposals in front of him.** Read the file and summarise each option in a line or two in
-   the chat — he should not have to open a file to choose. Say plainly when two options contradict
-   each other or contradict existing canon; the model will do that and it is the most useful thing to
+3. **Explain the proposals in the chat first.** Read the file and summarise each option in a line or
+   two — what it is, the line of hers that carries it. Say plainly when two options contradict each
+   other or contradict existing canon; the model will do that and it is the most useful thing to
    notice. A proposal in the file he already has reached for a bracelet and had to catch itself
-   against the bare-wrists rule in `appearance.md`.
-4. **He picks.** Numbers, or "none of these, ask again like this".
-5. **Approve exactly what he picked.**
+   against the bare-wrists rule in `appearance.md`. This paragraph is the reading; the question that
+   follows is only the picking.
+4. **Then let him click.** One `AskUserQuestion`, `multiSelect: true`, one option per proposal in
+   the file's numbering, label = `<n>. <title>`, description = one sentence, the tell or the line.
+   A question holds four options, so five proposals are two questions in the same call: the first
+   with 1–4, the second with 5 plus "none of these — ask it differently". Both are multi-select so
+   any combination is one click each. He can always type into "Other"; a typed "none, ask about X
+   instead" is a new ask, not a pick.
+5. **Approve exactly what he clicked.**
    `pnpm studio character approve <id> latest <n,n> --into <facet>`
-   It copies those items under a dated heading naming the brainstorm they came from and ticks them
-   off, so the same idea cannot be approved twice.
-6. **Back to 1.**
+   Quote the number list in PowerShell (`"1,5"`), or it splits into two arguments. It copies those
+   items under a dated heading naming the brainstorm they came from and ticks them off, so the same
+   idea cannot be approved twice. Options he did not click stay open in the file; do not pass them
+   for him.
+6. **Ask what next, the same way.** After the approval, `studio plan` again, then one
+   `AskUserQuestion`: the remaining asks of the facet he is in (one option each, so he can choose
+   depth), the next facet by name with its `because`, or stop here. The plan's own next step is the
+   first option and says "(Recommended)". If the facet has no asks left, the next facet is first.
+7. **Back to 2.**
 
 ## What to watch for
 
 - **Contradictions are information.** Canon is the authority. If a proposal fights `appearance.md` or
-  a rule in `world/rules.md`, say which and let him decide — never silently reconcile it.
+  a rule in `world/rules.md`, say which and let him decide — never silently reconcile it. Say it in
+  the chat before the question, and repeat it in that option's description, so it is in front of him
+  at the moment he clicks.
+- **A click is a pick, nothing more.** "All of them" clicked is a list and is approved as one;
+  "they're all good" typed is praise and gets the question again. Never approve from praise.
 ## The explicit facets
 
 `sexuality` and `boundaries` are marked `explicit` in `facets.ts`, and `character next` refuses to
