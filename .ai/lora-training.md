@@ -350,3 +350,8 @@ trained and cost the owner nothing to shoot; say that in the same sentence as "t
   figure's pixels changed nothing about the shorts, so the lever is the references' CONTENT (how
   many views show the shorts clearly, front and side, against the undressed share), not their
   scale - audit that before anything trains again (stop rule, §3).
+  Audited the same evening: the content difference to `ari_adopt_v4` is ONE caption word - v4 names
+  `white shorts` on every topless caption (the shorts vary inside the undressed folders, so §5 says
+  name them there), the gen line named them on none. `ari_gen_v3` = v2 + that word on the 42 topless
+  captions, nothing else (started 17:37). Until its sweep says otherwise, treat "the bottom is named
+  in every topless CAPTION" as part of the recipe, not only of the candidate render prompt.
