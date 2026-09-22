@@ -51,12 +51,27 @@ export const modelConfigSchema = z.object({
   temperature: z.number().min(0).max(2).default(0.9),
 })
 
+export type ModelConfig = z.infer<typeof modelConfigSchema>
+
 export const configSchema = z.object({
   model: modelConfigSchema.prefault({}),
+  /**
+   * The model for the facets marked `explicit` in `facets.ts`, when the
+   * everyday one refuses adult material. Two models rather than one because
+   * the everyday choice is the claude fallback — no key, no GPU, nothing
+   * leaves the machine — and only two facets need what it will not write.
+   * Unset means the everyday model takes everything.
+   */
+  explicit_model: modelConfigSchema.optional(),
   /** How many proposals a brainstorm asks for unless told otherwise. */
   proposals: z.number().int().min(1).max(20).default(5),
 })
 export type Config = z.infer<typeof configSchema>
+
+/** Which model answers a task: the explicit one when the task is explicit and one is configured. */
+export function modelConfigFor(config: Config, explicit: boolean): ModelConfig {
+  return explicit && config.explicit_model ? config.explicit_model : config.model
+}
 
 export interface Studio {
   root: string
@@ -127,7 +142,7 @@ export function initStudio(root: string): string[] {
     'studio.config.json',
     JSON.stringify(
       {
-        '//': 'The story model. openai-compatible reaches Ollama (http://127.0.0.1:11434/v1), LM Studio (http://127.0.0.1:1234/v1) or llama.cpp; claude-cli is the fallback and refuses explicit material.',
+        '//': 'The story model. claude-cli needs nothing installed and refuses explicit material; openai-compatible reaches Ollama (http://127.0.0.1:11434/v1), LM Studio (http://127.0.0.1:1234/v1), llama.cpp or a hosted service such as xAI (https://api.x.ai/v1, XAI_API_KEY). explicit_model, if set, answers only the facets marked explicit — sexuality and boundaries.',
         model: { backend: 'claude-cli', url: 'http://127.0.0.1:11434/v1', model: 'claude-opus-5', api_key_env: 'STUDIO_MODEL_KEY', temperature: 0.9 },
         proposals: 5,
       },

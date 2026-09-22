@@ -497,7 +497,11 @@ comics/<id>/       comic.yaml, concept/outline/story/continuity.md,
   `openai-compatible` (Ollama, LM Studio, llama.cpp: one URL, one model name)
   and `claude-cli` (tools off, no settings sources, no session; flattens the
   turns; refuses explicit material). A `ScriptedModel` for tests. JSON is
-  parsed leniently (`extractJson`). `studio.config.json` picks the backend.
+  parsed leniently (`extractJson`). `studio.config.json` picks the backend —
+  `model` for everything, an optional `explicit_model` for the facets marked
+  `explicit` in `facets.ts` and for `--explicit` brainstorms, so the
+  everyday model can be the claude fallback and only `sexuality` and
+  `boundaries` leave for a model that does not refuse them.
 - **Context assembly** (`context.ts`): a table per task kind — which
   character files, which comic docs, the scene, the previous three panels —
   and stubs ("_Nothing established yet_") are skipped so the model is never

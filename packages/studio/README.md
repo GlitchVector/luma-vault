@@ -40,13 +40,22 @@ else. Her personality starts empty, on purpose.
 `studio.config.json`:
 
 ```json
-{ "model": { "backend": "openai-compatible", "url": "http://127.0.0.1:11434/v1", "model": "…" } }
+{
+  "model": { "backend": "claude-cli", "model": "claude-opus-5" },
+  "explicit_model": { "backend": "openai-compatible", "url": "https://api.x.ai/v1", "model": "grok-4.7", "api_key_env": "XAI_API_KEY" }
+}
 ```
 
-`openai-compatible` is Ollama, LM Studio or llama.cpp; the local,
-uncensored model the plan calls for. `claude-cli` uses the claude CLI on this
-machine and is the fallback: it works today without installing anything,
-and it refuses explicit material.
+Two models, because the facets split that way. `model` answers everything:
+`claude-cli` uses the claude CLI on this machine, works without installing
+anything, sends nothing to a third party — and refuses explicit material.
+`explicit_model`, if set, answers only the facets marked `explicit` in
+`facets.ts` (`sexuality`, `boundaries`) and any brainstorm given
+`--explicit`. `openai-compatible` there is Ollama, LM Studio or llama.cpp
+for a local uncensored model, or a hosted service that speaks the same
+protocol — xAI is `https://api.x.ai/v1` with `XAI_API_KEY` in the repo
+`.env`. Unset, the everyday model takes the explicit facets too, and
+`character next` refuses them when that model is `claude-cli`.
 
 The model's memory is never the source of truth. Every call is assembled
 from files (`pnpm studio context <task> …` prints exactly what it sees), and

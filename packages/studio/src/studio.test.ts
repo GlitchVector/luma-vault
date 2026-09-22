@@ -6,7 +6,7 @@ import { approve, parseProposals, pass, writeProposals } from './canon.ts'
 import { assemble, render } from './context.ts'
 import { applyPatch, describe as describePatch, lockPath, patchReplySchema } from './director.ts'
 import { extractJson } from './model/model.ts'
-import { initStudio, openStudio, scaffoldCharacter, validId, type Studio } from './root.ts'
+import { configSchema, initStudio, modelConfigFor, openStudio, scaffoldCharacter, validId, type Studio } from './root.ts'
 import { seedAri } from './seed-ari.ts'
 import { nextId, panelSchema, readPanel, writeComic, writePanel, writeScene } from './spec.ts'
 import { comicStatus, formatStatus } from './status.ts'
@@ -76,6 +76,15 @@ describe('proposals and canon', () => {
     expect(() => approve(studio, { character: 'ari' }, 'latest', [1], 'humor')).toThrow(/already approved/)
     pass(studio, { character: 'ari' }, 'latest', [2])
     expect(parseProposals(path).proposals.map((p) => p.state)).toEqual(['approved', 'passed', 'approved'])
+  })
+
+  it('routes only explicit tasks to the explicit model, and only when one is set', () => {
+    const grok = { backend: 'openai-compatible' as const, url: 'https://api.x.ai/v1', model: 'grok-4.7', api_key_env: 'XAI_API_KEY', temperature: 0.9 }
+    const both = configSchema.parse({ model: { backend: 'claude-cli' }, explicit_model: grok })
+    expect(modelConfigFor(both, false).backend).toBe('claude-cli')
+    expect(modelConfigFor(both, true).model).toBe('grok-4.7')
+    const one = configSchema.parse({ model: { backend: 'claude-cli' } })
+    expect(modelConfigFor(one, true).backend).toBe('claude-cli')
   })
 
   it('refuses a canon file that is not one', () => {

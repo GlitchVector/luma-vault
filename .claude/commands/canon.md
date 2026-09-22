@@ -92,15 +92,18 @@ the model proposes about what the book will not do is a question for him, not an
 - **Thin is not done.** `studio plan` marks a facet done as soon as it holds anything. If a facet has
   one approved item and he wants depth, ask the remaining asks for that facet rather than moving on.
 - **Nothing here needs the GPU** except the model answering. If a training is running, a local model
-  cannot load; say so rather than waiting, and offer the claude fallback, which refuses explicit
-  material and so is only useful for the non-explicit facets.
+  cannot load; say so rather than waiting. The everyday facets still work through `claude-cli`; the
+  explicit ones wait, or go to Grok if he says so.
 
 ## The model
 
 `pnpm studio model` says which one answers, whether it can, and what the service offers. Run it
 before a long session rather than finding out through a failed brainstorm.
 
-`studio.config.json` in the studio root picks it. Three shapes, all the same backend:
+`studio.config.json` in the studio root picks two: `model` answers everything, `explicit_model`
+answers only the facets marked `explicit` in `facets.ts` and any brainstorm run with `--explicit`.
+The owner's rule (2026-09-22): the everyday model is `claude-cli`, and only the delicate facets go
+out to Grok. Do not route an ordinary facet through the explicit model to get a better answer.
 
 | | url | model | key |
 |---|---|---|---|
@@ -110,7 +113,7 @@ before a long session rather than finding out through a failed brainstorm.
 
 `wizard-vicuna-uncensored:30b` was measured to comply with explicit material where
 `mistral-small:24b` refused outright; `dolphin-mistral` is the small fast one. The claude fallback
-refuses explicit material, so it is only useful for the non-explicit facets.
+refuses explicit material, so it can only ever be `model`, never `explicit_model`.
 
 **Local versus hosted is a real choice, not a preference.** Local costs nothing per call, needs the
 GPU free, and nothing leaves the machine. A hosted model writes better and is available while the
