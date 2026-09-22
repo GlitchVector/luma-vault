@@ -114,8 +114,14 @@ the model proposes about what the book will not do is a question for him, not an
 
 - **`sexuality` reads as a checklist until the rest of her exists.** That is why it sits late in the
   order. Do not pull it forward because it is the interesting one.
-- **Thin is not done.** `studio plan` marks a facet done as soon as it holds anything. If a facet has
-  one approved item and he wants depth, ask the remaining asks for that facet rather than moving on.
+- **Thin is not done.** `studio plan` marks a facet done as soon as it holds anything, and
+  `character next` then skips to the next EMPTY facet — it will never ask the remaining asks of a
+  started facet. For those, run `character brainstorm <id> "<ask>"` with the ask's exact wording
+  from `facets.ts` (and `--explicit` for an explicit facet), so the proposals file is titled the same
+  way and `plan` can see it was asked.
+- **His own words are canon without a proposal.** When he answers a question with a fact instead of a
+  number ("grown up on an old farm…"), write it into the facet under `## Author <date>` in his words,
+  then brainstorm on top of it if he wants more; the model reads it as canon from then on.
 - **Nothing here needs the GPU** except the model answering. If a training is running, a local model
   cannot load; say so rather than waiting. The everyday facets still work through `claude-cli`; the
   explicit ones wait, or go to Grok if he says so.
