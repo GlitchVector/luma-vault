@@ -104,9 +104,9 @@ export const STEPS: readonly Step[] = [
     explicit: true,
     because: 'it reads as hers once the rest of her exists, and as a checklist before',
     asks: [
-      'what she wants, in her own terms, and how directly she is able to say it',
-      'what she is like in the first five minutes with someone new, versus with someone she trusts',
-      'the gap between what she initiates and what she waits to be offered',
+      'what she wants in bed, in her own terms, and how directly she is able to say it',
+      'what she is like in bed in the first five minutes with someone new, versus with someone she trusts',
+      'in sex, the gap between what she initiates and what she waits to be offered',
     ],
   },
   {

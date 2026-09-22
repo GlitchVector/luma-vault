@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { facetAsk } from './briefs.ts'
 import { approve, parseProposals, pass, writeProposals } from './canon.ts'
 import { assemble, render } from './context.ts'
 import { applyPatch, describe as describePatch, lockPath, patchReplySchema } from './director.ts'
@@ -76,6 +77,14 @@ describe('proposals and canon', () => {
     expect(() => approve(studio, { character: 'ari' }, 'latest', [1], 'humor')).toThrow(/already approved/)
     pass(studio, { character: 'ari' }, 'latest', [2])
     expect(parseProposals(path).proposals.map((p) => p.state)).toEqual(['approved', 'passed', 'approved'])
+  })
+
+  it('tells the model which facet an ask develops, and says so when it is explicit', () => {
+    const plain = facetAsk('speech', 'How she talks.', 'her rhythm', false)
+    expect(plain).toBe('Facet being developed: speech — How she talks.\n\nAsk: her rhythm')
+    const explicit = facetAsk('sexuality', 'What she wants.', 'what she wants in bed', true)
+    expect(explicit).toContain('adult comic')
+    expect(explicit).toMatch(/Ask: what she wants in bed$/)
   })
 
   it('routes only explicit tasks to the explicit model, and only when one is set', () => {

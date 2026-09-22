@@ -39,6 +39,7 @@ import {
   PROPOSALS_JSON_SCHEMA,
   SCENE_JSON_SCHEMA,
   characterBrief,
+  facetAsk,
   panelsBrief,
   sceneBrief,
   storyBrief,
@@ -52,7 +53,7 @@ import { extractJson, type StoryModel } from './model/model.ts'
 import { OpenAiCompatibleModel } from './model/openai-compatible.ts'
 import { formatPlan, nextAsk, openProposals, plan } from './plan.ts'
 import { addSheets, listSheets } from './sheets.ts'
-import { assertId, comicDir, initStudio, modelConfigFor, openStudio, resolveUserPath, scaffoldCharacter, studioRoot, writeText, type ModelConfig, type Studio } from './root.ts'
+import { FACET_HINTS, assertId, comicDir, initStudio, modelConfigFor, openStudio, resolveUserPath, scaffoldCharacter, studioRoot, writeText, type ModelConfig, type Studio } from './root.ts'
 import { seedAri } from './seed-ari.ts'
 import {
   PANEL_STATES,
@@ -320,7 +321,8 @@ async function main(): Promise<void> {
           }
           const n = count(studio)
           console.log(`${step.facet} — ${step.ask}\n`)
-          const reply = await ask(studio, { kind: 'character.brainstorm', character: id }, characterBrief(id, n), step.ask, PROPOSALS_JSON_SCHEMA(n), proposalsSchema, explicit)
+          const question = facetAsk(step.facet, FACET_HINTS[step.facet], step.ask, explicit)
+          const reply = await ask(studio, { kind: 'character.brainstorm', character: id }, characterBrief(id, n), question, PROPOSALS_JSON_SCHEMA(n), proposalsSchema, explicit)
           const path = writeProposals(studio, { character: id }, step.ask, reply.proposals)
           console.log(`${reply.proposals.length} proposals → ${path}\n`)
           reply.proposals.forEach((p, i) => console.log(`${i + 1}. ${p.title}\n   ${p.text.replace(/\n/g, '\n   ')}\n`))

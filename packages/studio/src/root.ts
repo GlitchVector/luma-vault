@@ -40,6 +40,28 @@ export const CHARACTER_FILES = [
 ] as const
 export type CharacterFile = (typeof CHARACTER_FILES)[number]
 
+/**
+ * One line per facet: the stub each file starts with, and what the wizard
+ * tells the model it is developing. The model was never told the facet; asked
+ * "what she wants, in her own terms" for `sexuality` it answered about work,
+ * the Sunday call and a broken toaster, all in canon and none of it the
+ * question.
+ */
+export const FACET_HINTS: Record<CharacterFile, string> = {
+  core: 'Who she is in three lines: name, age, what she does, what the comic needs her for.',
+  appearance: 'Face, body, hair, the details a render must get right.',
+  personality: 'Strengths, flaws, contradictions, how she behaves under stress, embarrassed, attracted, angry.',
+  history: 'Origin, childhood, the experiences that made her.',
+  interests: 'Hobbies, habits, what she reads, eats, avoids.',
+  relationships: 'Who matters to her and how she behaves with each.',
+  sexuality: 'Attraction, preferences, behaviour, what she wants and does not.',
+  humor: 'What she finds funny, how she jokes, when she cannot.',
+  speech: 'How she talks: rhythm, vocabulary, what she never says.',
+  boundaries: 'What she will not do, and what this studio will not write about her.',
+  outfits: 'Index of `outfits/*.yaml`, one per persistent outfit.',
+  current_state: 'Where she is in her life right now, updated as comics happen.',
+}
+
 export const modelConfigSchema = z.object({
   /** `openai-compatible` speaks to Ollama, LM Studio and llama.cpp alike;
    *  `claude-cli` is the fallback on a machine without a local model. */
@@ -186,21 +208,7 @@ export function scaffoldCharacter(studio: Studio, id: string, name: string): str
   const put = (file: string, text: string) => {
     if (seed(join(dir, file), text)) made.push(join('characters', id, file))
   }
-  const hints: Record<CharacterFile, string> = {
-    core: 'Who she is in three lines: name, age, what she does, what the comic needs her for.',
-    appearance: 'Face, body, hair, the details a render must get right.',
-    personality: 'Strengths, flaws, contradictions, how she behaves under stress, embarrassed, attracted, angry.',
-    history: 'Origin, childhood, the experiences that made her.',
-    interests: 'Hobbies, habits, what she reads, eats, avoids.',
-    relationships: 'Who matters to her and how she behaves with each.',
-    sexuality: 'Attraction, preferences, behaviour, what she wants and does not.',
-    humor: 'What she finds funny, how she jokes, when she cannot.',
-    speech: 'How she talks: rhythm, vocabulary, what she never says.',
-    boundaries: 'What she will not do, and what this studio will not write about her.',
-    outfits: 'Index of `outfits/*.yaml`, one per persistent outfit.',
-    current_state: 'Where she is in her life right now, updated as comics happen.',
-  }
-  for (const file of CHARACTER_FILES) put(`${file}.md`, stub(`${name} — ${file.replace('_', ' ')}`, hints[file]))
+  for (const file of CHARACTER_FILES) put(`${file}.md`, stub(`${name} — ${file.replace('_', ' ')}`, FACET_HINTS[file]))
   mkdirSync(join(dir, 'proposals'), { recursive: true })
   mkdirSync(join(dir, 'outfits'), { recursive: true })
   return made

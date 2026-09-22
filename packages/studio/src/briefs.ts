@@ -35,6 +35,19 @@ Propose ${count} distinct, specific possibilities for what the author asks about
 Do not write a biography. Do not decide anything: the author picks what becomes canon. "title" is a short label; "text" is one or two paragraphs.`
 }
 
+/**
+ * The user turn for a facet's ask. Naming the facet is what keeps the model on
+ * the question; the canon in context pulls hard toward what already exists.
+ * For an explicit facet it also says what kind of book this is, so the model
+ * does not answer a tamer neighbouring question instead.
+ */
+export function facetAsk(facet: string, hint: string, ask: string, explicit: boolean): string {
+  const adult = explicit
+    ? '\nThis is an adult comic and she is an adult. The facet is about sex: answer that question, frankly and explicitly, in her register — not a tamer question next to it.'
+    : ''
+  return `Facet being developed: ${facet} — ${hint}${adult}\n\nAsk: ${ask}`
+}
+
 export function storyBrief(comic: string, count: number): string {
   return `You are a creative collaborator on the comic "${comic}". The context shows the world, the cast's voices, and the story so far; treat all of it as fixed.
 
