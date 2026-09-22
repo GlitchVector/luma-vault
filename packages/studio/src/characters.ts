@@ -37,8 +37,10 @@ export function lorasFor(id: string, entries: readonly LoraEntry[] = CUSTOM_LORA
 function nameOf(studio: Studio, id: string): string {
   const core = join(characterDir(studio, id), 'core.md')
   if (!existsSync(core)) return id
-  const line = readFileSync(core, 'utf8').match(/^- Name: ([^(\n]+)/m)?.[1]
-  return line?.trim() ?? id
+  const text = readFileSync(core, 'utf8')
+  // The seeded core has a "- Name:" line; a scaffolded one only its title.
+  const name = text.match(/^- Name: ([^(\n]+)/m)?.[1] ?? text.match(/^# (.+?) — core/m)?.[1]
+  return name?.trim() ?? id
 }
 
 export function listCharacters(studio: Studio, entries: readonly LoraEntry[] = CUSTOM_LORAS): Castable[] {
