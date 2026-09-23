@@ -39,6 +39,17 @@ Open the source image. Derive from it, and write into `characters/<name>/charact
 Ask the owner only when the image genuinely does not show something the LoRA will need (the back of a
 one-view sheet, for example) — then say exactly which extra view he should supply.
 
+## 1b. A sheet as the reference: cut it first
+
+A full sheet goes into the generator whole - title, labels, palette, detail panels and any WRONG panel
+with it. Cut the figure panels out with `python scripts/cut-sheet.py <sheet> <out.png> --cuts ... --keep
+...` (from `openai-character-dataset/`; the classifier venv has numpy and Pillow) and use the composite as
+the reference. Two rules, both paid for on 2026-09-23: **nothing is mirrored** (a mirrored 3/4 fixed the
+strap's side and moved the badge to the wrong breast for a day of renders) and **a wrong panel is left
+out**, not fixed - the description then says what that view would have shown (the boot backs, the
+strap's ring). Front, side and back are enough; the text carries the three-quarter poses. Send the
+composite and the single panels to the owner before the dry run.
+
 ## 2. Dry-run, then show the plan
 
 `pnpm refs generate <name> --dry-run` prints every request without sending one. Read it: the description
