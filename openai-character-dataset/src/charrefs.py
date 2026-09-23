@@ -129,6 +129,38 @@ def render_alternative(client, character: Character, view: View, template: str, 
                 time.sleep(s.transient_wait_seconds)
 
 
+def render_sheet(character: Character, middle: View, right: View, client, present: list[Path], log) -> list | None:
+    """One three-figure sheet (front anchor, middle, right), cut into its figures, or None when it stays open."""
+    s = character.settings
+    template = SHEET_TEMPLATE.read_text(encoding="utf-8").strip()
+    base = global_prompt(character, template, middle.background).replace("{middle}", middle.prompt).replace("{right}", right.prompt)
+    refusals = transient = attempt = 0
+    while True:
+        if refusals >= s.retry_cap or transient >= s.transient_cap:
+            log.warning("    sheet %s OPEN - refused %d, service errors %d", middle.key, refusals, transient)
+            return None
+        attempt += 1
+        rewordings = s.refusal_rewordings
+        extra = rewordings[(attempt - 1) % len(rewordings)] if attempt > 1 else ""
+        prompt = base if not extra else f"{base}\n\n{extra}"
+        try:
+            data = client.edit_with_references(prompt, present, model=s.model, size=SHEET_SIZE, quality=s.quality, output_format=s.output_format, input_fidelity=s.input_fidelity)
+            sheets_dir = character.out_dir / "sheets"
+            sheets_dir.mkdir(parents=True, exist_ok=True)
+            write_image_bytes(sheets_dir / f"{middle.id}-alt-{new_stamp()}.{s.output_format}", data)
+            return split_sheet(data)
+        except ImageClientError as exc:
+            if exc.kind == "moderation":
+                refusals += 1
+                log.info("    sheet %s refused (%d/%d) - rewording", middle.key, refusals, s.retry_cap)
+            elif exc.kind in ("auth", "billing", "bad_request"):
+                raise
+            else:
+                transient += 1
+                log.warning("    sheet %s [%s] (%d/%d): %s", middle.key, exc.kind, transient, s.transient_cap, str(exc).splitlines()[0][:160])
+                time.sleep(s.transient_wait_seconds)
+
+
 def cmd_variants(args: argparse.Namespace, log) -> int:
     """`--variants N`: N alternatives of each selected view, beside the original, for the owner to choose from."""
     character = load_character(args.name)
@@ -161,6 +193,33 @@ def cmd_variants(args: argparse.Namespace, log) -> int:
         view = by_key[key]
         entry = state["views"].setdefault(key, {"status": "pending", "attempts": 0, "refusals": 0, "transient": 0})
         alternatives = entry.setdefault("alternatives", [])
+        if getattr(args, "sheet", False) and view.kind in SHEET_KINDS:
+            # Two takes of the view as the middle and right figure of one sheet: the gate passes a
+            # sheet where it refuses the single figure, and one request buys both alternatives.
+            hints = character.settings.variation_hints if args.vary else []
+            takes = [
+                View(kind=view.kind, id=view.id, prompt=f"{view.prompt} {hints[i % len(hints)]}" if hints else view.prompt, tags=view.tags, background=view.background)
+                for i in range(2)
+            ]
+            started = time.time()
+            present, _ = validate_reference_images(character)
+            try:
+                figures = render_sheet(character, takes[0], takes[1], client, present, log)
+            except ImageClientError as exc:
+                log.error("    [%s] %s", exc.kind, exc)
+                break
+            if figures is None:
+                continue
+            for n, fig in enumerate(figures[1:3], start=1):
+                output = character.out_dir / f"{view.kind}-{view.id}-alt{stamp}-{n}.{character.settings.output_format}"
+                saved = write_image_bytes(output, to_png_bytes(fig))
+                alternatives.append(saved.name)
+                made += 1
+                if args.vault:
+                    file_into_vault(character, saved, stamp=state["stamp"], label=f"{character.name} {view.kind} · {view.id} · {view.tags} (alternative {n})")
+            write_state(character, state)
+            log.info("%s 2 alternatives from one sheet ok (%d s)", key, int(time.time() - started))
+            continue
         for n in range(1, args.variants + 1):
             output = character.out_dir / f"{view.kind}-{view.id}-alt{stamp}-{n}.{character.settings.output_format}"
             started = time.time()

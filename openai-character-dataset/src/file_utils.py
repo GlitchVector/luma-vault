@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import urllib.request
 from datetime import datetime
@@ -217,6 +218,12 @@ def sheet_dir(character: Character, kind: str) -> Path:
     return character.settings.sheets_dir / SHEET_FOLDERS[kind].format(name=slug(character.name))
 
 
+def vault_stars(starred: dict[str, int], character: Character, name: str) -> int:
+    stem, suffix = Path(name).stem, Path(name).suffix
+    pattern = re.compile(rf"^refgen-{re.escape(slug(character.name))}-{re.escape(stem)}(-r\d+)?{re.escape(suffix)}$")
+    return max((stars for vault_name, stars in starred.items() if pattern.match(vault_name)), default=0)
+
+
 def collect_into_sheets(character: Character, state: dict, *, accept_all: bool = False) -> tuple[dict[str, int], list[str]]:
     """Copy the acknowledged, generated views into the training sheet folders. Returns (count per kind, not-collected).
 
@@ -237,7 +244,8 @@ def collect_into_sheets(character: Character, state: dict, *, accept_all: bool =
             continue
         # The original and its re-rolled alternatives compete for the one star; whichever carries it is the view.
         candidates = [Path(entry["file"]).name] + [Path(name).name for name in entry.get("alternatives", [])]
-        stars = {name: starred.get(f"refgen-{slug(character.name)}-{name}", 0) for name in candidates}
+        # A copy re-filed by `refresh` carries an `-rN` suffix in the vault; the stars sit on that name.
+        stars = {name: vault_stars(starred, character, name) for name in candidates}
         # A pick the owner said in words is recorded as `chosen` on the view and outranks the stars.
         chosen = [entry["chosen"]] if entry.get("chosen") in candidates else [name for name in candidates if stars[name] > REJECTED]
         if accept_all:
