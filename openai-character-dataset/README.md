@@ -15,9 +15,9 @@ This is the single implementation. Every part exists once:
 | Part | Where |
 |---|---|
 | shared settings (model, quality, sizes, retry cap, vault) | `config/defaults.json`, overridable by env |
-| the view library: 22 body + 13 face views, each with the image-model prompt AND the caption tags | `config/views.json` |
+| the view library: 22 body, 6 cowboy, 8 upper-body and 13 face views, each with the image-model prompt AND the caption tags | `config/views.json` |
 | the prompt template both layers are built from | `prompts/global_dataset_prompt.txt` |
-| one character: description, audit list, references, view selection, overrides | `characters/<name>/character.json` |
+| one character: description, audit list, references, view selection, her garment close-ups (`details`), overrides | `characters/<name>/character.json` |
 | the CLI: `init`, `generate`, `collect`, `status` | `src/charrefs.py` |
 
 ## Setup
@@ -38,6 +38,10 @@ never committed. From the repository root, `pnpm refs <subcommand> <name>` runs 
    and copies the image beside it. Fill `description` (who she is, every garment and
    accessory, and what she does not have) and `audit` (what every generated frame is
    checked against, physics first) from the image. Nothing renders while either is empty.
+   Then `details`: one close-up per small part of the outfit that a full-body frame holds
+   at a tenth of the frame (shorts, a collar, cuffs, shoes, a belt), each with a prompt
+   that frames that part large and caption `tags` that name only the framing (`lower body`,
+   `close-up`, `feet`), never the garment. Ari's file is the worked example.
 2. `pnpm refs generate <name> --dry-run` prints every request in full and sends nothing:
    model, size, quality, the call, the references, the output path, the caption tags and
    the final prompt. Check the count and the description, then decide.
@@ -48,22 +52,41 @@ never committed. From the repository root, `pnpm refs <subcommand> <name>` runs 
    vault takes the slug). One failing view never stops the batch; an authentication or
    billing error does.
 4. Star the correct frames in the vault.
-5. `pnpm refs collect <name>` copies the starred frames into
-   `D:\AI\lora-train\sheets\<name>-refs-gen\` and `<name>-face-refs-gen\`, a `.tags.txt`
-   beside each with the caption for that view, and names every view still open or
-   unstarred. `generate <name> --only body/05-back --redo` fills a gap.
+   A view the owner marks with one star is re-rolled: `pnpm refs generate <name> --only <views>
+   --variants 3 --vault` renders three alternatives of each, filed beside the original in the
+   same set. His star scale on a review set: ONE star means "reject / re-roll this", two or
+   more means "this one"; `collect` takes the one at two or more and skips the rejected.
+5. `pnpm refs collect <name>` copies the starred frames into one folder per kind under
+   `D:\AI\lora-train\sheets\`: `<name>-refs-gen\` (body), `<name>-cowboy-refs-gen\`,
+   `<name>-upper-refs-gen\`, `<name>-face-refs-gen\` and `<name>-detail-refs-gen\`, a
+   `.tags.txt` beside each with the caption for that view, and names every view still open
+   or unstarred. `generate <name> --only body/05-back --redo` fills a gap.
 
 `pnpm refs status <name>` shows done / open / pending and the review set link.
 
 ## Settings
 
-`config/defaults.json` holds the model (`gpt-image-2.5-sunburst`), quality (`high`), the
-body and face sizes, `dry_run`, the retry caps, the rewordings used on refusal, and the
+`config/defaults.json` holds the model (`gpt-image-2.5-sunburst`), quality (`high`), one
+size per view kind (body and cowboy 1024x1536, the rest 1024x1024), `dry_run`, the retry caps, the rewordings used on refusal, and the
 vault paths. Environment overrides: `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_QUALITY`,
 `OPENAI_OUTPUT_FORMAT`, `OPENAI_IMAGE_SIZE` (body views), `LUMA_VAULT_OUTDIR`, `LUMA_RPC`.
 A character may override any setting under its own `"settings"`. The installed SDK
 accepts qualities `low`, `medium`, `high`, `xhigh`, `max`, `auto`; unknown values are
 passed through with a warning so a newer service value still works.
+
+## Why five kinds of view
+
+Every framing a board renders at is generated at its own scale, so nothing the LoRA is
+asked for is only ever seen cut out of a full-body frame at a fraction of the pixels.
+Three Ari trainings (2026-09-21 to 23) located every remaining fault in exactly that:
+
+| kind | what it is for | the fault it answers |
+|---|---|---|
+| `body` | the outfit's colour layout, every angle | - |
+| `cowboy` | head to mid-thigh, native | cowboy crops cut from body frames held the shorts at half the pixels |
+| `upper` | head to waistband, native | the top's torso went white on cowboy and face crops |
+| `face` | head and shoulders WITH the neckline and collar in frame | faces cut at the collarbone taught a strapless top on every face crop |
+| `detail` | per character: each small garment, large | the white shorts recoloured on 8-10 of 32 check frames |
 
 ## Dry run and billing
 

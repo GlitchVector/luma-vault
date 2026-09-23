@@ -6,7 +6,10 @@
   "input_fidelity": "high",
   "size": {
     "body": "1024x1536",
-    "face": "1024x1024"
+    "cowboy": "1024x1536",
+    "upper": "1024x1024",
+    "face": "1024x1024",
+    "detail": "1024x1024"
   },
   "dry_run": true,
   "retry_cap": 30,
@@ -20,5 +23,10 @@
   "vault_outdir": "//jebpot/devs/AI/Stable Diffusion/outputs/txt2img-images",
   "vault_rpc": "http://127.0.0.1:7870/luma/v1/rpc",
   "vault_link": "http://192.168.1.160:7870/?set=",
-  "sheets_dir": "D:/AI/lora-train/sheets"
+  "sheets_dir": "D:/AI/lora-train/sheets",
+  "variation_hints": [
+    "Variation: her weight is on the leg nearer the camera, the hip pushed slightly toward it, camera a little below her waist looking up.",
+    "Variation: her body turned about 15 degrees further toward the camera than a strict profile, camera at chest height.",
+    "Variation: her body turned about 15 degrees further away from the camera than a strict profile, weight on the far leg, camera at waist height."
+  ]
 }

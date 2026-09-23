@@ -19,9 +19,9 @@ PURPOSE: a machine-learning dataset image (LoRA training). Maximise usefulness f
 REQUIREMENTS:
 - exactly one character, redrawn as a SINGLE standalone illustration; the reference may be a character sheet, the output never is
 - no sheet layout, no panels, no colour swatches, no labels, no multiple views in one image
-- clean composition, the whole figure clearly readable
+- clean composition, everything the view asks for clearly readable and large in the frame
 - full body visible unless the view says otherwise: the entire head and both entire feet inside the frame, with margin
-- no cropping of any important anatomy
+- the view decides the framing: a head-and-shoulders, upper-body, cowboy or garment close-up view is cropped exactly where it says and nowhere else
 - neutral studio-style presentation
 - {background}
 - no text, no captions, no labels, no watermark

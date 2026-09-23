@@ -39,9 +39,15 @@ class ConfigError(Exception):
     """A configuration problem the person can fix; the message says how."""
 
 
+# Every framing the LoRA is rendered at, so every framing is trained at its own scale rather than cut out of a
+# full-body frame at a fraction of the pixels. `detail` views are per character (garment close-ups) and live in
+# character.json rather than the library.
+VIEW_KINDS = ("body", "cowboy", "upper", "face", "detail")
+
+
 @dataclass(frozen=True)
 class View:
-    kind: str  # "body" | "face"
+    kind: str  # one of VIEW_KINDS
     id: str
     prompt: str
     tags: str
@@ -66,6 +72,7 @@ class Settings:
     transient_cap: int
     transient_wait_seconds: float
     refusal_rewordings: list[str]
+    variation_hints: list[str]
     vault_outdir: str
     vault_rpc: str
     vault_link: str
@@ -110,9 +117,11 @@ def _read_json(path: Path) -> dict:
 def load_views(path: Path = CONFIG_DIR / "views.json") -> list[View]:
     raw = _read_json(path)
     views: list[View] = []
-    for kind in ("body", "face"):
+    for kind in VIEW_KINDS:
         items = raw.get(kind)
-        if not isinstance(items, list) or not items:
+        if items is None and kind == "detail":
+            continue
+        if not isinstance(items, list) or (not items and kind != "detail"):
             raise ConfigError(f'views file needs a non-empty "{kind}" list: {path}')
         seen: set[str] = set()
         for index, item in enumerate(items):
@@ -131,7 +140,11 @@ def load_settings(overrides_from_character: dict | None = None, path: Path = CON
     raw = _read_json(path)
     merged = {key: value for key, value in raw.items() if not key.startswith("_")}
     for key, value in (overrides_from_character or {}).items():
-        merged[key] = value
+        # A character that overrides one size keeps the defaults for the other kinds.
+        if key == "size" and isinstance(value, dict) and isinstance(merged.get("size"), dict):
+            merged["size"] = {**merged["size"], **value}
+        else:
+            merged[key] = value
     applied: dict[str, str] = {}
     for key, env_name in ENV_OVERRIDES.items():
         value = os.environ.get(env_name)
@@ -150,8 +163,8 @@ def load_settings(overrides_from_character: dict | None = None, path: Path = CON
     for key in ("model", "quality", "output_format", "input_fidelity", "vault_outdir", "vault_rpc", "vault_link", "sheets_dir"):
         if not isinstance(merged[key], str) or not merged[key].strip():
             raise ConfigError(f'setting "{key}" must be a non-empty string')
-    if not isinstance(merged["size"], dict) or not all(isinstance(merged["size"].get(k), str) for k in ("body", "face")):
-        raise ConfigError('setting "size" must be an object with "body" and "face" strings')
+    if not isinstance(merged["size"], dict) or not all(isinstance(merged["size"].get(k), str) for k in VIEW_KINDS):
+        raise ConfigError(f'setting "size" must be an object with a string for each of {", ".join(VIEW_KINDS)}')
     if not isinstance(merged["dry_run"], bool):
         raise ConfigError('setting "dry_run" must be true or false')
     if not isinstance(merged["refusal_rewordings"], list) or not merged["refusal_rewordings"]:
@@ -178,6 +191,7 @@ def load_settings(overrides_from_character: dict | None = None, path: Path = CON
         transient_cap=int(merged["transient_cap"]),
         transient_wait_seconds=float(merged["transient_wait_seconds"]),
         refusal_rewordings=[str(item) for item in merged["refusal_rewordings"]],
+        variation_hints=[str(item) for item in merged.get("variation_hints", [])],
         vault_outdir=merged["vault_outdir"],
         vault_rpc=merged["vault_rpc"],
         vault_link=merged["vault_link"],
@@ -185,6 +199,33 @@ def load_settings(overrides_from_character: dict | None = None, path: Path = CON
         overrides=applied,
         warnings=warnings,
     )
+
+
+def _detail_views(raw: dict, path: Path) -> list[View]:
+    """The character's own garment close-ups: the small parts a full-body frame holds at a tenth of the frame.
+
+    Per character rather than in the library because the parts differ (Ari's shorts and collar, another's belt
+    and choker). Each needs an id, a prompt and framing-only caption tags - the garment itself is never captioned,
+    the trigger owns it (caption doctrine, 2026-09-16). Backgrounds rotate like the library's.
+    """
+    items = raw.get("details")
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        raise ConfigError(f'{path}: "details" must be a list of {{id, prompt, tags}} objects')
+    backgrounds = [view.background for view in load_views() if view.background]
+    views: list[View] = []
+    seen: set[str] = set()
+    for index, item in enumerate(items):
+        if not isinstance(item, dict) or not all(isinstance(item.get(k), str) and item[k].strip() for k in ("id", "prompt", "tags")):
+            raise ConfigError(f'{path}: details[{index}] needs non-empty strings "id", "prompt", "tags"')
+        if item["id"] in seen:
+            raise ConfigError(f'{path}: duplicate detail id "{item["id"]}"')
+        seen.add(item["id"])
+        bg = item.get("background")
+        background = bg.strip() if isinstance(bg, str) and bg.strip() else (backgrounds[index % len(backgrounds)] if backgrounds else None)
+        views.append(View(kind="detail", id=item["id"], prompt=item["prompt"].strip(), tags=item["tags"].strip(), background=background))
+    return views
 
 
 def character_dir(name: str) -> Path:
@@ -206,7 +247,7 @@ def load_character(name: str) -> Character:
         raise ConfigError(f'{path}: "reference_images" must be a non-empty list of paths')
 
     settings = load_settings(raw.get("settings") if isinstance(raw.get("settings"), dict) else None)
-    library = load_views()
+    library = load_views() + _detail_views(raw, path)
     wanted = raw.get("views")
     if wanted is None:
         views = library

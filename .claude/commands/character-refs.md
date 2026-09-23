@@ -29,6 +29,11 @@ Open the source image. Derive from it, and write into `characters/<name>/charact
   hangs (pendant at the front, only the chain at the nape from behind), which side an asymmetric detail sits
   on, what of each accessory is visible from front / side / back / above / below, button counts, colour
   boundaries. It is different for every character; never copy Ari's.
+- **`details`** — her garment close-ups: one entry per small part of the outfit that a full-body frame holds at
+  a tenth of the frame (shorts, a collar and yoke, cuffs, shoes, a belt, a choker), each `{id, prompt, tags}`.
+  The prompt frames that part large and says what is at the frame's edges; the `tags` name only the framing
+  (`lower body`, `close-up`, `feet`, plus `from behind` / `from side`), never the garment - the trigger owns
+  the outfit. Ari's six are the worked example. This is the rung the shorts were lost on for three trainings.
 
 `pnpm refs init <name> --reference <image>` writes the skeleton and copies the image; you fill both fields.
 Ask the owner only when the image genuinely does not show something the LoRA will need (the back of a
@@ -38,9 +43,9 @@ one-view sheet, for example) — then say exactly which extra view he should sup
 
 `pnpm refs generate <name> --dry-run` prints every request without sending one. Read it: the description
 must appear verbatim, the view count must match `character.json` (default: every view in the library,
-22 body + 13 face), the references must be found. Tell the owner the count, the cost class (quality and
-size come from `config/defaults.json`; roughly a quarter dollar per image at high) and wait for his go —
-a plan is not a run.
+22 body + 6 cowboy + 8 upper + 13 face, plus her `details`), the references must be found. Tell the owner
+the count, the cost class (quality and size come from `config/defaults.json`; roughly a quarter dollar per
+image at high, so about $14 for a full set with six details) and wait for his go — a plan is not a run.
 
 Billing note: if the account's billing is blocked (2026-09-18: card declined), the run stops at the first
 `[billing]` error by itself. Never work around that.
@@ -58,11 +63,14 @@ he stars in the vault. Send frames you have opened, never a bare count.
 
 ## 4. Collect, and on to the recipe
 
-`pnpm refs collect <name>` copies the STARRED frames into `D:/AI/lora-train/sheets/<name>-refs-gen/` and
-`<name>-face-refs-gen/` (a `.tags.txt` beside each carries the caption the prep will write) and names every
+`pnpm refs collect <name>` copies the STARRED frames into one folder per kind under `D:/AI/lora-train/sheets/`:
+`<name>-refs-gen/` (body), `<name>-cowboy-refs-gen/`, `<name>-upper-refs-gen/`, `<name>-face-refs-gen/` and
+`<name>-detail-refs-gen/` (a `.tags.txt` beside each carries the caption the prep will write) and names every
 view still open or unstarred; `generate <name> --only <view> --redo` fills those. From there the training
-recipe in `D:/AI/lora-train/TRAINING-A-CHARACTER.md` applies unchanged: prep, stage 1, undressed candidate
-round on both checkpoints, stars, final train (~30 epochs, undressed ~15 %), epoch sweep.
+recipe in `D:/AI/lora-train/TRAINING-A-CHARACTER.md` applies: the prep takes the cowboy and upper folders as
+they are instead of cutting those rungs out of the body frames, and the detail folder as its own low-repeat
+subset; then stage 1, undressed candidate round on both checkpoints, stars, final train (~30 epochs,
+undressed ~15 %), epoch sweep.
 
 ## Outfit variants: the same character in a new outfit
 

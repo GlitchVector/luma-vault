@@ -1,6 +1,6 @@
 {
   "name": "Ari",
-  "description": "a young woman with a white chin-length bob with straight bangs whose tips fade to aqua, a plain teal headband, pale skin, large light blue eyes with long lashes, FULL SOFT LIPS, blue teardrop earrings, a gold chain necklace with one large round blue gem pendant in a gold setting resting at the front of her neck, an hourglass figure with a full bust, a narrow waist, wide hips and thick thighs. She wears a cropped glossy teal long-sleeved top with a black high collar and a black yoke across the shoulders, bare shoulders through the cut-outs, puffy teal sleeves with black ribbed cuffs; white high-waisted shorts with two vertical rows of three black buttons on the front; bare legs; chunky white platform sneakers with teal heart details and teal soles. No other accessories, no tattoos, no socks.",
+  "description": "a young woman with a white chin-length bob with straight bangs whose tips fade to aqua, a plain teal headband, pale skin, large light blue eyes with long lashes, FULL SOFT LIPS, blue teardrop earrings, a gold chain necklace with one large round blue gem pendant in a gold setting resting at the front of her neck (seen from behind, only the bare gold chain crosses the nape - no pendant, no bead, no drop, no clasp hangs at the back), a plain teal headband over the crown that is visible from every angle including from directly behind, an hourglass figure with a full bust, a narrow waist, wide hips and thick thighs. She wears a cropped glossy teal long-sleeved top with a black high collar and a black yoke across the shoulders, bare shoulders through the cut-outs, puffy teal sleeves with black ribbed cuffs; white high-waisted shorts with two vertical rows of three black buttons on the FRONT PANEL only, close to the centre front - in a side profile they sit at the very front edge of the hip, never on the side of the hip and never on the buttocks; the sides and the back of the shorts are plain white with no buttons and no visible seams; bare legs; chunky white platform sneakers with teal heart details and teal soles. No other accessories, no tattoos, no socks.",
   "audit": [
     "lips: full and soft, as on the sheet's LIPS detail panel; never thin or flat",
     "necklace: gold chain, the single large round blue gem in its gold setting hangs at the FRONT; from behind only the chain at the nape may show, never a pendant on the back; never missing",
@@ -8,7 +8,7 @@
     "earrings: one blue teardrop on each ear, visible on the side that faces the camera",
     "hair: white with aqua only at the ends; the fade must not creep up; bangs straight; chin length",
     "top: black high collar and black yoke continuous around neck and shoulders with bare shoulder cut-outs, glossy teal body, cropped above the shorts' waistband, black ribbed cuffs; no white on the top",
-    "shorts: white, high waist, 2x3 black buttons on the front; never teal, black or long; nothing on the legs",
+    "shorts: white, high waist, 2x3 black buttons on the front panel near the centre - in profile at the front edge only, NO buttons on the flank, the side seam, the back or the buttocks; never teal, black or long; nothing on the legs",
     "shoes: chunky white platform sneakers with teal heart details and teal soles, both feet in frame on body views",
     "figure: hourglass - full bust, narrow waist, wide hips, thick thighs, pale skin; no tattoos, no bracelet, no anklet, no socks",
     "frame: body views show head to soles with margin; face views head and shoulders; nothing cropped, no text, no sheet panels"
@@ -17,5 +17,37 @@
   "reference_images": [
     "sheet-aurora.png"
   ],
-  "settings": {}
+  "settings": {},
+  "details": [
+    {
+      "id": "shorts-front",
+      "prompt": "Close view from the front, camera at hip height, framed from her natural waist to mid-thigh: the white high-waisted shorts fill the frame - the waistband, both vertical rows of three black buttons and the hem all clearly visible - with the hem of the cropped teal top at the top edge of the frame and her bare thighs at the bottom. She is fully clothed exactly as in the reference.",
+      "tags": "lower body"
+    },
+    {
+      "id": "shorts-back",
+      "prompt": "Close view from directly behind, camera at hip height, framed from her natural waist to mid-thigh: the back of the white high-waisted shorts fills the frame, waistband and hem clearly visible, the teal top's hem at the top edge, bare thighs at the bottom. She is fully clothed exactly as in the reference.",
+      "tags": "lower body, from behind"
+    },
+    {
+      "id": "shorts-side",
+      "prompt": "Close view in exact side profile, camera at hip height, framed from her natural waist to mid-thigh: the side of the white high-waisted shorts fills the frame, the waistband, the side seam and the hem clearly visible. She is fully clothed exactly as in the reference.",
+      "tags": "lower body, from side"
+    },
+    {
+      "id": "collar",
+      "prompt": "Close view of her neck and shoulders from the front, framed from her chin to the bust line: the black high collar, the black yoke across the shoulders, the bare-shoulder cut-outs, the boundary where the black meets the glossy teal, and the gold chain necklace with its round blue gem pendant at the front, all large and sharp. Her face is above the frame except the chin. She is fully clothed exactly as in the reference.",
+      "tags": "close-up"
+    },
+    {
+      "id": "sleeve-cuff",
+      "prompt": "Close view of one arm from the shoulder to the hand, camera at chest height: the puffy glossy teal sleeve, its black ribbed cuff and the bare wrist below it fill the frame. She is fully clothed exactly as in the reference.",
+      "tags": "close-up"
+    },
+    {
+      "id": "sneakers",
+      "prompt": "Close view of her feet and lower legs from a low front three-quarter angle, framed from the knees down: both chunky white platform sneakers with the teal heart details and teal soles fill the frame, laces and soles clearly visible, bare shins above. Nothing else in frame.",
+      "tags": "feet"
+    }
+  ]
 }

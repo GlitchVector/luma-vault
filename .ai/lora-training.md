@@ -9,7 +9,7 @@ Two documents sit beside this one and stay authoritative for their part:
 | Where | What |
 |---|---|
 | `docs/loras.md` | the register: every LoRA, trigger, kind, what each run measured, the verdict. A LoRA not in that table does not exist for the pipeline |
-| `packages/core/src/loras.ts` | the short catalogue the app's **LoRAs** panel reads (name, trigger, character, description, `final`/`wip`). Changes together with `docs/loras.md` |
+| `packages/core/src/loras.ts` | the short catalogue the app's **LoRAs** panel reads (name, trigger, character, description, `final`/`wip`, `dataset`). Changes together with `docs/loras.md`, and at DATASET time, not verdict time: the line's entry moves to the training about to run (`name`, `dataset`, previous names into `olderVersions`), so the page shows the data that is training |
 | `D:\AI\lora-train\TRAINING-A-CHARACTER.md` | the training guide next to the trainer, same rules as §4-§7 here with the run-by-run evidence |
 | `D:\AI\lora-train\WORKFLOW.md` | the 2026-09-06 sheet-crop bootstrap loop (crop-sheet, tag-dataset, masked loss). Superseded for new characters by the reference pipeline in §3, still the record for the older LoRAs |
 | `openai-character-dataset/README.md` and `.claude/commands/character-refs.md` | the reference-generation pipeline: one image in, the reference set out |
@@ -78,9 +78,13 @@ trains in between).
    each accessory shows from front, side, back, above, below). Never copy another character's list.
 3. **`pnpm refs generate <name> --dry-run`** prints every request. Show the owner the count and the
    cost class and wait for his go. Never pass `--no-dry-run` while billing is blocked.
-4. **`pnpm refs generate <name> --vault`** renders 22 body views at 1024x1536 and 13 portraits at
-   1024x1024 (two passes per angle: a portrait pass gives an 819 px head where a 1024x1536 full body
-   gives 287 px, for a quarter of the cost of a 2048x3072 frame). Every view carries its own
+4. **`pnpm refs generate <name> --vault`** renders 22 body views and 6 cowboy views at 1024x1536,
+   8 upper-body views, 13 portraits and her garment close-ups (`details` in character.json) at
+   1024x1024 - every framing a board renders at, native at its own scale (a portrait pass gives an
+   819 px head where a 1024x1536 full body gives 287 px, for a quarter of the cost of a 2048x3072
+   frame; the same arithmetic is why cowboy and upper are generated rather than cut). The portraits
+   keep the top's neckline and collar IN frame since 2026-09-23: cut at the collarbone, they taught a
+   strapless top on every face crop of three trainings. Every view carries its own
    rotating neutral background (`config/views.json`), quality `high` (`max` makes no visible
    difference on anime and there is no seed, so two runs are never a controlled comparison). A
    moderation refusal is retried with rewordings up to 30 times, then the view is reported OPEN.
@@ -89,12 +93,15 @@ trains in between).
    individually (never merged sheets) with the differences listed per frame and the view keys in
    order. The owner stars in the vault; his star is the gate, never the audit. A single view is
    re-rendered with `--only <kind>/<id> --redo` and slots back into the same set.
-6. **`pnpm refs collect <name>`** copies the starred frames into `sheets/<name>-refs-gen/` and
-   `sheets/<name>-face-refs-gen/`, a `.tags.txt` beside each with that view's caption words.
-   `--all` when he accepted the whole set in words instead of stars.
-7. **Prep** (`prep-<name>.py`, model: `prep-ari-gen-v2.py`): every body reference TRIMMED TO THE
-   FIGURE first (`tight()`, per-row edge comparison), then used whole, plus an upper-body (0.42) and
-   a cowboy (0.66) crop of every standing view, everything mirrored, portraits whole. The trim is
+6. **`pnpm refs collect <name>`** copies the starred frames into one folder per kind:
+   `sheets/<name>-refs-gen/` (body), `<name>-cowboy-refs-gen/`, `<name>-upper-refs-gen/`,
+   `<name>-face-refs-gen/` and `<name>-detail-refs-gen/`, a `.tags.txt` beside each with that
+   view's caption words. `--all` when he accepted the whole set in words instead of stars.
+7. **Prep** (`prep-<name>.py`, model: `prep-ari-gen-v2.py`, adapted): every reference TRIMMED TO THE
+   FIGURE first (`tight()`, per-row edge comparison), then used whole; the cowboy and upper folders
+   ARE those rungs, so the prep no longer cuts them out of the body frames (a generated set from
+   before 2026-09-23 has no such folders and keeps the 0.42 / 0.66 cuts); details are their own
+   subset at low repeats; everything mirrored, portraits whole. The trim is
    not cosmetic: kohya buckets at constant area, so a figure at 54 % of the frame trains at ~450 px
    and at 92 % at ~530x1790 - `ari_gen_v1` lost the shorts' colour on 8-10 of 32 frames to exactly
    that margin (2026-09-22). Measure it: median figure width over the frame must be > 0.85. Captions per
@@ -198,7 +205,7 @@ against the folder at the scale it will be rendered:
 | upper body, cowboy | crops of the references at those rungs, or references at that framing |
 | each undressed state | that state captioned, front AND side AND back, at the scale the board renders it |
 | colour | measured against the references, no render cast |
-| the outfit's small parts (shorts, yoke, cuffs) | the figure fills the frame - `check-crops.py` FILL >= 0.85 per refs subset; a reference with margins trains the garment at half size |
+| the outfit's small parts (shorts, yoke, cuffs) | the figure fills the frame - `check-crops.py` FILL >= 0.85 per refs subset; a reference with margins trains the garment at half size - AND a `detail` close-up per part in the generated set, so the part is seen large at least once |
 
 **Look at the crops.** `check-crops.py` prints any panel over 60 % one colour and writes
 `edge-strips.png`. A 71 %-flat lips panel taught a surgical mask; the sheet's own "FRONT"/"BACK"

@@ -2,6 +2,7 @@
 
     charrefs.py init <name> --reference <image>           write characters/<name>/character.json (then fill it)
     charrefs.py generate <name> [--dry-run | --no-dry-run] [--only body/01-front,face/02-front-smile] [--limit N] [--redo] [--vault]
+    charrefs.py generate <name> --only <views> --variants 3 [--vault]   re-roll: N alternatives of each view, filed BESIDE the original
     charrefs.py collect <name>                             starred vault members -> training sheet folders
     charrefs.py status <name>                              what is done, open, pending
 
@@ -25,7 +26,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_loader import CHARACTERS_DIR, PROJECT_ROOT, Character, ConfigError, View, character_dir, load_character, load_views  # noqa: E402
-from file_utils import FileError, collect_into_sheets, file_into_vault, new_stamp, output_path, read_state, set_run, validate_reference_images, write_image_bytes, write_state  # noqa: E402
+from file_utils import FileError, collect_into_sheets, file_into_vault, new_stamp, output_path, read_state, set_run, sheet_dir, validate_reference_images, write_image_bytes, write_state  # noqa: E402
 from logger_utils import setup_logging  # noqa: E402
 from openai_image_client import ImageClientError, OpenAIImageClient  # noqa: E402
 from prompt_builder import PromptError, build_prompt, load_template  # noqa: E402
@@ -50,11 +51,12 @@ def cmd_init(args: argparse.Namespace, log) -> int:
     library = load_views()
     skeleton = {
         "name": args.name,
-        "_fill": "description and audit are derived from the reference image BEFORE anything renders; the description is what every prompt says about her, the audit list is what every generated frame is checked against (physics first). Leave `views` out for the whole library, or list keys like body/01-front.",
+        "_fill": "description and audit are derived from the reference image BEFORE anything renders; the description is what every prompt says about her, the audit list is what every generated frame is checked against (physics first). Leave `views` out for the whole library, or list keys like body/01-front. `details` are HER garment close-ups: one entry per small part a full-body frame holds at a tenth of the frame (shorts, collar, cuffs, shoes...), each {id, prompt, tags}, tags framing-only (lower body / close-up / feet, never the garment) - see characters/ari/character.json.",
         "description": "",
         "audit": [],
         "background": "plain white or extremely simple, low-detail background; no scenery, no floor detail beyond a faint contact shadow",
         "reference_images": [target.name],
+        "details": [],
         "views_available": [view.key for view in library],
         "settings": {},
     }
@@ -92,7 +94,108 @@ def resolve_dry_run(character: Character, args: argparse.Namespace) -> bool:
     return character.settings.dry_run
 
 
+def render_alternative(client, character: Character, view: View, template: str, output: Path, log) -> Path | None:
+    """One more picture of a view, with the same retry rules as the main loop but its own counters.
+
+    Alternatives never touch the view's status or file: the original stays what it was, the owner picks in
+    the vault, and `collect` takes whichever of them carries the star.
+    """
+    s = character.settings
+    present, _ = validate_reference_images(character)
+    refusals = transient = attempt = 0
+    while True:
+        if refusals >= s.retry_cap or transient >= s.transient_cap:
+            log.warning("    %s alternative OPEN - refused %d, service errors %d", view.key, refusals, transient)
+            return None
+        attempt += 1
+        prompt = build_prompt(character, view, attempt=attempt, template=template)
+        try:
+            if present:
+                data = client.edit_with_references(prompt, present, model=s.model, size=s.size[view.kind], quality=s.quality, output_format=s.output_format, input_fidelity=s.input_fidelity)
+            else:
+                data = client.generate_from_prompt(prompt, model=s.model, size=s.size[view.kind], quality=s.quality, output_format=s.output_format)
+            return write_image_bytes(output, data)
+        except ImageClientError as exc:
+            if exc.kind == "moderation":
+                refusals += 1
+                log.info("    %s alternative refused (%d/%d) - rewording", view.key, refusals, s.retry_cap)
+            elif exc.kind in ("auth", "billing", "bad_request"):
+                raise
+            else:
+                transient += 1
+                log.warning("    %s alternative [%s] (%d/%d): %s", view.key, exc.kind, transient, s.transient_cap, str(exc).splitlines()[0][:160])
+                time.sleep(s.transient_wait_seconds)
+
+
+def cmd_variants(args: argparse.Namespace, log) -> int:
+    """`--variants N`: N alternatives of each selected view, beside the original, for the owner to choose from."""
+    character = load_character(args.name)
+    template = load_template()
+    if not args.only:
+        log.error("--variants needs --only <views>: a re-roll is for the views the owner marked, not the whole set")
+        return 2
+    wanted = args.only.split(",")
+    by_key = {view.key: view for view in character.views}
+    unknown = [key for key in wanted if key not in by_key]
+    if unknown:
+        log.error("unknown view(s): %s", ", ".join(unknown))
+        return 2
+    state = read_state(character)
+    if not state.get("stamp"):
+        log.error("nothing generated yet - alternatives need an original to sit beside")
+        return 2
+    stamp = new_stamp()
+    if resolve_dry_run(character, args):
+        for key in wanted:
+            print(f"DRY RUN: {args.variants} alternatives of {key} -> {character.out_dir / f'{key.replace(chr(47), chr(45))}-alt{stamp}-N.{character.settings.output_format}'}")
+        return 0
+    try:
+        client = OpenAIImageClient()
+    except ImageClientError as exc:
+        log.error("[%s] %s", exc.kind, exc)
+        return 3
+    made = 0
+    for key in wanted:
+        view = by_key[key]
+        entry = state["views"].setdefault(key, {"status": "pending", "attempts": 0, "refusals": 0, "transient": 0})
+        alternatives = entry.setdefault("alternatives", [])
+        for n in range(1, args.variants + 1):
+            output = character.out_dir / f"{view.kind}-{view.id}-alt{stamp}-{n}.{character.settings.output_format}"
+            started = time.time()
+            # --vary: the same reference and prompt give near-identical pictures, so each alternative
+            # carries its own camera/stance hint from defaults.json (owner, 2026-09-23: "re-roll" must
+            # mean something different, not three copies)
+            varied = view
+            if args.vary:
+                hints = character.settings.variation_hints
+                if hints:
+                    varied = View(kind=view.kind, id=view.id, prompt=f"{view.prompt} {hints[(n - 1) % len(hints)]}", tags=view.tags, background=view.background)
+            try:
+                saved = render_alternative(client, character, varied, template, output, log)
+            except ImageClientError as exc:
+                log.error("    [%s] %s", exc.kind, exc)
+                log.error("stopping: every further request would fail the same way")
+                write_state(character, state)
+                return 3
+            if saved is None:
+                continue
+            alternatives.append(saved.name)
+            made += 1
+            log.info("%s alternative %d/%d ok (%d s, %d KB)", key, n, args.variants, int(time.time() - started), saved.stat().st_size // 1024)
+            if args.vault:
+                file_into_vault(character, saved, stamp=state["stamp"], label=f"{character.name} {view.kind} · {view.id} · alternative {n} · {view.tags}")
+            write_state(character, state)
+    print("")
+    print("Summary")
+    print(f"  Alternatives   : {made} of {len(wanted) * args.variants}")
+    print(f"  Review set     : {character.settings.vault_link}{set_run(character, state['stamp'])}")
+    print("  Star ONE of each view - the original or an alternative - and `collect` takes the starred one.")
+    return 0
+
+
 def cmd_generate(args: argparse.Namespace, log) -> int:
+    if getattr(args, "variants", None):
+        return cmd_variants(args, log)
     character = load_character(args.name)
     s = character.settings
     for warning in s.warnings:
@@ -219,10 +322,11 @@ def cmd_collect(args: argparse.Namespace, log) -> int:
     character = load_character(args.name)
     if args.all:
         log.warning("--all: taking every generated view, the vault stars are NOT consulted")
-    n_body, n_face, missing = collect_into_sheets(character, read_state(character), accept_all=args.all)
-    name = character.name.lower()
-    log.info("%d body refs -> %s", n_body, character.settings.sheets_dir / f"{name}-refs-gen")
-    log.info("%d face refs -> %s", n_face, character.settings.sheets_dir / f"{name}-face-refs-gen")
+    counts, missing = collect_into_sheets(character, read_state(character), accept_all=args.all)
+    for kind, n in counts.items():
+        log.info("%d %s refs -> %s", n, kind, sheet_dir(character, kind))
+    if not counts:
+        log.warning("nothing collected: no starred, generated view")
     if missing:
         print("not in the dataset yet:\n  " + "\n  ".join(missing) + f"\n(regenerate with: generate {args.name} --only <view> --redo)")
     return 0
@@ -261,6 +365,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int)
     p.add_argument("--redo", action="store_true", help="regenerate views that are already done")
     p.add_argument("--vault", action="store_true", help="also file every result into the vault review set")
+    p.add_argument("--variants", type=int, help="re-roll: render N alternatives of each --only view beside the original, for the owner to pick from")
+    p.add_argument("--vary", action="store_true", help="with --variants: give each alternative its own camera/stance hint so they differ")
     p = sub.add_parser("collect", help="copy the starred views into the training sheet folders")
     p.add_argument("name")
     p.add_argument("--all", action="store_true", help="take every generated view instead of only the starred ones - use ONLY when the owner has accepted the whole set")

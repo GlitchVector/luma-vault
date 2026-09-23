@@ -27,7 +27,11 @@ words outranks the options.
   `check-crops.py datasets\<name>` before any train (FILL ≥ 0.85, no flat panels, no sheet text).
 - `/character-refs` — the reference set from one image, when he has no owner-picked references.
 - `docs/loras.md` (the register) and `packages/core/src/loras.ts` (the app's catalogue): a row at
-  dataset time, updated per verdict, committed with the work.
+  dataset time, updated per verdict, committed with the work. At dataset time the line's catalogue
+  entry MOVES to the new training - `name` becomes the file about to train, `dataset` the new
+  folder, the previous names go into `olderVersions` - so the page's "Training images" always shows
+  the data that is training, not the data of three trainings ago (owner, 2026-09-23: the Ari card
+  still showed v1's set while v4 was being prepped). Step 3 below does it, not the verdict.
 
 ## The line, step by step
 

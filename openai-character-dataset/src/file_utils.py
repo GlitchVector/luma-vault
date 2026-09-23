@@ -83,10 +83,14 @@ def file_into_vault(character: Character, image: Path, *, stamp: str, label: str
     root = Path(character.settings.vault_outdir)
     if not root.exists():
         raise FileError(f"vault folder not reachable: {root}")
-    day = root / datetime.now().strftime("%Y-%m-%d")
+    run = set_run(character, stamp)
+    # A set lives in ONE day folder: the one its manifest was first written to. Filing a later day's
+    # images into that day's own folder made a twin set with the same name (2026-09-23), so an
+    # existing manifest for the run wins over today's date.
+    existing = sorted(root.glob(f"*/{MANIFEST_DIR}/{run}.json"))
+    day = existing[0].parent.parent if existing else root / datetime.now().strftime("%Y-%m-%d")
     manifest_dir = day / MANIFEST_DIR
     manifest_dir.mkdir(parents=True, exist_ok=True)
-    run = set_run(character, stamp)
     manifest_path = manifest_dir / f"{run}.json"
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -106,8 +110,13 @@ def file_into_vault(character: Character, image: Path, *, stamp: str, label: str
     return target
 
 
-def starred_files(character: Character, run: str) -> set[str]:
-    """Ask the vault which files of the set carry at least one star."""
+# The owner's star scale on a review set (2026-09-23): ONE star is a rejection - "re-roll this" - and a chosen
+# picture carries two or more. A view whose original and alternatives all sit at one star is not collected.
+REJECTED = 1
+
+
+def starred_files(character: Character, run: str) -> dict[str, int]:
+    """Ask the vault how many stars each file of the set carries (only starred files come back)."""
     query = {
         "folderId": None, "kind": None, "rating": None, "sexyOnly": False, "search": "", "searchPaths": False, "tag": None,
         "set": run, "sets": [], "minStars": 1, "maxStars": None, "unstarred": False, "hasPrompt": None, "img2img": None,
@@ -123,11 +132,21 @@ def starred_files(character: Character, run: str) -> set[str]:
         raise FileError(f"vault not reachable at {character.settings.vault_rpc}: {exc}") from exc
     if "ok" not in answer:
         raise FileError(f"vault query failed: {json.dumps(answer)[:300]}")
-    return {Path(str(item["path"]).replace("\\", "/")).name for item in answer["ok"]["items"]}
+    return {Path(str(item["path"]).replace("\\", "/")).name: int(item.get("stars") or 0) for item in answer["ok"]["items"]}
 
 
-def collect_into_sheets(character: Character, state: dict, *, accept_all: bool = False) -> tuple[int, int, list[str]]:
-    """Copy the acknowledged, generated views into the training sheet folders. Returns (body, face, not-collected).
+# Where each kind of view lands under sheets_dir. The body and face names predate the other kinds and every
+# prep script reads them, so they stay; the rest follow the same shape.
+SHEET_FOLDERS = {"body": "{name}-refs-gen", "cowboy": "{name}-cowboy-refs-gen", "upper": "{name}-upper-refs-gen",
+                 "face": "{name}-face-refs-gen", "detail": "{name}-detail-refs-gen"}
+
+
+def sheet_dir(character: Character, kind: str) -> Path:
+    return character.settings.sheets_dir / SHEET_FOLDERS[kind].format(name=slug(character.name))
+
+
+def collect_into_sheets(character: Character, state: dict, *, accept_all: bool = False) -> tuple[dict[str, int], list[str]]:
+    """Copy the acknowledged, generated views into the training sheet folders. Returns (count per kind, not-collected).
 
     Normally only the views the owner STARRED in the vault are taken. ``accept_all`` skips that check and is
     only for when he has accepted the whole set in words instead - his acknowledgement is the gate either way,
@@ -136,29 +155,32 @@ def collect_into_sheets(character: Character, state: dict, *, accept_all: bool =
     if not state.get("stamp"):
         raise FileError("nothing generated yet")
     run = set_run(character, state["stamp"])
-    starred = set() if accept_all else starred_files(character, run)
-    body_dir = character.settings.sheets_dir / f"{slug(character.name)}-refs-gen"
-    face_dir = character.settings.sheets_dir / f"{slug(character.name)}-face-refs-gen"
-    body_dir.mkdir(parents=True, exist_ok=True)
-    face_dir.mkdir(parents=True, exist_ok=True)
-    n_body = n_face = 0
+    starred = {} if accept_all else starred_files(character, run)
+    counts: dict[str, int] = {}
     missing: list[str] = []
     for view in character.views:
         entry = state["views"].get(view.key)
         if not entry or entry.get("status") != "done":
             missing.append(f"{view.key} ({entry.get('status') if entry else 'not generated'})")
             continue
-        vault_name = f"refgen-{slug(character.name)}-{Path(entry['file']).name}"
-        if not accept_all and vault_name not in starred:
+        # The original and its re-rolled alternatives compete for the one star; whichever carries it is the view.
+        candidates = [Path(entry["file"]).name] + [Path(name).name for name in entry.get("alternatives", [])]
+        stars = {name: starred.get(f"refgen-{slug(character.name)}-{name}", 0) for name in candidates}
+        # A pick the owner said in words is recorded as `chosen` on the view and outranks the stars.
+        chosen = [entry["chosen"]] if entry.get("chosen") in candidates else [name for name in candidates if stars[name] > REJECTED]
+        if accept_all:
+            chosen = chosen[:1] or [name for name in candidates if stars[name] != REJECTED][:1]
+        if not chosen:
             missing.append(f"{view.key} (generated, not starred)")
             continue
-        source = character.out_dir / entry["file"]
-        dest_dir = body_dir if view.kind == "body" else face_dir
+        if len(chosen) > 1:
+            missing.append(f"{view.key} ({len(chosen)} starred - star only one: {', '.join(chosen)})")
+            continue
+        source = character.out_dir / chosen[0]
+        dest_dir = sheet_dir(character, view.kind)
+        dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"{slug(character.name)}-{view.kind}-{view.id}{source.suffix}"
         shutil.copyfile(source, dest)
         dest.with_suffix(".tags.txt").write_text(view.tags + "\n", encoding="utf-8")
-        if view.kind == "body":
-            n_body += 1
-        else:
-            n_face += 1
-    return n_body, n_face, missing
+        counts[view.kind] = counts.get(view.kind, 0) + 1
+    return counts, missing
