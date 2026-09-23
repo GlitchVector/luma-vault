@@ -604,3 +604,14 @@ files at the moment `remote.rs` was saved). Before touching Rust while the owner
 `%LOCALAPPDATA%
 et.glitchvector.luma-vault\patreon\*.job.json` for a job with a fresh state
 file, and the comics panel for a run. Web edits are safe: Vite hot-reloads in place.
+
+## A file overwritten in place over the share keeps its old row
+
+The scanner inserts with `ON CONFLICT(path) DO NOTHING` and, by design, never touches a known row on
+a rescan (a backup tool rewriting timestamps must not wipe a library's thumbnails and verdicts). A
+file whose contents changed is the watcher's job — and a write made over the SMB share by a script
+on this machine reached the share without an event (2026-09-23: a review set kept showing the old
+frames after eleven re-renders and a re-cut). Since then `run_scan` asks `Db::changed_media` which
+of the walk's files differ from their row in size or mtime and tears those rows down the way the
+watcher does (`watcher::forget_if_unreferenced`), so the insert makes a fresh row. Only a differing
+size or mtime counts; an unchanged file is never re-read.

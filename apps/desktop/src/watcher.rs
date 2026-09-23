@@ -315,7 +315,7 @@ fn owning_folder(db: &Arc<Db>, folders: &[PathBuf], path: &Path) -> Option<i64> 
 ///
 /// Duplicates and renames both share a key, so an unconditional delete would
 /// blank a tile that another row is still relying on.
-fn forget_if_unreferenced(
+pub(crate) fn forget_if_unreferenced(
     db: &Db,
     thumb_root: &Path,
     frame_root: &Path,

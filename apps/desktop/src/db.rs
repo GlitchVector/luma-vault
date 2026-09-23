@@ -934,10 +934,14 @@ impl Db {
 
     /// Insert newly-seen files in one transaction, returning how many were new.
     ///
-    /// Existing rows are left completely alone rather than updated: a file whose
-    /// mtime changed is handled by the watcher, and re-touching every row on
-    /// every rescan would blow away thumbnails and verdicts for an entire
-    /// library because someone's backup tool rewrote the timestamps.
+    /// Existing rows are left completely alone rather than updated. A file whose
+    /// contents changed is torn down first — by the watcher when it sees the
+    /// write, by the scan through `changed_media` when it did not (an overwrite
+    /// over an SMB share, 2026-09-23) — so that the insert makes a fresh row and
+    /// the thumbnail and verdict are rebuilt. Only a differing size or mtime
+    /// counts as changed; re-touching every row on every rescan would blow away
+    /// thumbnails and verdicts for an entire library because someone's backup
+    /// tool rewrote the timestamps.
     pub fn insert_media_batch(&self, folder_id: i64, entries: &[ScannedFile], now: i64) -> Result<usize> {
         let mut conn = self.connection();
         let tx = conn.transaction()?;
@@ -1043,6 +1047,38 @@ impl Db {
     }
 
     /// Rows in a folder whose file no longer exists, so the watcher can drop them.
+    /// The files of a walk whose row records a different size or mtime: the
+    /// picture on disk is not the one the row describes. Returned with each
+    /// row's content key, because the caller tears the row down and the key is
+    /// what its derived files are addressed by.
+    ///
+    /// One query over the folder rather than a lookup per file: a rescan of a
+    /// hundred thousand files must not become a hundred thousand round trips.
+    pub fn changed_media(&self, folder_id: i64, entries: &[ScannedFile]) -> Result<Vec<(String, Option<String>)>> {
+        let conn = self.connection();
+        let mut stmt = conn.prepare("SELECT path, size_bytes, modified_at, content_key FROM media WHERE folder_id = ?1")?;
+        let rows = stmt.query_map(params![folder_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        let mut known: std::collections::HashMap<String, (i64, i64, Option<String>)> = std::collections::HashMap::new();
+        for row in rows {
+            let (path, size, modified, key) = row?;
+            known.insert(path, (size, modified, key));
+        }
+        Ok(entries
+            .iter()
+            .filter_map(|entry| {
+                let (size, modified, key) = known.get(&entry.path)?;
+                (*size != entry.size_bytes || *modified != entry.modified_at).then(|| (entry.path.clone(), key.clone()))
+            })
+            .collect())
+    }
+
     pub fn delete_media_by_path(&self, path: &str) -> Result<()> {
         let conn = self.connection();
         conn.execute("DELETE FROM media WHERE path = ?1", params![path])?;
@@ -3625,6 +3661,26 @@ mod tests {
             limit: 100,
             offset: 0,
         }
+    }
+
+    #[test]
+    fn a_rescan_sees_a_file_whose_contents_changed() {
+        let db = Db::open_in_memory().expect("in-memory index");
+        let folder = db.add_folder("/out", 1).expect("add folder");
+        let first = file("/out/back.png", MediaKind::Image, 100);
+        db.insert_media_batch(folder, std::slice::from_ref(&first), 1).expect("insert");
+
+        // Same size, same mtime: the row stands, whatever else the walk found.
+        let same = db.changed_media(folder, &[first.clone(), file("/out/new.png", MediaKind::Image, 5)]).expect("query");
+        assert!(same.is_empty(), "an unchanged file is not a change, a new file is not a change");
+
+        // A rewrite in place: the size moved, or only the mtime did.
+        let mut bigger = first.clone();
+        bigger.size_bytes += 1;
+        assert_eq!(db.changed_media(folder, &[bigger]).expect("query"), vec![("/out/back.png".to_string(), None)]);
+        let mut later = first;
+        later.modified_at = 200;
+        assert_eq!(db.changed_media(folder, &[later]).expect("query").len(), 1);
     }
 
     fn seeded() -> (Db, i64) {

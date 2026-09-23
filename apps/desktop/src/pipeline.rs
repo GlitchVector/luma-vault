@@ -524,6 +524,27 @@ fn glob_phase(pipeline: &Arc<Pipeline>, app: &AppHandle, folder_id: i64, root: &
         );
     });
 
+    // A file rewritten in place since it was indexed — the watcher's job when it
+    // sees the write, but a write over an SMB share from a script on this
+    // machine reached the share without an event (2026-09-23: a review set kept
+    // showing the old frames after every re-render). The row is torn down the
+    // way the watcher would tear it down, so the insert below makes a fresh
+    // one and the thumbnail, dimensions and verdict describe the new picture.
+    // Only a differing size or mtime counts: a backup tool that touched every
+    // timestamp would also be caught here, and would cost one re-read per
+    // file it touched — which is the correct price for a file that changed.
+    match pipeline.db.changed_media(folder_id, &files) {
+        Ok(changed) => {
+            let thumb_root = pipeline.thumb_root();
+            let frame_root = pipeline.frame_root();
+            for (path, key) in &changed {
+                pipeline.db.delete_media_by_path(path).ok();
+                crate::watcher::forget_if_unreferenced(&pipeline.db, &thumb_root, &frame_root, key.as_deref());
+            }
+        }
+        Err(error) => errors.push(format!("cannot compare the index with the walk: {error:#}")),
+    }
+
     let now = now_ms();
     if let Err(error) = pipeline.db.insert_media_batch(folder_id, &files, now) {
         errors.push(format!("cannot write the index: {error:#}"));
