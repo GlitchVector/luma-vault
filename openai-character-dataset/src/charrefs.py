@@ -426,6 +426,36 @@ def cmd_generate(args: argparse.Namespace, log) -> int:
 
 # ---------------------------------------------------------------- collect / status
 
+def cmd_resplit(args: argparse.Namespace, log) -> int:
+    """Re-cut every kept sheet with the current split and overwrite its two views (and their vault copies).
+
+    The sheets are the generated output; the cut is ours, so a better cut is applied to what exists
+    rather than paid for again. State entries carry the sheet each view came from.
+    """
+    character = load_character(args.name)
+    state = read_state(character)
+    by_sheet: dict[str, list[View]] = {}
+    views = {v.key: v for v in character.views}
+    for key, entry in state["views"].items():
+        if entry.get("sheet") and key in views:
+            by_sheet.setdefault(entry["sheet"], []).append(views[key])
+    if not by_sheet:
+        log.info("no sheet-cut views in %s", character.name)
+        return 0
+    for sheet, pair in by_sheet.items():
+        raw = character.out_dir / "sheets" / sheet
+        if not raw.is_file():
+            log.warning("sheet missing: %s", raw)
+            continue
+        figures = split_sheet(raw.read_bytes())
+        for v, fig in zip(pair, figures[1:1 + len(pair)]):
+            saved = write_image_bytes(output_path(character, v), to_png_bytes(fig))
+            if args.vault and state.get("stamp"):
+                file_into_vault(character, saved, stamp=state["stamp"], label=f"{character.name} {v.kind} · {v.id} · {v.tags} (sheet)")
+            log.info("%s <- %s  %dx%d", v.key, sheet, fig.width, fig.height)
+    return 0
+
+
 def cmd_collect(args: argparse.Namespace, log) -> int:
     character = load_character(args.name)
     if args.all:
@@ -476,6 +506,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--variants", type=int, help="re-roll: render N alternatives of each --only view beside the original, for the owner to pick from")
     p.add_argument("--vary", action="store_true", help="with --variants: give each alternative its own camera/stance hint so they differ")
     p.add_argument("--sheet", action="store_true", help="render pending body/cowboy views two at a time as one three-figure model sheet (left = front), and keep the middle and right figures; the gate passes a sheet where it refuses a single figure")
+    p = sub.add_parser("resplit", help="re-cut every sheet-mode view from its kept sheet with the current split")
+    p.add_argument("name")
+    p.add_argument("--vault", action="store_true", help="also replace the copies in the vault review set")
     p = sub.add_parser("collect", help="copy the starred views into the training sheet folders")
     p.add_argument("name")
     p.add_argument("--all", action="store_true", help="take every generated view instead of only the starred ones - use ONLY when the owner has accepted the whole set")
@@ -491,7 +524,7 @@ def main(argv: list[str] | None = None) -> int:
     log = setup_logging(PROJECT_ROOT / "logs", verbose=args.verbose)
     CHARACTERS_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        return {"init": cmd_init, "generate": cmd_generate, "collect": cmd_collect, "status": cmd_status}[args.command](args, log)
+        return {"init": cmd_init, "generate": cmd_generate, "resplit": cmd_resplit, "collect": cmd_collect, "status": cmd_status}[args.command](args, log)
     except (ConfigError, PromptError, FileError) as exc:
         log.error("%s", exc)
         return 2

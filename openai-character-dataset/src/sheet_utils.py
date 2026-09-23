@@ -7,9 +7,12 @@ three figures in one wide image and keeps the middle and right ones as two views
 is rendered large enough that each figure holds about as many pixels as a single view would,
 because a figure trained at half size is how ari_gen_v1 lost its shorts.
 
-The split is by content: the columns that hold nothing but background separate the figures.
-When that does not give exactly three runs (a hand touching the next figure, a shadow), the
-image is cut into equal thirds, which the layout instruction makes a fair fallback.
+The cut is made at the two narrowest VALLEYS of the column occupancy, one in each third
+boundary's neighbourhood, not at empty gaps: figures on a sheet touch each other more often
+than not (a cowboy's elbow, a glove), and a cut at equal thirds went through the neighbour's
+arm on the first run (owner spotted it in the vault, 2026-09-23). A valley cut still leaves a
+sliver of a neighbour when they overlap outright; the crop is then narrowed to the columns the
+figure itself occupies on either side of the valleys.
 """
 
 from __future__ import annotations
@@ -28,35 +31,38 @@ def _occupancy(im: Image.Image) -> np.ndarray:
     return diff.mean(axis=0)
 
 
-def split_sheet(data: bytes, figures: int = 3, pad: float = 0.03) -> list[Image.Image]:
-    """The figures of a sheet, left to right, each trimmed to its own columns plus a small margin."""
+def _valley(occ: np.ndarray, lo: int, hi: int) -> int:
+    """The emptiest column between lo and hi; the middle of the emptiest run when it is a plateau."""
+    window = occ[lo:hi]
+    floor = window.min()
+    empties = np.where(window <= floor + 0.002)[0]
+    return lo + int(empties[len(empties) // 2])
+
+
+def split_sheet(data: bytes, figures: int = 3, pad: float = 0.02) -> list[Image.Image]:
+    """The figures of a sheet, left to right, each cut at the valleys beside it and trimmed to its own columns."""
     im = Image.open(BytesIO(data)).convert("RGB")
-    cols = _occupancy(im) > 0.004
-    runs: list[tuple[int, int]] = []
-    start = None
-    for x, on in enumerate(cols):
-        if on and start is None:
-            start = x
-        elif not on and start is not None:
-            runs.append((start, x))
-            start = None
-    if start is not None:
-        runs.append((start, len(cols)))
-    # Drop slivers (a stray mark) and merge runs closer than a finger's width.
-    runs = [r for r in runs if r[1] - r[0] > im.width * 0.04]
-    merged: list[tuple[int, int]] = []
-    for r in runs:
-        if merged and r[0] - merged[-1][1] < im.width * 0.02:
-            merged[-1] = (merged[-1][0], r[1])
-        else:
-            merged.append(r)
-    if len(merged) != figures:
-        third = im.width / figures
-        merged = [(int(i * third), int((i + 1) * third)) for i in range(figures)]
+    occ = _occupancy(im)
+    w = im.width
+    # Smooth a little so a single stray column does not pose as a valley.
+    kernel = np.ones(9) / 9
+    smooth = np.convolve(occ, kernel, mode="same")
+    third = w / figures
+    cuts = [0]
+    for i in range(1, figures):
+        centre = int(i * third)
+        cuts.append(_valley(smooth, int(centre - third * 0.35), int(centre + third * 0.35)))
+    cuts.append(w)
     out = []
-    for (s, e) in merged:
-        margin = int((e - s) * pad)
-        out.append(im.crop((max(0, s - margin), 0, min(im.width, e + margin), im.height)))
+    for s, e in zip(cuts[:-1], cuts[1:]):
+        # Trim to the columns this figure occupies, so a neighbour's sliver past the valley drops out.
+        cols = np.where(occ[s:e] > 0.004)[0]
+        if len(cols):
+            s2, e2 = s + int(cols[0]), s + int(cols[-1]) + 1
+        else:
+            s2, e2 = s, e
+        margin = int((e2 - s2) * pad)
+        out.append(im.crop((max(s, s2 - margin), 0, min(e, e2 + margin), im.height)))
     return out
 
 
