@@ -306,7 +306,7 @@ const CharacterCard = memo(function CharacterCard({ group, showcase, onShowRende
 
       <p className="text-sm leading-relaxed text-zinc-400">{main.description}</p>
 
-      <LoraTags entry={main} onShowRenders={onShowRenders} />
+      <LoraTags entry={main} renders={renders} onShowRenders={onShowRenders} />
 
       {main.note ? <p className="text-xs leading-relaxed text-zinc-500">{main.note}</p> : null}
 
@@ -348,8 +348,16 @@ const CharacterCard = memo(function CharacterCard({ group, showcase, onShowRende
   )
 })
 
-/** The two things a prompt needs, how many older files sit behind this one, and the way into the grid. */
-function LoraTags({ entry, onShowRenders }: { entry: LoraEntry; onShowRenders: (search: string) => void }) {
+/**
+ * The two things a prompt needs, how many older files sit behind this one, and the way into the grid.
+ *
+ * The way in exists only once there is something to find. A LoRA that has not rendered yet — an
+ * outfit whose dataset is prepped and whose stage 1 has not trained — sent the owner to an empty
+ * grid with "Nothing matches" (2026-09-23); the card knows the answer from its own showcase query,
+ * so it says so instead. Until that query lands the link is shown as usual.
+ */
+function LoraTags({ entry, renders, onShowRenders }: { entry: LoraEntry; renders?: Shot[]; onShowRenders: (search: string) => void }) {
+  const none = renders !== undefined && renders.length === 0
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <code className="rounded bg-black/40 px-1.5 py-0.5 text-zinc-300">{`<lora:${entry.name}:${entry.weight ?? 1}>`}</code>
@@ -359,14 +367,20 @@ function LoraTags({ entry, onShowRenders }: { entry: LoraEntry; onShowRenders: (
           {entry.olderVersions.length} older
         </span>
       ) : null}
-      <button
-        type="button"
-        onClick={() => onShowRenders(loraRenderSearch(entry.name))}
-        title="Show every render that used this LoRA"
-        className="ml-auto text-zinc-500 underline decoration-dotted underline-offset-2 hover:text-zinc-200"
-      >
-        all renders
-      </button>
+      {none ? (
+        <span className="ml-auto text-zinc-600" title="Nothing in the library has used this LoRA yet">
+          no renders yet
+        </span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onShowRenders(loraRenderSearch(entry.name))}
+          title="Show every render that used this LoRA"
+          className="ml-auto text-zinc-500 underline decoration-dotted underline-offset-2 hover:text-zinc-200"
+        >
+          all renders
+        </button>
+      )}
     </div>
   )
 }
@@ -422,7 +436,7 @@ function VariantRow({
             <span className="font-medium text-zinc-200">{label}</span>
             <span className="text-xs text-zinc-500">{entry.outfit ? KIND_LABEL[entry.kind] : ''}</span>
           </button>
-          <LoraTags entry={entry} onShowRenders={onShowRenders} />
+          <LoraTags entry={entry} renders={renders} onShowRenders={onShowRenders} />
           {!open ? <p className="truncate text-xs text-zinc-500">{entry.description}</p> : null}
         </div>
       </div>

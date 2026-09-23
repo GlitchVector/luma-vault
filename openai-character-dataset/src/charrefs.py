@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_loader import CHARACTERS_DIR, PROJECT_ROOT, Character, ConfigError, View, character_dir, load_character, load_views  # noqa: E402
-from file_utils import FileError, collect_into_sheets, file_into_vault, new_stamp, output_path, read_state, refresh_stale_copies, set_run, sheet_dir, validate_reference_images, write_image_bytes, write_state  # noqa: E402
+from file_utils import FileError, collect_into_sheets, file_into_vault, new_stamp, output_path, prune_review_set, read_state, refresh_stale_copies, set_run, sheet_dir, validate_reference_images, write_image_bytes, write_state  # noqa: E402
 from logger_utils import setup_logging  # noqa: E402
 from openai_image_client import ImageClientError, OpenAIImageClient  # noqa: E402
 from prompt_builder import PromptError, SEPARATOR, build_prompt, global_prompt, load_template  # noqa: E402
@@ -563,6 +563,17 @@ def cmd_pick(args: argparse.Namespace, log) -> int:
     return 0
 
 
+def cmd_prune(args: argparse.Namespace, log) -> int:
+    """Leave only the keepers in the vault review set (see prune_review_set). Run after the picks, after collect."""
+    character = load_character(args.name)
+    state = read_state(character)
+    if not state.get("stamp"):
+        log.error("no run yet for %s", character.name)
+        return 2
+    prune_review_set(character, state, log)
+    return 0
+
+
 def cmd_collect(args: argparse.Namespace, log) -> int:
     character = load_character(args.name)
     if args.all:
@@ -622,6 +633,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("name")
     p.add_argument("view")
     p.add_argument("picks", nargs="+")
+    p = sub.add_parser("prune", help="leave only the keepers in the vault review set; the rejected copies are deleted through the vault")
+    p.add_argument("name")
     p = sub.add_parser("collect", help="copy the starred views into the training sheet folders")
     p.add_argument("name")
     p.add_argument("--all", action="store_true", help="take every generated view instead of only the starred ones - use ONLY when the owner has accepted the whole set")
@@ -637,7 +650,7 @@ def main(argv: list[str] | None = None) -> int:
     log = setup_logging(PROJECT_ROOT / "logs", verbose=args.verbose)
     CHARACTERS_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        return {"init": cmd_init, "generate": cmd_generate, "resplit": cmd_resplit, "refresh": cmd_refresh, "pick": cmd_pick, "collect": cmd_collect, "status": cmd_status}[args.command](args, log)
+        return {"init": cmd_init, "generate": cmd_generate, "resplit": cmd_resplit, "refresh": cmd_refresh, "pick": cmd_pick, "prune": cmd_prune, "collect": cmd_collect, "status": cmd_status}[args.command](args, log)
     except (ConfigError, PromptError, FileError) as exc:
         log.error("%s", exc)
         return 2

@@ -167,6 +167,13 @@ describe('LorasPanel', () => {
     expect(onShowRenders).toHaveBeenCalledWith(expect.stringMatching(/^<lora:.+:$/))
   })
 
+  it('says "no renders yet" instead of linking to an empty grid for a LoRA nothing has used', async () => {
+    queryMedia.mockResolvedValue(page([]))
+    render(<LorasPanel onClose={() => {}} onShowRenders={() => {}} />)
+    await waitFor(() => expect(screen.getAllByText('no renders yet').length).toBeGreaterThan(0))
+    expect(screen.queryByRole('button', { name: 'all renders' })).toBeNull()
+  })
+
   it('opens a render at full size in the viewer, from the original rather than the thumbnail', async () => {
     queryMedia.mockResolvedValue({
       items: [{ id: 1, path: 'D:/out/full.png', thumbPath: 'T/full.jpg', generation: { prompt: 'ari, (cowboy shot:1.3)' } }],

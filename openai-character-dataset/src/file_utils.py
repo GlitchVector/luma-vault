@@ -188,6 +188,67 @@ def refresh_stale_copies(character: Character, state: dict, log) -> int:
     return refiled
 
 
+def keepers(character: Character, state: dict) -> set[str]:
+    """The vault file names `collect` would take: every recorded pick, else every member starred above REJECTED."""
+    run = set_run(character, state["stamp"])
+    starred = starred_files(character, run)
+    kept: set[str] = set()
+    for view in character.views:
+        entry = state["views"].get(view.key)
+        if not entry or entry.get("status") != "done":
+            continue
+        candidates = [Path(entry["file"]).name] + [Path(name).name for name in entry.get("alternatives", [])]
+        recorded = entry.get("chosen")
+        recorded = [recorded] if isinstance(recorded, str) else list(recorded or [])
+        chosen = recorded if recorded and all(name in candidates for name in recorded) else [name for name in candidates if vault_stars(starred, character, name) > REJECTED]
+        for name in chosen:
+            stem, suffix = Path(name).stem, Path(name).suffix
+            pattern = re.compile(rf"^refgen-{re.escape(slug(character.name))}-{re.escape(stem)}(-r\d+)?{re.escape(suffix)}$")
+            kept.update(vault_name for vault_name in starred if pattern.match(vault_name))
+            kept.add(f"refgen-{slug(character.name)}-{name}")
+    return kept
+
+
+def prune_review_set(character: Character, state: dict, log) -> tuple[int, int]:
+    """Leave only the keepers in the review set: the rest of its members are deleted through the vault.
+
+    Once the owner has picked, a set of 89 - every original and every alternative - is noise in the
+    sidebar (owner, 2026-09-23: "too much"). The rejected copies are ours, superseded, and every frame
+    still exists in out/; the delete goes through the vault so its index follows, and on a network
+    folder that delete is permanent.
+    """
+    run = set_run(character, state["stamp"])
+    root = Path(character.settings.vault_outdir)
+    manifests = sorted(root.glob(f"*/{MANIFEST_DIR}/{run}.json"))
+    if not manifests:
+        raise FileError(f"no manifest for {run} under {root}")
+    manifest_path = manifests[0]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    kept = keepers(character, state)
+    query = {
+        "folderId": None, "kind": None, "rating": None, "sexyOnly": False, "search": "", "searchPaths": False, "tag": None,
+        "set": run, "sets": [], "minStars": None, "maxStars": None, "unstarred": False, "hasPrompt": None, "img2img": None,
+        "extras": None, "label": None, "animated": None, "greyscale": None, "minLongestEdge": None, "duplicatesOnly": False,
+        "hideTags": [], "modifiedAfter": None, "modifiedBefore": None, "limit": 500, "offset": 0, "sort": "recent",
+    }
+    items = {Path(str(item["path"]).replace("\\", "/")).name: item for item in vault_rpc(character, "query_media", {"query": query})["items"]}
+    keep_members, drop = [], []
+    for member in manifest["members"]:
+        (keep_members if member["file"] in kept else drop).append(member)
+    ids = [int(items[m["file"]]["id"]) for m in drop if m["file"] in items]
+    if ids:
+        vault_rpc(character, "delete_media", {"ids": ids, "permanent": True})
+    for m in drop:
+        stray = manifest_path.parent.parent / m["file"]
+        if stray.exists() and m["file"] not in items:
+            stray.unlink()
+    manifest["members"] = keep_members
+    manifest["title"] = "generated references - the keepers"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    log.info("%s: %d kept, %d removed", run, len(keep_members), len(drop))
+    return len(keep_members), len(drop)
+
+
 def starred_files(character: Character, run: str) -> dict[str, int]:
     """Ask the vault how many stars each file of the set carries (only starred files come back)."""
     query = {
