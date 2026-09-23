@@ -435,6 +435,8 @@ def cmd_generate(args: argparse.Namespace, log) -> int:
                 saved = write_image_bytes(output, data)
                 entry.update(status="done", file=saved.name, prompt=prompt)
                 entry.pop("reason", None)
+                # A single render replaces a sheet cut for good: `resplit` must not put the sheet's figure back over it (it did, 2026-09-23).
+                entry.pop("sheet", None)
                 done += 1
                 log.info("[%d/%d] %s ok (attempt %d, %d s, %d KB)", index, len(batch), view.key, entry["attempts"], int(time.time() - started), len(data) // 1024)
                 if args.vault:
