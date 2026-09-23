@@ -529,6 +529,40 @@ def cmd_refresh(args: argparse.Namespace, log) -> int:
     return 0
 
 
+def cmd_pick(args: argparse.Namespace, log) -> int:
+    """Record the owner's pick for a view, said in words: the original, or alternatives by number (1, 2, ...) or file name.
+
+    His acknowledgement is the gate, whether it comes as stars in the vault or as words here; `collect` takes
+    what is recorded and copies every pick of the view. `original` clears the alternatives from the pick.
+    """
+    character = load_character(args.name)
+    state = read_state(character)
+    entry = state["views"].get(args.view)
+    if not entry or entry.get("status") != "done":
+        log.error("%s has no finished original", args.view)
+        return 2
+    alternatives = list(entry.get("alternatives", []))
+    chosen: list[str] = []
+    for token in args.picks:
+        if token == "original":
+            chosen.append(entry["file"])
+        elif token.isdigit():
+            n = int(token)
+            if not 1 <= n <= len(alternatives):
+                log.error("%s has %d alternative(s); %s is not one of them", args.view, len(alternatives), token)
+                return 2
+            chosen.append(alternatives[n - 1])
+        elif token in alternatives or token == entry["file"]:
+            chosen.append(token)
+        else:
+            log.error("%s is neither 'original', an alternative number nor a file of %s", token, args.view)
+            return 2
+    entry["chosen"] = chosen
+    write_state(character, state)
+    log.info("%s: %s", args.view, ", ".join(chosen))
+    return 0
+
+
 def cmd_collect(args: argparse.Namespace, log) -> int:
     character = load_character(args.name)
     if args.all:
@@ -584,6 +618,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--vault", action="store_true", help="also replace the copies in the vault review set")
     p = sub.add_parser("refresh", help="re-file vault copies that were overwritten in place, under a new name the index will see")
     p.add_argument("name")
+    p = sub.add_parser("pick", help="record the owner's pick for a view: original, or alternative numbers/files")
+    p.add_argument("name")
+    p.add_argument("view")
+    p.add_argument("picks", nargs="+")
     p = sub.add_parser("collect", help="copy the starred views into the training sheet folders")
     p.add_argument("name")
     p.add_argument("--all", action="store_true", help="take every generated view instead of only the starred ones - use ONLY when the owner has accepted the whole set")
@@ -599,7 +637,7 @@ def main(argv: list[str] | None = None) -> int:
     log = setup_logging(PROJECT_ROOT / "logs", verbose=args.verbose)
     CHARACTERS_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        return {"init": cmd_init, "generate": cmd_generate, "resplit": cmd_resplit, "refresh": cmd_refresh, "collect": cmd_collect, "status": cmd_status}[args.command](args, log)
+        return {"init": cmd_init, "generate": cmd_generate, "resplit": cmd_resplit, "refresh": cmd_refresh, "pick": cmd_pick, "collect": cmd_collect, "status": cmd_status}[args.command](args, log)
     except (ConfigError, PromptError, FileError) as exc:
         log.error("%s", exc)
         return 2

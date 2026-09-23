@@ -246,21 +246,27 @@ def collect_into_sheets(character: Character, state: dict, *, accept_all: bool =
         candidates = [Path(entry["file"]).name] + [Path(name).name for name in entry.get("alternatives", [])]
         # A copy re-filed by `refresh` carries an `-rN` suffix in the vault; the stars sit on that name.
         stars = {name: vault_stars(starred, character, name) for name in candidates}
-        # A pick the owner said in words is recorded as `chosen` on the view and outranks the stars.
-        chosen = [entry["chosen"]] if entry.get("chosen") in candidates else [name for name in candidates if stars[name] > REJECTED]
+        # A pick the owner said in words is recorded as `chosen` on the view (one name or several) and outranks
+        # the stars. Several keepers of one view are all taken: more correct frames of a pose are more data,
+        # not a conflict (owner, 2026-09-23: "body-06: 3 and 4").
+        recorded = entry.get("chosen")
+        recorded = [recorded] if isinstance(recorded, str) else list(recorded or [])
+        if recorded and all(name in candidates for name in recorded):
+            chosen = recorded
+        else:
+            chosen = [name for name in candidates if stars[name] > REJECTED]
         if accept_all:
             chosen = chosen[:1] or [name for name in candidates if stars[name] != REJECTED][:1]
         if not chosen:
             missing.append(f"{view.key} (generated, not starred)")
             continue
-        if len(chosen) > 1:
-            missing.append(f"{view.key} ({len(chosen)} starred - star only one: {', '.join(chosen)})")
-            continue
-        source = character.out_dir / chosen[0]
         dest_dir = sheet_dir(character, view.kind)
         dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / f"{slug(character.name)}-{view.kind}-{view.id}{source.suffix}"
-        shutil.copyfile(source, dest)
-        dest.with_suffix(".tags.txt").write_text(view.tags + "\n", encoding="utf-8")
-        counts[view.kind] = counts.get(view.kind, 0) + 1
+        for index, name in enumerate(chosen):
+            source = character.out_dir / name
+            extra = "" if index == 0 else f"-k{index + 1}"
+            dest = dest_dir / f"{slug(character.name)}-{view.kind}-{view.id}{extra}{source.suffix}"
+            shutil.copyfile(source, dest)
+            dest.with_suffix(".tags.txt").write_text(view.tags + "\n", encoding="utf-8")
+            counts[view.kind] = counts.get(view.kind, 0) + 1
     return counts, missing
