@@ -1,15 +1,15 @@
 {
   "name": "ari-space-leotard",
   "_outfit_of": "ari - the face, hair and body sentences are copied from characters/ari/character.json word for word. The face views are generated for this outfit too (owner, 2026-09-23): the shared head shots wear the headband, earrings and pendant this outfit does not have. The moderation gate refuses most views of this sheet several times before letting one through; the owner's experience is more than ten attempts and then success, so the retry cap stays at the default 30 and open views are simply run again.",
-  "description": "a young woman with a white chin-length bob with straight bangs whose tips fade to aqua, pale skin, large light blue eyes with long lashes, FULL SOFT LIPS, an hourglass figure with a full bust, a narrow waist, wide hips and thick thighs. She wears a glossy white vinyl one-piece bodysuit with high-cut leg openings, sleeveless, with a high neck closed by a broad silver ring collar with light-blue piping around the throat; a vertical zip runs down the centre front from the collar to the bottom of the front panel between two thin light-blue stripes; the sides of the torso are open from the underarm to the hip bone, and the back is open to the waist with two light-blue-edged white straps crossing between the shoulder blades through one silver O-ring; a round embroidered badge with a red-and-blue rocket emblem sits on her LEFT breast; a small silver O-ring on a short white tab hangs at each hip bone; glossy white opera gloves reach above the elbow, each with a white band edged in light blue around the upper arm; a plain white strap with one silver O-ring at its outer front circles her RIGHT thigh only, a hand's width above the knee; glossy white knee-high boots with one light-blue vertical stripe down the front, chunky white block heels and thick platform soles edged in light blue. On each side of her head a round silver disc with a blue centre sits over the ear, clipped into the hair. Her shoulders and upper back are uncovered. She does NOT wear a headband, earrings or a necklace with this outfit; no shorts, no top over the bodysuit, no belt, no tattoos, no socks, no strap on the left thigh.",
+  "description": "a young woman with a white chin-length bob with straight bangs whose tips fade to aqua, pale skin, large light blue eyes with long lashes, FULL SOFT LIPS, an hourglass figure with a full bust, a narrow waist, wide hips and thick thighs. She wears a glossy white vinyl one-piece bodysuit with high-cut leg openings, sleeveless, with a high neck closed by a broad silver ring collar with light-blue piping around the throat; a vertical zip runs down the centre front from the collar to the bottom of the front panel between two thin light-blue stripes; the sides of the torso are open from the underarm to the hip bone, and the back is open to the waist with two light-blue-edged white straps crossing between the shoulder blades through one silver O-ring; a round embroidered badge with a red-and-blue rocket emblem sits on her LEFT breast; a small silver O-ring on a short white tab hangs at each hip bone; glossy white opera gloves reach above the elbow, each with a white band edged in light blue around the upper arm; a plain white strap circles her RIGHT thigh only, a hand's width above the knee, with one silver O-ring at its outer FRONT - from behind the strap is a plain white band with no ring; glossy white knee-high boots with one light-blue vertical stripe down the FRONT centre only, chunky white block heels and thick platform soles edged in light blue; the back and the sides of each boot are plain white - there is NO stripe down the back of the boot (the reference sheet's back view is wrong on this one point and must not be copied), so from behind the boots show only white and the blue sole edge. On each side of her head a round silver disc with a blue centre sits over the ear, clipped into the hair. Her shoulders and upper back are uncovered. She does NOT wear a headband, earrings or a necklace with this outfit; no shorts, no top over the bodysuit, no belt, no tattoos, no socks, no strap on the left thigh.",
   "audit": [
-    "thigh strap: ONE strap, on her RIGHT thigh only, a hand's width above the knee, its silver O-ring at the outer front - from the front it is on the leg at the viewer's LEFT, from behind on the leg at the viewer's RIGHT; never on the left thigh, never on both, never at the boot top",
+    "thigh strap: ONE strap, on her RIGHT thigh only, a hand's width above the knee, its silver O-ring at the outer front - from the front it is on the leg at the viewer's LEFT, from behind on the leg at the viewer's RIGHT; never on the left thigh, never on both, never at the boot top; the ring is at the outer FRONT of the strap - from behind the strap is a plain band and no ring shows (owner, 2026-09-23)",
     "collar: broad silver ring collar with light-blue piping, continuous around the neck, visible from every angle including from behind above the harness ring; nothing hangs from it",
     "front: one centre zip from collar to crotch between two thin light-blue stripes; the round rocket badge on her LEFT breast (viewer's right when she faces the camera), never on the right breast and never on the back",
     "back: open to the small of the back, two light-blue-edged straps crossing between the shoulder blades through one silver O-ring, the leotard's rear a narrow white strip between the buttocks; no zip and no badge on the back",
     "sides: the torso is open from underarm to hip so bare skin shows at the waist in profile; one small silver O-ring on a white tab at each hip bone, seen in profile at the front edge of the hip",
     "gloves: glossy white above the elbow on both arms, a light-blue-edged band around each upper arm; shoulders bare; no sleeves, no cuffs other than the band",
-    "boots: glossy white, knee-high, one light-blue stripe down the front centre, chunky white block heel and thick platform sole edged in light blue; both feet in frame on body views; bare thighs between boot and leotard",
+    "boots: glossy white, knee-high, ONE light-blue stripe down the front centre only; the back of the boot is plain white with no stripe (owner, 2026-09-23 - the sheet's back view is wrong here), the sides plain white with the front stripe at the front edge; chunky white block heel and thick platform sole edged in light blue; both feet in frame on body views; bare thighs between boot and leotard",
     "hair discs: one round silver disc with a blue centre over EACH ear, clipped into the hair; the only thing on her head - no headband; and no earrings, no necklace, no pendant",
     "hair: white with aqua only at the ends; the fade must not creep up; bangs straight; chin length",
     "lips: full and soft; eyes large light blue; figure hourglass - full bust, narrow waist, wide hips, thick thighs, pale skin; no tattoos, no bracelet, no anklet, no socks",
@@ -80,7 +80,8 @@
     "detail/thigh-strap",
     "detail/glove-band",
     "detail/boots",
-    "detail/hair-disc"
+    "detail/hair-disc",
+    "detail/boots-back"
   ],
   "details": [
     {
@@ -122,6 +123,11 @@
       "id": "hair-disc",
       "prompt": "Close view of the side of her head in profile, framed from the crown to the jaw: the round silver disc with its blue centre clipped into the white hair over her ear fills the centre of the frame, the aqua tips of the bob below it, the silver collar just entering at the bottom edge. No headband, no earring. She is fully clothed exactly as in the reference.",
       "tags": "close-up, from side"
+    },
+    {
+      "id": "boots-back",
+      "prompt": "Close view of her feet and lower legs from directly behind, framed from the knees down: both glossy white knee-high boots seen from the back fill the frame - plain white shafts and heels with NO stripe down the back, the chunky white block heels, the thick platform soles edged in light blue - bare backs of the knees above. Nothing else in frame.",
+      "tags": "feet, from behind"
     }
   ],
   "views_available": [
