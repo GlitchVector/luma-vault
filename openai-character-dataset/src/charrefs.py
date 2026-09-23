@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config_loader import CHARACTERS_DIR, PROJECT_ROOT, Character, ConfigError, View, character_dir, load_character, load_views  # noqa: E402
-from file_utils import FileError, collect_into_sheets, file_into_vault, new_stamp, output_path, read_state, set_run, sheet_dir, validate_reference_images, write_image_bytes, write_state  # noqa: E402
+from file_utils import FileError, collect_into_sheets, file_into_vault, new_stamp, output_path, read_state, refresh_stale_copies, set_run, sheet_dir, validate_reference_images, write_image_bytes, write_state  # noqa: E402
 from logger_utils import setup_logging  # noqa: E402
 from openai_image_client import ImageClientError, OpenAIImageClient  # noqa: E402
 from prompt_builder import PromptError, SEPARATOR, build_prompt, global_prompt, load_template  # noqa: E402
@@ -456,6 +456,18 @@ def cmd_resplit(args: argparse.Namespace, log) -> int:
     return 0
 
 
+def cmd_refresh(args: argparse.Namespace, log) -> int:
+    """Re-file every vault copy the index has not noticed changing (see refresh_stale_copies)."""
+    character = load_character(args.name)
+    state = read_state(character)
+    if not state.get("stamp"):
+        log.error("no run yet for %s", character.name)
+        return 2
+    n = refresh_stale_copies(character, state, log)
+    log.info("%d stale cop%s re-filed", n, "y" if n == 1 else "ies")
+    return 0
+
+
 def cmd_collect(args: argparse.Namespace, log) -> int:
     character = load_character(args.name)
     if args.all:
@@ -509,6 +521,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("resplit", help="re-cut every sheet-mode view from its kept sheet with the current split")
     p.add_argument("name")
     p.add_argument("--vault", action="store_true", help="also replace the copies in the vault review set")
+    p = sub.add_parser("refresh", help="re-file vault copies that were overwritten in place, under a new name the index will see")
+    p.add_argument("name")
     p = sub.add_parser("collect", help="copy the starred views into the training sheet folders")
     p.add_argument("name")
     p.add_argument("--all", action="store_true", help="take every generated view instead of only the starred ones - use ONLY when the owner has accepted the whole set")
@@ -524,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
     log = setup_logging(PROJECT_ROOT / "logs", verbose=args.verbose)
     CHARACTERS_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        return {"init": cmd_init, "generate": cmd_generate, "resplit": cmd_resplit, "collect": cmd_collect, "status": cmd_status}[args.command](args, log)
+        return {"init": cmd_init, "generate": cmd_generate, "resplit": cmd_resplit, "refresh": cmd_refresh, "collect": cmd_collect, "status": cmd_status}[args.command](args, log)
     except (ConfigError, PromptError, FileError) as exc:
         log.error("%s", exc)
         return 2

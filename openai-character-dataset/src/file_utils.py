@@ -115,6 +115,78 @@ def file_into_vault(character: Character, image: Path, *, stamp: str, label: str
 REJECTED = 1
 
 
+def vault_rpc(character: Character, name: str, args: dict) -> object:
+    body = json.dumps({"name": name, "args": args}).encode("utf-8")
+    request = urllib.request.Request(character.settings.vault_rpc, data=body, headers={"content-type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            answer = json.loads(response.read().decode("utf-8"))
+    except OSError as exc:
+        raise FileError(f"vault not reachable at {character.settings.vault_rpc}: {exc}") from exc
+    if "ok" not in answer:
+        raise FileError(f"vault {name} failed: {json.dumps(answer)[:300]}")
+    return answer["ok"]
+
+
+def refresh_stale_copies(character: Character, state: dict, log) -> int:
+    """Give every overwritten vault copy a new name, so the vault sees a new file.
+
+    The vault indexes a path once and leaves the row alone on a rescan by design (a backup tool
+    rewriting timestamps must not wipe a library's thumbnails), and the watcher did not see the
+    in-place overwrites the re-renders and re-cuts made over the share (2026-09-23: the set still
+    showed the old back views). So a copy whose index row is older than the file on disk is filed
+    again as `<name>-r<N>`, the manifest member points at the new file, and the stale row's file
+    is deleted through the vault, which on a network folder is permanent - it is our own superseded
+    copy, the truth is in out/.
+    """
+    run = set_run(character, state["stamp"])
+    query = {
+        "folderId": None, "kind": None, "rating": None, "sexyOnly": False, "search": "", "searchPaths": False, "tag": None,
+        "set": run, "sets": [], "minStars": None, "maxStars": None, "unstarred": False, "hasPrompt": None, "img2img": None,
+        "extras": None, "label": None, "animated": None, "greyscale": None, "minLongestEdge": None, "duplicatesOnly": False,
+        "hideTags": [], "modifiedAfter": None, "modifiedBefore": None, "limit": 500, "offset": 0, "sort": "recent",
+    }
+    items = vault_rpc(character, "query_media", {"query": query})["items"]
+    by_name = {Path(str(item["path"]).replace("\\", "/")).name: item for item in items}
+    root = Path(character.settings.vault_outdir)
+    manifests = sorted(root.glob(f"*/{MANIFEST_DIR}/{run}.json"))
+    if not manifests:
+        raise FileError(f"no manifest for {run} under {root}")
+    manifest_path = manifests[0]
+    day = manifest_path.parent.parent
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    members = manifest["members"]
+    refiled = 0
+    for key, entry in state["views"].items():
+        if entry.get("status") != "done" or not entry.get("file"):
+            continue
+        source = character.out_dir / entry["file"]
+        if not source.is_file():
+            continue
+        member = next((m for m in members if Path(m["file"]).stem.startswith(f"refgen-{slug(character.name)}-{source.stem}")), None)
+        if member is None:
+            continue
+        item = by_name.get(member["file"])
+        if item is None:
+            continue  # not indexed at all: a rescan picks it up as new
+        disk_ms = int(source.stat().st_mtime * 1000)
+        if abs(int(item.get("modifiedAt") or 0) - disk_ms) < 5000 and (source.stat().st_size == int(item.get("sizeBytes") or item.get("size") or -1) or "sizeBytes" not in item and "size" not in item):
+            continue
+        # A new name the index has never seen.
+        n = 2
+        while (day / f"refgen-{slug(character.name)}-{source.stem}-r{n}{source.suffix}").exists():
+            n += 1
+        target = day / f"refgen-{slug(character.name)}-{source.stem}-r{n}{source.suffix}"
+        shutil.copyfile(source, target)
+        old_file = member["file"]
+        member["file"] = target.name
+        vault_rpc(character, "delete_media", {"ids": [int(item["id"])], "permanent": True})
+        log.info("%s: %s -> %s (stale row %s deleted)", key, old_file, target.name, item["id"])
+        refiled += 1
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return refiled
+
+
 def starred_files(character: Character, run: str) -> dict[str, int]:
     """Ask the vault how many stars each file of the set carries (only starred files come back)."""
     query = {

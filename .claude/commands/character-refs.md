@@ -74,6 +74,14 @@ nothing is lost for training. Only body and cowboy views go this way; upper, fac
 stay single. Run the sheet pass first and the normal pass after it, never both at once: they share
 `state.json`.
 
+**Never overwrite a vault copy in place.** The vault indexes a path once; a rescan leaves a known row
+alone by design, and the watcher did not see in-place overwrites made over the share (2026-09-23: the
+set kept showing the old back views after eleven re-renders and a re-cut). After any `--redo` or
+`resplit`, run `pnpm refs refresh <name>`: every copy whose index row is older than the file is filed
+again as `<name>-r<N>`, the manifest points at it, and the stale row's file is deleted through the
+vault (permanent on a network folder; it is our own superseded copy, the frame lives in `out/`). Then
+`rescan_folder` picks the new files up.
+
 ## 4. Collect, and on to the recipe
 
 `pnpm refs collect <name>` copies the STARRED frames into one folder per kind under `D:/AI/lora-train/sheets/`:
