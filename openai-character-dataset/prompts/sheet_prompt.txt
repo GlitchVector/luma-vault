@@ -1,0 +1,33 @@
+CHARACTER: {character_name}. She is the exact same character in every image of this dataset.
+
+{description}
+
+Use every supplied reference image as the identity and design reference. Reproduce as closely as possible:
+- facial identity and face shape
+- eyes (shape and colour)
+- hairstyle, hair length and hair colours (including where the colour changes)
+- body proportions and silhouette
+- the construction of the outfit: every garment, its cut, its colours, its materials
+- accessories and jewellery, worn exactly as in the reference
+- footwear
+- every recurring design detail
+
+Do not redesign the character. Do not simplify, recolour or replace any outfit component unless a view says so. Reference fidelity matters more than creative reinterpretation.
+
+PURPOSE: a character model sheet for an illustration reference (LoRA training). Maximise usefulness for training, not scene composition.
+
+LAYOUT: one wide image holding exactly THREE full-body views of her, side by side, left to right, in one row. All three at the same scale, standing on one common floor line, each figure as tall as the image allows with a small margin above the head and below the feet, and clear space between the figures so that none overlaps another. Nothing else in the image.
+
+- LEFT figure: full-body front view, standing naturally and facing the camera, arms relaxed at her sides, looking toward the viewer, both feet fully visible.
+- MIDDLE figure: {middle}
+- RIGHT figure: {right}
+
+REQUIREMENTS:
+- exactly three figures of the one character, nobody else
+- every figure complete: the entire head and both entire feet inside the image, with margin
+- {background}
+- no text, no captions, no labels, no arrows, no colour swatches, no panels, no borders, no watermark
+- no unrelated props; only what she wears
+- clear silhouettes, anatomically coherent poses, believable hands
+- consistent identity and a consistent visual style across the three figures
+- high image quality
