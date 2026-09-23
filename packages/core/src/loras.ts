@@ -96,6 +96,21 @@ export const CUSTOM_LORAS: readonly LoraEntry[] = [
     note: 'v4 trains on the 58-view set (23 body, 8 cowboy, 8 upper, 13 head shots with the collar in frame, 6 garment close-ups) plus the 45 undressed candidates; v3 e28 is the best file so far (shorts held 12/12 at 1.2, the top at cowboy/face scale still open).',
   },
   {
+    name: 'ari_gen_space_leotard_s1',
+    dataset: 'ari-space-leotard',
+    outfit: 'Space-leotard',
+    parent: 'ari_gen_v4',
+    trigger: 'arispaceleotard',
+    character: 'Ari',
+    kind: 'outfit',
+    description:
+      'Ari in the retro-futuristic space leotard from her second sheet (2026-09-23): white vinyl one-piece with light-blue piping and a centre zip, ring collar, open sides and a crossed harness back, rocket badge on her left breast, opera gloves, one O-ring strap on her right thigh, white knee boots with a front stripe, silver discs over the ears; no headband, earrings or necklace with this outfit.',
+    status: 'wip',
+    weight: null,
+    olderVersions: [],
+    note: 'First outfit variant built through the reference pipeline in sheet mode (the gate refused single figures of this sheet). Dataset prepped 2026-09-23: 24 body, 6 cowboy + 22 cuts, 8 upper + 22 cuts, 13 face, 9 details; nothing with the badge or the strap mirrored. Stage 1 not yet trained.',
+  },
+  {
     name: 'celoracle_v3',
     dataset: 'oracle',
     outfit: null,
