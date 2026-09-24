@@ -317,7 +317,9 @@ export const writerConfigSchema = z.object({
 })
 
 export const configSchema = z.object({
-  renderer: z.enum(['forge', 'mock']).default('forge'),
+  renderer: z.enum(['forge', 'comfy', 'mock']).default('forge'),
+  /** ComfyUI, for regional renders: each character's LoRA confined to her figure in one pass. */
+  comfy: z.object({ url: z.string().default('http://127.0.0.1:8188'), timeout_s: z.number().min(10).default(900) }).prefault({}),
   forge: forgeConfigSchema,
   prompt: promptConfigSchema,
   page: pageConfigSchema.prefault({}),

@@ -11,11 +11,12 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { dirname, join } from 'node:path'
 import { requestHash, type RenderRequest, type Sidecar } from '../cache.ts'
 import { bucketFor, sizeForCellBox, targetForCell } from '../layouts.ts'
-import { buildPrompt, facePrompt, scaleLora } from '../prompt.ts'
+import { buildPrompt, facePrompt, regionPrompt, scaleLora } from '../prompt.ts'
 import { DUMMIES, plateSizeFor, type PlateBackend } from '../plates/plate.ts'
 import { maskForColour, maskPng } from '../plates/mask.ts'
 import { PNG } from 'pngjs'
 import { loadScript, writeJson, type Project } from '../project.ts'
+import { ComfyRenderer } from '../render/comfy.ts'
 import { ForgeRenderer } from '../render/forge.ts'
 import { MockRenderer } from '../render/mock.ts'
 import type { InpaintRequest, Prepared, Renderer } from '../render/renderer.ts'
@@ -60,6 +61,7 @@ export interface PlanOptions {
 export function rendererFor(project: Project): Renderer {
   const name = process.env['COMIC_RENDERER'] ?? project.config.renderer
   if (name === 'mock') return new MockRenderer()
+  if (name === 'comfy') return new ComfyRenderer(project.config.comfy)
   return new ForgeRenderer(project.config.forge)
 }
 
@@ -112,8 +114,15 @@ export function planPanel(
   // are one render with one light (the repaint route read as pasted-in). Two
   // or more cast members still need the multi-pass route, or their LoRAs
   // would share a prompt.
-  const multi = sketched && panel.characters.length > 1
-  const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: !multi })
+  // ComfyUI can confine each LoRA to its character's figure in ONE render, so
+  // there every panel with a cast is regional: the place drawn with no LoRA
+  // and none of her colours, each character with hers, lit like the place.
+  const regional = sketched && backend === 'comfy' && panel.characters.length > 0
+  const multi = sketched && !regional && panel.characters.length > 1
+  const built = buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: !multi })
+  const background = regional ? buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: false, body: false, look: false }).prompt : ''
+  const prompt = regional ? background : built.prompt
+  const negative = built.negative
   // With a plate, each character is painted alone into her own mask, so
   // each gets a prompt naming only her - the panel prompt names them all.
   // No `figures` here: a mask holds one character, never the crowd around her.
@@ -131,7 +140,7 @@ export function planPanel(
     // On the sketch route the face pass is a plain one, no LoRA: it only
     // cleans up small faces in the crowd (a guest's face came back as a teal
     // block). The cast's faces are redrawn by the repaint with their LoRAs.
-    face: multi ? plainFaceFor(project, negative) : faceFor(project, panel, script),
+    face: regional ? undefined : multi ? plainFaceFor(project, negative) : faceFor(project, panel, script),
     steps: forge.steps,
     cfg: forge.cfg,
     sampler: forge.sampler,
@@ -154,6 +163,20 @@ export function planPanel(
                     id,
                     prompt: characterPrompts[index]!,
                     negative: [negative, character.negative].filter(Boolean).join(', '),
+                    ...(character.hair?.length ? { hair: character.hair } : {}),
+                  }
+                }),
+              }
+            : undefined,
+          regional: regional
+            ? {
+                background,
+                grow: project.config.sketch.mask_grow,
+                cast: panel.characters.map((id) => {
+                  const character = script.characters[id]!
+                  return {
+                    id,
+                    prompt: regionPrompt(character, panel, project.config, page.body, page.lighting),
                     ...(character.hair?.length ? { hair: character.hair } : {}),
                   }
                 }),
@@ -407,6 +430,21 @@ async function paintFromSketch(
   report: Reporter,
   onProgress: (progress: number, eta: number | undefined) => void,
 ): Promise<{ png: Buffer; info?: unknown }> {
+  const regional = plan.request.regional
+  if (regional && renderer.renderRegional) {
+    // Her figure is found in the SKETCH, before anything is drawn: the render
+    // follows the sketch's layout, so her mask there is where she will be.
+    const hair = Object.fromEntries(regional.cast.filter((c) => c.hair?.length).map((c) => [c.id, c.hair!]))
+    const people = await findPeople(sketch.python, sketch.png, { grow: regional.grow, hair })
+    const assigned = assignFigures(people, regional.cast)
+    const { width, height } = PNG.sync.read(sketch.png)
+    const regions = regional.cast.map((member, index) => {
+      const mine = assigned.filter((a) => a.castIndex === index).map((a) => a.person.mask)
+      if (mine.length === 0) report.emit({ event: 'note', message: `${plan.id}: no figure found for ${member.id} in the sketch; her LoRA covers the whole panel` })
+      return { prompt: member.prompt, mask: mine.length ? unionMask(mine) : maskPng({ width, height, data: new Uint8Array(width * height).fill(255), found: width * height }) }
+    })
+    return renderer.renderRegional(plan.request, regional.background, regions, sketch.png, onProgress)
+  }
   const first = await renderer.render(plan.request, onProgress, sketch.png)
   const repaint = plan.request.repaint
   if (!repaint || repaint.cast.length === 0) return first
@@ -466,6 +504,15 @@ async function paintFromSketch(
     infos.push(result.info)
   }
   return { png: current, info: infos }
+}
+
+/** Several figure masks as one: her and her reflection are one region. */
+function unionMask(masks: Buffer[]): Buffer {
+  const images = masks.map((m) => PNG.sync.read(m))
+  const { width, height } = images[0]!
+  const data = new Uint8Array(width * height)
+  for (const image of images) for (let i = 0; i < data.length; i++) if (image.data[i * 4]! > 127) data[i] = 255
+  return maskPng({ width, height, data, found: 1 })
 }
 
 /** The cast with every LoRA weight scaled, for the unify pass. */

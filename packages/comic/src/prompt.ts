@@ -170,6 +170,40 @@ export function lightingFor(book: string, page?: string, panel?: string): string
 }
 
 /**
+ * Words in a scene that say how it is lit. A character drawn in her own
+ * region is otherwise lit like her reference sheets, whatever the room is
+ * doing (owner, 2026-09-24: "tags for lighting, to try matching the lighting
+ * of the current scene").
+ */
+const LIGHT_WORDS = /\b(night|dusk|dawn|sunset|sunrise|evening|morning|day|daytime|twilight|golden hour|backlighting|backlit|rim light|string lights|fairy lights|neon|lamp|lamplight|candlelight|firelight|moonlight|sunlight|window light|street light|streetlight|lantern|bokeh|dim|dark|shadow|shade|indoors|outdoors|light rays|sunbeam|glowing)\b/i
+
+export function sceneLight(scene: string): string[] {
+  return scene
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t && LIGHT_WORDS.test(t))
+}
+
+/**
+ * One character's prompt for a regional render: her LoRA, trigger, look and
+ * body, the camera, and the panel's light - the book's, page's or panel's
+ * lighting plus the scene's own light words - so she is lit like the place.
+ */
+export function regionPrompt(
+  character: Character,
+  panel: Pick<Panel, 'camera' | 'scene' | 'body' | 'lighting'>,
+  config: Pick<Config, 'prompt'>,
+  pageBody?: string,
+  pageLighting?: string,
+): string {
+  const light = [...sceneLight(panel.scene), lightingFor(config.prompt.lighting, pageLighting, panel.lighting)]
+  return [config.prompt.quality, character.subject, loraTag(character.lora), character.trigger, character.look, bodyFor(character, pageBody, panel.body, panel.camera), weighted(panel.camera, config.prompt.camera_weight, config.prompt.angle_weight), ...light, config.prompt.style]
+    .map((part) => (part ?? '').trim().replace(/,\s*$/, ''))
+    .filter(Boolean)
+    .join(', ')
+}
+
+/**
  * The prompt the face pass paints with: her, and nothing about the scene.
  *
  * Deliberately not the panel's prompt. ADetailer applies whatever it is
