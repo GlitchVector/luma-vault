@@ -108,7 +108,7 @@ export const CUSTOM_LORAS: readonly LoraEntry[] = [
     status: 'wip',
     weight: null,
     olderVersions: [],
-    note: 'First outfit variant built through the reference pipeline in sheet mode (the gate refused single figures of this sheet). Dataset prepped 2026-09-23: 24 body, 6 cowboy + 22 cuts, 8 upper + 22 cuts, 13 face, 9 details; nothing with the badge or the strap mirrored. Stage 1 not yet trained.',
+    note: 'First outfit variant built through the reference pipeline in sheet mode (the gate refused single figures of this sheet). Dataset rebuilt 2026-09-24 without body-frame cuts: 24 body, 21 native cowboys, 24 native uppers, 13 face, 9 details + 4 mirrors; nothing with the badge or the strap mirrored. Stage 1 not yet trained.',
   },
   {
     name: 'ari_gen_space_dress_s1',
