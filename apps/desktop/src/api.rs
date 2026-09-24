@@ -1092,6 +1092,83 @@ pub fn comic_cancel(_state: &AppState) -> Result<bool, String> {
 }
 
 // ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+fn chats_root(state: &AppState) -> PathBuf {
+    crate::chat::chats_root(&state.data_dir)
+}
+
+/// The CLI, or the sentence the page shows instead of a composer.
+fn claude_bin(state: &AppState) -> Result<&std::path::Path, String> {
+    state.claude.as_deref().ok_or_else(|| {
+        "the claude CLI is not installed here: install Claude Code and restart the app".to_string()
+    })
+}
+
+/// Turns run in the repository, like the pipelines do: that is where the
+/// notes, the skills and the code the CLI is asked about all are.
+fn chat_launch<'a>(state: &'a AppState, root: &'a std::path::Path) -> Result<crate::chat::Launch<'a>, String> {
+    Ok(crate::chat::Launch { bin: claude_bin(state)?, root, cwd: &state.repo_root })
+}
+
+pub fn chat_index(state: &AppState) -> Result<crate::types::ChatIndex, String> {
+    Ok(crate::chat::registry().index(&chats_root(state), state.claude.is_some(), &state.repo_root))
+}
+
+/// A new conversation. Returns once the CLI is running; the panel follows
+/// the turn through `chat_feed`. Like a comic stage, this runs where the
+/// library is: that machine has the CLI, the sign-in and the repo.
+///
+/// A `comic:<name>` topic is the Comics panel's story chat: the first turn
+/// is told where that project lives and that it is talking to a person in
+/// a chat window, so `/story` asks its questions as text and waits.
+pub fn chat_start(
+    state: &AppState,
+    message: String,
+    model: Option<String>,
+    topic: Option<String>,
+) -> Result<crate::types::ChatSessionInfo, String> {
+    let root = chats_root(state);
+    let launch = chat_launch(state, &root)?;
+    let context = match topic.as_deref().and_then(|t| t.strip_prefix("comic:")) {
+        Some(name) if crate::comic::valid_name(name) => Some(format!(
+            "This conversation belongs to the comic \"{name}\" in the app's Comics panel. The project folder is {dir}; \
+             its prose is {dir}/prose.md and the panel reads that file when the comic is opened. The person is reading \
+             you in a chat window and answers each message: when a step needs a choice, put the options in the message \
+             as a numbered list and END THE TURN - the next message is the answer. AskUserQuestion is not available here.",
+            dir = comics_root(state).join(name).display()
+        )),
+        _ => None,
+    };
+    crate::chat::start(
+        crate::chat::registry(),
+        &launch,
+        &message,
+        crate::chat::StartOptions { model, topic, context },
+    )
+    .map_err(stringify)
+}
+
+pub fn chat_send(state: &AppState, id: String, message: String) -> Result<crate::types::ChatSessionInfo, String> {
+    let root = chats_root(state);
+    let launch = chat_launch(state, &root)?;
+    crate::chat::send(crate::chat::registry(), &launch, &id, &message).map_err(stringify)
+}
+
+pub fn chat_feed(state: &AppState, id: String, since: i64) -> Result<crate::types::ChatFeed, String> {
+    crate::chat::registry().feed(&chats_root(state), &id, since).map_err(stringify)
+}
+
+pub fn chat_stop(state: &AppState, id: String) -> Result<bool, String> {
+    Ok(crate::chat::registry().stop(&chats_root(state), &id))
+}
+
+pub fn chat_remove(state: &AppState, id: String) -> Result<bool, String> {
+    Ok(crate::chat::registry().remove(&chats_root(state), &id))
+}
+
+// ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------
 
@@ -1427,6 +1504,14 @@ pub async fn dispatch(
         )?),
         "comic_status" => ok(comic_status(state, arg(args, "since")?)?),
         "comic_cancel" => ok(comic_cancel(state)?),
+        // A chat runs where the CLI and the repo are, for the same reason a
+        // comic stage does; a browser on the LAN asks this machine to run it.
+        "chat_index" => ok(chat_index(state)?),
+        "chat_start" => ok(chat_start(state, arg(args, "message")?, arg(args, "model")?, arg(args, "topic")?)?),
+        "chat_send" => ok(chat_send(state, arg(args, "id")?, arg(args, "message")?)?),
+        "chat_feed" => ok(chat_feed(state, arg(args, "id")?, arg(args, "since")?)?),
+        "chat_stop" => ok(chat_stop(state, arg(args, "id")?)?),
+        "chat_remove" => ok(chat_remove(state, arg(args, "id")?)?),
         "deviantart_send" => ok(deviantart_send(
             app,
             state,

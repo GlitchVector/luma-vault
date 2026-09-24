@@ -226,3 +226,39 @@ and all three are needed:
 A session can do everything a person at that machine can, deletions included.
 That is deliberate, and it means the passphrase is the only thing between the LAN
 and the library.
+
+## The Chat page
+
+A conversation with Claude Code from inside the app, built the way Diorama
+(`DigitecGalaxus/Dg.DesignWorkspace`) does it. `apps/desktop/src/chat.rs`
+holds the whole mechanism; the panel is `apps/web/src/components/ChatPanel.tsx`.
+
+- **Every message is one process.** A turn is `claude -p` reading the prompt
+  from stdin and printing `stream-json`; it exits when the reply is complete.
+  The conversation lives in the CLI's own transcript, keyed by a UUID this app
+  makes up: `--session-id` on the first turn, `--resume=<id>` after. That is
+  why Stop is a plain kill (`taskkill /t` on Windows, so the shell it was
+  running dies too) and why a restart of the app loses nothing.
+- **The feed is polled, not streamed.** Events are numbered and kept in a
+  static registry like the comic runner's, and `chat_feed(id, since)` answers
+  with what is new — the same path for the window and for a browser on the
+  LAN. Text arrives one whole block at a time; partial deltas are dropped.
+- **Nothing can answer a question.** `--permission-mode auto`,
+  `--permission-prompts none` and `--disallowedTools AskUserQuestion`: a
+  turn that would prompt is denied rather than waited on, and the first turn's
+  preamble says so to the model.
+- **Turns run in the repository**, so the CLI reads `CLAUDE.md`, `.ai/` and
+  the skills, and can change the vault the way a terminal session would.
+- **Conversations persist** as `chats/<id>.json` under app data. One left
+  `running` by a process that died is settled as failed on load, with a line
+  saying so.
+- **The Comics panel's first step is a story chat.** `ChatView` (the feed and
+  composer without the list) opens on the conversation tagged `comic:<name>`,
+  or a new one with `/story <name>` already typed; the Rust side gives that
+  topic's first turn the project folder and the rule that questions go in the
+  message as a numbered list, since `AskUserQuestion` cannot run in `-p` mode.
+  When a turn ends the panel re-reads the comic, because `/story` writes
+  `prose.md` at its last step.
+- `cargo test a_real_turn -- --ignored` runs two real turns against the
+  installed CLI; it is outside the gate because it needs a sign-in and the
+  network.

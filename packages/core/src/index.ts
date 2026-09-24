@@ -214,8 +214,16 @@ export type {
   ComicInspection,
   ComicPanelStatus,
   ComicSettings,
+  ChatSessionInfo,
+  ChatEvent,
+  ChatFeed,
+  ChatIndex,
 } from './schemas.ts'
 export {
+  chatEventSchema,
+  chatFeedSchema,
+  chatIndexSchema,
+  chatSessionInfoSchema,
   comicSummarySchema,
   loraDatasetSchema,
   loraImageSchema,

@@ -33,7 +33,10 @@ const sets = [
 const onSets = vi.fn()
 const onPage = vi.fn()
 
-function sidebar(given: SetSummary[] = sets, extra: { page?: Page; selectedSets?: string[]; onHome?: () => void } = {}) {
+function sidebar(
+  given: SetSummary[] = sets,
+  extra: { page?: Page; selectedSets?: string[]; onHome?: () => void; chatSlot?: (node: HTMLDivElement | null) => void } = {},
+) {
   return (
     <FolderSidebar
       folders={[]}
@@ -57,6 +60,7 @@ function sidebar(given: SetSummary[] = sets, extra: { page?: Page; selectedSets?
       onImportRatings={vi.fn()}
       exclusions={[]}
       onInclude={vi.fn()}
+      chatSlot={extra.chatSlot}
     />
   )
 }
@@ -125,6 +129,20 @@ describe('FolderSidebar sections', () => {
 
     render(sidebar(sets, { page: 'library' }))
     expect(screen.queryByTestId('comics-slot')).toBeNull()
+  })
+
+  it('lists Chat as a page and lends it a section for its conversations', () => {
+    const chatSlot = vi.fn()
+    const { unmount } = render(sidebar(sets, { page: 'chat', chatSlot }))
+    expect(screen.getByRole('navigation', { name: 'Pages' }).textContent).toContain('Chat')
+    expect(screen.getByTestId('chat-slot')).toBeTruthy()
+    expect(chatSlot).toHaveBeenCalledWith(expect.any(HTMLDivElement))
+    unmount()
+
+    render(sidebar(sets, { page: 'library', chatSlot }))
+    expect(screen.queryByTestId('chat-slot')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^Chat/ }))
+    expect(onPage).toHaveBeenLastCalledWith('chat')
   })
 
   it('keeps the training rounds out of Sets, and Sets is open by default', () => {

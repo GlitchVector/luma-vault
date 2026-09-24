@@ -1,0 +1,33 @@
+[
+  {
+    "available": true,
+    "cwd": "D:/Development/luma-vault",
+    "sessions": [
+      {
+        "id": "e9a2bbd7-ebe5-4307-9022-ceb4976fdf56",
+        "title": "Why does the grid reflow when a GIF loads?",
+        "status": "running",
+        "model": null,
+        "createdAt": 1790100000000,
+        "lastActivityAt": 1790100012000,
+        "turns": 1,
+        "topic": null
+      },
+      {
+        "id": "3f0c4d2a-9b1e-4c7d-8a5f-1e2d3c4b5a69",
+        "title": "Rename the Comics page to Books",
+        "status": "failed",
+        "model": "opus",
+        "createdAt": 1790000000000,
+        "lastActivityAt": 1790000090000,
+        "turns": 3,
+        "topic": "comic:first-light"
+      }
+    ]
+  },
+  {
+    "available": false,
+    "cwd": "/home/me/luma-vault",
+    "sessions": []
+  }
+]

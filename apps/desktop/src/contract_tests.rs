@@ -172,6 +172,16 @@ fn comic_statuses_match_the_shared_fixture() {
 }
 
 #[test]
+fn chat_index_matches_the_shared_fixture() {
+    round_trip::<Vec<crate::types::ChatIndex>>(include_str!("../../../contracts/chat-index.json"));
+}
+
+#[test]
+fn chat_feeds_match_the_shared_fixture() {
+    round_trip::<Vec<crate::types::ChatFeed>>(include_str!("../../../contracts/chat-feed.json"));
+}
+
+#[test]
 fn comic_inspections_match_the_shared_fixture() {
     round_trip::<crate::types::ComicInspection>(include_str!(
         "../../../contracts/comic-inspection.json"

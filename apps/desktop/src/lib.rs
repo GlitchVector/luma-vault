@@ -17,6 +17,7 @@
 //! see `remote.rs`.
 
 mod api;
+mod chat;
 mod classifier;
 mod comic;
 mod db;
@@ -86,6 +87,9 @@ pub struct AppState {
     patreon: Option<PathBuf>,
     /// The comic pipeline's entry point, resolved the same way.
     comic: Option<PathBuf>,
+    /// The `claude` CLI, resolved once at startup. `None` when it is not
+    /// installed, which the Chat page reports as a setup step.
+    claude: Option<PathBuf>,
     /// Where `.env` and the harness live in a dev tree. The Patreon client is
     /// spawned from here so it finds both.
     repo_root: PathBuf,
@@ -496,6 +500,41 @@ async fn comic_cancel(state: State<'_, AppState>) -> Result<bool, String> {
 }
 
 #[tauri::command(async)]
+async fn chat_index(state: State<'_, AppState>) -> Result<types::ChatIndex, String> {
+    api::chat_index(&state)
+}
+
+#[tauri::command(async)]
+async fn chat_start(
+    state: State<'_, AppState>,
+    message: String,
+    model: Option<String>,
+    topic: Option<String>,
+) -> Result<types::ChatSessionInfo, String> {
+    api::chat_start(&state, message, model, topic)
+}
+
+#[tauri::command(async)]
+async fn chat_send(state: State<'_, AppState>, id: String, message: String) -> Result<types::ChatSessionInfo, String> {
+    api::chat_send(&state, id, message)
+}
+
+#[tauri::command(async)]
+async fn chat_feed(state: State<'_, AppState>, id: String, since: i64) -> Result<types::ChatFeed, String> {
+    api::chat_feed(&state, id, since)
+}
+
+#[tauri::command(async)]
+async fn chat_stop(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    api::chat_stop(&state, id)
+}
+
+#[tauri::command(async)]
+async fn chat_remove(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    api::chat_remove(&state, id)
+}
+
+#[tauri::command(async)]
 async fn deviantart_mark(
     state: State<'_, AppState>,
     ids: Vec<i64>,
@@ -890,6 +929,7 @@ pub fn run() {
                 upscaler: upscaler::resolve(&repo_root, resource_dir.as_deref()),
                 patreon: patreon::resolve(&repo_root, resource_dir.as_deref()),
                 comic: comic::resolve(&repo_root, resource_dir.as_deref()),
+                claude: chat::resolve(),
                 repo_root: repo_root.clone(),
                 data_dir: data_dir.clone(),
                 remote: Arc::new(RemoteState::new(remote::DEFAULT_PORT)),
@@ -1033,6 +1073,12 @@ pub fn run() {
             comic_restore_panel,
             comic_status,
             comic_cancel,
+            chat_index,
+            chat_start,
+            chat_send,
+            chat_feed,
+            chat_stop,
+            chat_remove,
             deviantart_mark,
             set_rating_override,
             remote_status,

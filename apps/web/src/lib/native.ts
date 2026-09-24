@@ -35,11 +35,17 @@ import {
   scanProgressSchema,
   deviantArtAccountSchema,
   patreonAccessRuleSchema,
+  chatFeedSchema,
+  chatIndexSchema,
+  chatSessionInfoSchema,
   comicInspectionSchema,
   comicProjectSchema,
   comicStatusSchema,
   comicSummarySchema,
   loraDatasetSchema,
+  type ChatFeed,
+  type ChatIndex,
+  type ChatSessionInfo,
   type ComicInspection,
   type ComicProject,
   type ComicRunOptions,
@@ -1250,6 +1256,48 @@ export async function loraDataset(name: string): Promise<LoraDataset> {
  */
 export async function loraImagePreview(dataset: string, path: string): Promise<string> {
   return z.string().parse(await invoke('lora_image_preview', { dataset, path }))
+}
+
+// ---------------------------------------------------------------------------
+// Chat
+
+/**
+ * The Chat page's opening state: whether the `claude` CLI is on the machine
+ * with the library, where turns run, and the conversations so far. A bare
+ * browser has nothing to run, so it opens on "not available".
+ */
+export async function chatIndex(): Promise<ChatIndex> {
+  if (!(await hasBackend())) return { available: false, cwd: '', sessions: [] }
+  return chatIndexSchema.parse(await invoke('chat_index'))
+}
+
+/**
+ * A new conversation. Returns once the CLI is running; poll `chatFeed`. A
+ * `topic` such as `comic:<name>` marks what it is about, so the page that
+ * started it finds it again; the Rust side adds the task context for it.
+ */
+export async function chatStart(message: string, model: string | null, topic: string | null = null): Promise<ChatSessionInfo> {
+  return chatSessionInfoSchema.parse(await invoke('chat_start', { message, model, topic }))
+}
+
+/** Another message into a conversation. Refused while a turn is running. */
+export async function chatSend(id: string, message: string): Promise<ChatSessionInfo> {
+  return chatSessionInfoSchema.parse(await invoke('chat_send', { id, message }))
+}
+
+/** The conversation and every event from `since` on. */
+export async function chatFeed(id: string, since: number): Promise<ChatFeed> {
+  return chatFeedSchema.parse(await invoke('chat_feed', { id, since }))
+}
+
+/** Stop the running turn. What the model already said stays. */
+export async function chatStop(id: string): Promise<boolean> {
+  return z.boolean().parse(await invoke('chat_stop', { id }))
+}
+
+/** Forget a conversation; a running one is stopped first. */
+export async function chatRemove(id: string): Promise<boolean> {
+  return z.boolean().parse(await invoke('chat_remove', { id }))
 }
 
 export async function comicList(): Promise<ComicSummary[]> {

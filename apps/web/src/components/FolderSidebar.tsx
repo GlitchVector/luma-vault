@@ -28,7 +28,7 @@ export const COMIC_COMMAND = 'comic'
  * (2026-09-21): a pill in the filter bar is a filter or a grid tool, never a
  * page — pages are navigation, and navigation lives here.
  */
-export type Page = 'library' | 'loras' | 'comics'
+export type Page = 'library' | 'loras' | 'comics' | 'chat'
 
 interface FolderSidebarProps {
   folders: Folder[]
@@ -83,6 +83,8 @@ interface FolderSidebarProps {
    * it a section, so the section is here and the content arrives by portal.
    */
   comicsSlot?: (node: HTMLDivElement | null) => void
+  /** The same for the Chat page's list of conversations. */
+  chatSlot?: (node: HTMLDivElement | null) => void
 }
 
 export function FolderSidebar({
@@ -108,6 +110,7 @@ export function FolderSidebar({
   exclusions,
   onInclude,
   comicsSlot,
+  chatSlot,
 }: FolderSidebarProps) {
   // Two audiences for the same record. A shoot is something to look at; a LoRA
   // round is working material — forty near-identical candidates that exist to be
@@ -194,6 +197,13 @@ export function FolderSidebar({
           onClick={() => onPage('comics')}
           title="Write a story, have it scripted into panels, render them with Forge, and letter the pages"
         />
+        <NavEntry
+          label="Chat"
+          count={null}
+          active={page === 'chat'}
+          onClick={() => onPage('chat')}
+          title="Talk to Claude Code about the vault, from inside it: it runs in the repository and can read and change anything here"
+        />
       </nav>
 
       {/* The library's own sections. They stay in view on every page, because
@@ -206,6 +216,11 @@ export function FolderSidebar({
         {page === 'comics' && comicsSlot ? (
           <Section id="comics" label="Comics" count={null} defaultOpen>
             <div ref={comicsSlot} className="flex flex-col" data-testid="comics-slot" />
+          </Section>
+        ) : null}
+        {page === 'chat' && chatSlot ? (
+          <Section id="chats" label="Conversations" count={null} defaultOpen>
+            <div ref={chatSlot} className="flex flex-col" data-testid="chat-slot" />
           </Section>
         ) : null}
 

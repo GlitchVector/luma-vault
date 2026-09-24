@@ -1,0 +1,116 @@
+[
+  {
+    "session": {
+      "id": "e9a2bbd7-ebe5-4307-9022-ceb4976fdf56",
+      "title": "Why does the grid reflow when a GIF loads?",
+      "status": "running",
+      "model": null,
+      "createdAt": 1790100000000,
+      "lastActivityAt": 1790100012000,
+      "turns": 0,
+      "topic": null
+    },
+    "events": [
+      {
+        "seq": 0,
+        "at": 1790100000000,
+        "kind": "user",
+        "text": "Why does the grid reflow when a GIF loads?",
+        "name": null,
+        "detail": null,
+        "success": null,
+        "stopped": null,
+        "durationMs": null,
+        "costUsd": null
+      },
+      {
+        "seq": 1,
+        "at": 1790100001000,
+        "kind": "start",
+        "text": null,
+        "name": null,
+        "detail": null,
+        "success": null,
+        "stopped": null,
+        "durationMs": null,
+        "costUsd": null
+      },
+      {
+        "seq": 2,
+        "at": 1790100005000,
+        "kind": "tool",
+        "text": null,
+        "name": "Read",
+        "detail": "apps/web/src/components/MediaTile.tsx",
+        "success": null,
+        "stopped": null,
+        "durationMs": null,
+        "costUsd": null
+      },
+      {
+        "seq": 3,
+        "at": 1790100012000,
+        "kind": "text",
+        "text": "A GIF is drawn at its own pixel size, so the tile ignores the slider.",
+        "name": null,
+        "detail": null,
+        "success": null,
+        "stopped": null,
+        "durationMs": null,
+        "costUsd": null
+      }
+    ],
+    "next": 4
+  },
+  {
+    "session": {
+      "id": "3f0c4d2a-9b1e-4c7d-8a5f-1e2d3c4b5a69",
+      "title": "Rename the Comics page to Books",
+      "status": "failed",
+      "model": "opus",
+      "createdAt": 1790000000000,
+      "lastActivityAt": 1790000090000,
+      "turns": 3,
+      "topic": "comic:first-light"
+    },
+    "events": [
+      {
+        "seq": 7,
+        "at": 1790000080000,
+        "kind": "needs_auth",
+        "text": "Please run /login",
+        "name": null,
+        "detail": null,
+        "success": null,
+        "stopped": null,
+        "durationMs": null,
+        "costUsd": null
+      },
+      {
+        "seq": 8,
+        "at": 1790000081000,
+        "kind": "stderr",
+        "text": "(node:1) ExperimentalWarning",
+        "name": null,
+        "detail": null,
+        "success": null,
+        "stopped": null,
+        "durationMs": null,
+        "costUsd": null
+      },
+      {
+        "seq": 9,
+        "at": 1790000090000,
+        "kind": "result",
+        "text": null,
+        "name": null,
+        "detail": null,
+        "success": false,
+        "stopped": true,
+        "durationMs": 10000,
+        "costUsd": 0.0132
+      }
+    ],
+    "next": 10
+  }
+]

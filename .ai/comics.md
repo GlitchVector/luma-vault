@@ -620,3 +620,10 @@ comics/<id>/       comic.yaml, concept/outline/story/continuity.md,
 - `apps/web/src/components/ComicsPanel.tsx` — the workspace.
 - Memories: `comic-pipeline-in-the-app`, `comic-plates-hosted-place-local-people`,
   `comic-studio-stage-1`, `ari-character`.
+
+## The Story step is a chat (2026-09-23)
+
+The panel's first step opens Claude Code on the comic (`ChatView`, topic `comic:<name>`, `/story <name>`
+prefilled): one Enter runs the `/story` command, which asks its questions as numbered lists in the chat
+and writes `prose.md` at the end; the prose editor sits under the chat and is re-read after every turn.
+The conversation is kept and resumes when the comic is opened again.

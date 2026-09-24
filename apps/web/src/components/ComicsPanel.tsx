@@ -35,6 +35,7 @@ import {
   comicSave,
   comicSaveSettings,
   comicStatus,
+  chatIndex,
   fileUrl,
   forgeStatus,
   isTauri,
@@ -43,6 +44,7 @@ import {
 } from '#/lib/native.ts'
 import { showMessage } from '#/lib/dialogs.ts'
 import { Viewer } from '#/components/Viewer.tsx'
+import { ChatView } from '#/components/ChatView.tsx'
 import { toast } from '#/lib/toasts.ts'
 
 interface ComicsPanelProps {
@@ -314,6 +316,16 @@ const PANEL_BEAT = [
 export function ComicsPanel({ onClose, onOpenLibrary, listInto = null }: ComicsPanelProps) {
   const [comics, setComics] = useState<ComicSummary[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+  /**
+   * The comic's story chat: the conversation tagged `comic:<name>`, found when
+   * the comic opens, or started by the first message. `undefined` while it is
+   * being looked up, so the composer is not offered a fresh start that would
+   * duplicate an existing conversation.
+   */
+  const [storyChat, setStoryChat] = useState<string | null | undefined>(undefined)
+  const [chatAvailable, setChatAvailable] = useState<boolean | null>(null)
+  /** The Story step has two faces: the chat that writes the prose, and the prose itself. */
+  const [storyTab, setStoryTab] = useState<'chat' | 'story'>('chat')
   const [project, setProject] = useState<ComicProject | null>(null)
   const [inspection, setInspection] = useState<ComicInspection | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -365,6 +377,19 @@ export function ComicsPanel({ onClose, onOpenLibrary, listInto = null }: ComicsP
 
   const open = useCallback(async (name: string) => {
     setSelected(name)
+    setStoryChat(undefined)
+    void chatIndex()
+      .then((index) => {
+        if (!live.current) return
+        setChatAvailable(index.available)
+        setStoryChat(index.sessions.find((entry) => entry.topic === `comic:${name}`)?.id ?? null)
+      })
+      .catch(() => {
+        if (live.current) {
+          setChatAvailable(false)
+          setStoryChat(null)
+        }
+      })
     setLoadError(null)
     try {
       const loaded = await comicRead(name)
@@ -824,16 +849,65 @@ export function ComicsPanel({ onClose, onOpenLibrary, listInto = null }: ComicsP
               <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
                 {step === 'story' ? (
                   <section className="flex h-full flex-col gap-3">
-                    <textarea
-                      value={prose}
-                      onChange={(event) => {
-                        setProse(event.target.value)
-                        setProseDirty(true)
-                      }}
-                      spellCheck
-                      className={cn(inputClass, 'min-h-[50vh] flex-1 resize-none font-serif text-base leading-relaxed')}
-                      placeholder="# Title&#10;&#10;Write the story as prose. Three paragraphs make a page."
-                    />
+                    {/* Two faces, one at a time (owner, 2026-09-23): the chat that writes the story with
+                        Claude, and the prose it wrote. Chat first, `/story <name>` already typed so one
+                        Enter starts it; the editor is where the result lands, re-read after every turn
+                        because `/story` writes prose.md at its last step. */}
+                    <div role="tablist" aria-label="Story step" className="flex items-center gap-1 border-b border-white/10">
+                      {(
+                        [
+                          ['chat', 'Chat'],
+                          ['story', 'Story'],
+                        ] as const
+                      ).map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          role="tab"
+                          aria-selected={storyTab === key}
+                          onClick={() => setStoryTab(key)}
+                          className={cn(
+                            '-mb-px border-b-2 px-3 py-1.5 text-sm',
+                            storyTab === key ? 'border-indigo-400 text-zinc-100' : 'border-transparent text-zinc-500 hover:text-zinc-300',
+                          )}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {storyTab === 'chat' ? (
+                      selected && storyChat !== undefined ? (
+                        <div className="flex min-h-0 flex-1 flex-col rounded-md border border-white/10 bg-black/20" data-testid="story-chat">
+                          <ChatView
+                            sessionId={storyChat}
+                            onSession={(id) => setStoryChat(id)}
+                            initialDraft={`/story ${selected}`}
+                            topic={`comic:${selected}`}
+                            available={chatAvailable}
+                            onTurnEnd={() => {
+                              if (!proseDirty) void open(selected)
+                            }}
+                            empty={
+                              <div className="px-2 py-6 text-sm text-zinc-500">
+                                Press Enter to start writing the story with Claude: it asks who is in it and how many pages, then
+                                proposes each page for you to pick. The prose lands on the Story tab when it is done.
+                              </div>
+                            }
+                          />
+                        </div>
+                      ) : null
+                    ) : (
+                      <textarea
+                        value={prose}
+                        onChange={(event) => {
+                          setProse(event.target.value)
+                          setProseDirty(true)
+                        }}
+                        spellCheck
+                        className={cn(inputClass, 'min-h-0 flex-1 resize-none font-serif text-base leading-relaxed')}
+                        placeholder="# Title&#10;&#10;Write the story as prose. Three paragraphs make a page."
+                      />
+                    )}
                     <div className="flex items-center gap-2">
                       <Button variant="primary" disabled={!canWrite} onClick={() => void run({ stage: 'script', page: null, panel: null, seed: null, attempt: null, force: false, noTagger: false })}>
                         {hasScript ? 'Write the script again' : 'Write the script'}

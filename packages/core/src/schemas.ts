@@ -1059,3 +1059,58 @@ export const comicStatusSchema = z.object({
   error: z.string().nullable(),
 })
 export type ComicStatus = z.infer<typeof comicStatusSchema>
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+export const chatSessionInfoSchema = z.object({
+  /** Ours, and the CLI's: handed over as `--session-id` and later `--resume`. */
+  id: z.string(),
+  /** The first message, shortened. */
+  title: z.string(),
+  /** `idle`, `running`, `done` or `failed`; the last two accept another message. */
+  status: z.string(),
+  /** The CLI's own name for a model, or null for its default. */
+  model: z.string().nullable(),
+  /** What it is about, so a page finds it again: `comic:<name>` for a comic's story chat. */
+  topic: z.string().nullable(),
+  createdAt: z.number(),
+  lastActivityAt: z.number(),
+  /** Turns run so far; zero means the next message starts the transcript. */
+  turns: z.number(),
+})
+export type ChatSessionInfo = z.infer<typeof chatSessionInfoSchema>
+
+export const chatEventSchema = z.object({
+  seq: z.number(),
+  /** Milliseconds since the epoch, when the line entered the feed. */
+  at: z.number(),
+  /** `start`, `user`, `text`, `tool`, `result`, `error`, `stderr` or `needs_auth`. */
+  kind: z.string(),
+  text: z.string().nullable(),
+  name: z.string().nullable(),
+  detail: z.string().nullable(),
+  success: z.boolean().nullable(),
+  stopped: z.boolean().nullable(),
+  durationMs: z.number().nullable(),
+  costUsd: z.number().nullable(),
+})
+export type ChatEvent = z.infer<typeof chatEventSchema>
+
+export const chatFeedSchema = z.object({
+  session: chatSessionInfoSchema,
+  events: z.array(chatEventSchema),
+  /** The sequence number to poll with next. */
+  next: z.number(),
+})
+export type ChatFeed = z.infer<typeof chatFeedSchema>
+
+export const chatIndexSchema = z.object({
+  /** The `claude` CLI was found; without it the page shows the install step. */
+  available: z.boolean(),
+  /** The directory every turn runs in. */
+  cwd: z.string(),
+  sessions: z.array(chatSessionInfoSchema),
+})
+export type ChatIndex = z.infer<typeof chatIndexSchema>

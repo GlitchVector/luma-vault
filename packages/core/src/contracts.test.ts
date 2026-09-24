@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
   characterCountSchema,
+  chatFeedSchema,
+  chatIndexSchema,
   comicProjectSchema,
   comicRunOptionsSchema,
   comicInspectionSchema,
@@ -68,6 +70,8 @@ const CASES: Array<[file: string, schema: z.ZodType]> = [
   ['comic-run-options.json', z.array(comicRunOptionsSchema)],
   ['comic-status.json', z.array(comicStatusSchema)],
   ['comic-inspection.json', comicInspectionSchema],
+  ['chat-index.json', z.array(chatIndexSchema)],
+  ['chat-feed.json', z.array(chatFeedSchema)],
   ['source-origin.json', z.array(sourceOriginSchema)],
 ]
 

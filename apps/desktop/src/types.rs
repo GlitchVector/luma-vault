@@ -973,3 +973,81 @@ pub struct LoraImage {
     /// A `-flip` mirror the prep script made; the page folds these away.
     pub flipped: bool,
 }
+
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
+
+/// One conversation with the `claude` CLI, as the panel lists it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSessionInfo {
+    /// The id both this app and the CLI know the conversation by. Ours: it is
+    /// handed to the CLI as `--session-id` on the first turn and `--resume`
+    /// after, so a restart of this app can still continue the transcript.
+    pub id: String,
+    /// The first message, shortened, so the list reads like a list of asks.
+    pub title: String,
+    /// `idle`, `running`, `done` or `failed`. `done`/`failed` name how the
+    /// last turn ended; either accepts another message.
+    pub status: String,
+    /// The CLI's own name for a model, or `None` for its default.
+    pub model: Option<String>,
+    /// What the conversation is about, so a page can find it again:
+    /// `comic:<name>` for the one the Comics panel opens on that comic.
+    pub topic: Option<String>,
+    pub created_at: i64,
+    pub last_activity_at: i64,
+    /// How many turns have run, so a fresh session (zero) can be told from
+    /// one that will resume.
+    pub turns: i64,
+}
+
+/// One line of a conversation's feed, numbered so a poll can ask for what it
+/// has not seen. Flat rather than a tagged union, like `ComicEvent`: the
+/// fields that do not apply to a kind are `None`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatEvent {
+    pub seq: i64,
+    /// Milliseconds since the epoch, when the line entered the feed.
+    pub at: i64,
+    /// `start`, `user`, `text`, `tool`, `result`, `error`, `stderr` or
+    /// `needs_auth`.
+    pub kind: String,
+    /// The message (`user`, `text`, `error`, `stderr`).
+    pub text: Option<String>,
+    /// The tool's name and a one-line summary of its arguments (`tool`).
+    pub name: Option<String>,
+    pub detail: Option<String>,
+    /// How the turn ended (`result`).
+    pub success: Option<bool>,
+    /// The person pressed Stop (`result`).
+    pub stopped: Option<bool>,
+    pub duration_ms: Option<i64>,
+    pub cost_usd: Option<f64>,
+}
+
+/// A conversation and what it has said since `since`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatFeed {
+    pub session: ChatSessionInfo,
+    pub events: Vec<ChatEvent>,
+    /// The sequence number to poll with next.
+    pub next: i64,
+}
+
+/// What the Chat page opens on: whether the CLI is here at all, where it
+/// works, and the conversations so far, newest first.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatIndex {
+    /// The `claude` CLI was found. When it was not, the page explains the
+    /// install step instead of offering a composer.
+    pub available: bool,
+    /// The directory every turn runs in: the repository, so the CLI reads
+    /// this project's own notes and skills.
+    pub cwd: String,
+    pub sessions: Vec<ChatSessionInfo>,
+}

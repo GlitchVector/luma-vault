@@ -18,6 +18,7 @@ import { DEFAULT_TILE_SIZE, MAX_TILE_SIZE, MIN_TILE_SIZE } from '#/components/Me
 import { SearchBar } from '#/components/SearchBar.tsx'
 import { DeviantArtPanel } from '#/components/DeviantArtPanel.tsx'
 import { PatreonPanel } from '#/components/PatreonPanel.tsx'
+import { ChatPanel } from '#/components/ChatPanel.tsx'
 import { ComicsPanel } from '#/components/ComicsPanel.tsx'
 import { LorasPanel } from '#/components/LorasPanel.tsx'
 import { DialogHost } from '#/components/DialogHost.tsx'
@@ -331,12 +332,16 @@ export function App() {
   /** The comics workspace, over everything: a different job from browsing. */
   const [showComics, setShowComics] = useState(false)
   const [showLoras, setShowLoras] = useState(false)
+  const [showChat, setShowChat] = useState(false)
   // Both panels cover the whole window, so the back gesture has to be a way out of them.
   useBackCloses(showComics, () => setShowComics(false), 'comics')
   useBackCloses(showLoras, () => setShowLoras(false), 'loras')
-  const page: Page = showComics ? 'comics' : showLoras ? 'loras' : 'library'
+  useBackCloses(showChat, () => setShowChat(false), 'chat')
+  const page: Page = showComics ? 'comics' : showLoras ? 'loras' : showChat ? 'chat' : 'library'
   // The sidebar's Comics section, which the Comics page fills by portal.
   const [comicsSlot, setComicsSlot] = useState<HTMLDivElement | null>(null)
+  // The same for the Chat page's conversations.
+  const [chatSlot, setChatSlot] = useState<HTMLDivElement | null>(null)
   // Lives here rather than in the Lightbox so it survives closing one. The
   // Lightbox is mounted per-item, so local state reset the toggle every time
   // you opened a file. Deliberately separate from `showBoxes` above, which is
@@ -1000,6 +1005,7 @@ export function App() {
         // going there from a page closes the page and nothing else.
         setShowLoras(next === 'loras')
         setShowComics(next === 'comics')
+        setShowChat(next === 'chat')
         setShowLibrary(false)
       }}
       selectedSets={library.query.sets}
@@ -1045,6 +1051,7 @@ export function App() {
       onRescan={(id) => void actions.rescanFolder(id)}
       onRetryFailed={() => void actions.retryFailed(query.folderId)}
       comicsSlot={setComicsSlot}
+      chatSlot={setChatSlot}
       exclusions={library.exclusions}
       onInclude={(path) => {
         // Undoing deletes the `.lumaignore` again, so this fails for the
@@ -1113,6 +1120,8 @@ export function App() {
               onOpenLibrary={() => setShowLibrary(true)}
               listInto={comicsSlot}
             />
+          ) : showChat ? (
+            <ChatPanel onClose={() => setShowChat(false)} onOpenLibrary={() => setShowLibrary(true)} listInto={chatSlot} />
           ) : showLoras ? (
             <LorasPanel
               onClose={() => setShowLoras(false)}
@@ -1440,6 +1449,7 @@ export function App() {
             setOpenId(null)
             setShowLoras(false)
             setShowComics(false)
+            setShowChat(false)
             void library.jumpToItem(id).then(() => setFocusId(id))
           }}
           onPostTo={(target, item) => {
