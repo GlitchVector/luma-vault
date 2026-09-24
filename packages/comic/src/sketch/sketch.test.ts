@@ -57,6 +57,13 @@ suite('the sketch route', () => {
     const cast = [{ id: 'ari', hair: ['#eef1f2'] }, { id: 'tom' }]
     const assigned = assignFigures(people, cast).map((a) => `${cast[a.castIndex]!.id}:${a.person.name}`)
     expect(assigned).toEqual(['ari:ari', 'ari:reflection', 'tom:guest'])
+    // Below the threshold, the clearly best match still wins over the largest figure.
+    const faint = [
+      { box: box(0.0), area: 0.26, match: { ari: 0.0 }, name: 'man' },
+      { box: box(0.4), area: 0.16, match: { ari: 0.028 }, name: 'ari' },
+      { box: box(0.7), area: 0.02, match: { ari: 0.002 }, name: 'guest' },
+    ]
+    expect(assignFigures(faint, [{ id: 'ari', hair: ['#eef1f2'] }]).map((a) => a.person.name)).toEqual(['ari'])
     // No hair colours: the old rule, largest first.
     expect(assignFigures(people, [{ id: 'ari' }]).map((a) => a.person.name)).toEqual(['guest'])
   })

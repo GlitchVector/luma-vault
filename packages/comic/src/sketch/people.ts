@@ -41,7 +41,17 @@ export function assignFigures<T extends Pick<Person, 'box' | 'area' | 'match'>>(
   const out: Array<{ castIndex: number; person: T }> = []
   const unmatched: number[] = []
   for (const [castIndex, member] of cast.entries()) {
-    const mine = member.hair?.length ? people.filter((p) => !taken.has(p) && (p.match[member.id] ?? 0) >= HAIR_MATCH) : []
+    let mine = member.hair?.length ? people.filter((p) => !taken.has(p) && (p.match[member.id] ?? 0) >= HAIR_MATCH) : []
+    if (member.hair?.length && mine.length === 0) {
+      // A sketch draws her hair in its own whites and teals, so an absolute
+      // threshold can miss her (0.028 on an OpenAI sketch) and the fallback
+      // gave her LoRA to the largest figure, a man in the foreground
+      // (2026-09-24). The figure that is clearly the best match is her.
+      const ranked = people.filter((p) => !taken.has(p)).sort((a, b) => (b.match[member.id] ?? 0) - (a.match[member.id] ?? 0))
+      const best = ranked[0]?.match[member.id] ?? 0
+      const next = ranked[1]?.match[member.id] ?? 0
+      if (best >= 0.01 && best >= next * 3) mine = [ranked[0]!]
+    }
     if (mine.length === 0) unmatched.push(castIndex)
     for (const person of mine) {
       taken.add(person)
