@@ -90,8 +90,8 @@ describe('LorasPanel', () => {
     expect(ariCards).toHaveLength(2)
     // Both say which line they are, since the name alone would not tell them apart.
     expect(ariCards.map((card) => card.querySelector('h4 + code')?.textContent)).toEqual(['ari_adopt', 'ari_gen'])
-    expect(screen.getByTestId('loras-wip').textContent).toContain('ari_gen_v5')
-    expect(screen.getByTestId('loras-final').textContent).not.toContain('ari_gen_v5')
+    expect(screen.getByTestId('loras-wip').textContent).toContain('ari_gen_v6')
+    expect(screen.getByTestId('loras-final').textContent).not.toContain('ari_gen_v6')
     await screen.findAllByText('No renders yet')
   })
 
