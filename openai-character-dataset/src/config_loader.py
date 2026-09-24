@@ -89,6 +89,8 @@ class Character:
     audit: list[str]
     background: str
     reference_images: list[Path]
+    # The owner's sheets the reference was cut from, when it was; filed with the dataset by `collect`.
+    source_sheets: list[Path]
     views: list[View]
     settings: Settings
     config_path: Path
@@ -261,6 +263,10 @@ def load_character(name: str) -> Character:
         views = [by_key[key] for key in wanted]
 
     references = [Path(item) if Path(item).is_absolute() else folder / item for item in raw["reference_images"]]
+    sheets_raw = raw.get("source_sheets") or []
+    if not isinstance(sheets_raw, list) or not all(isinstance(item, str) for item in sheets_raw):
+        raise ConfigError(f'{path}: "source_sheets" must be a list of paths')
+    source_sheets = [Path(item) if Path(item).is_absolute() else folder / item for item in sheets_raw]
     return Character(
         name=str(raw["name"]),
         folder=folder,
@@ -268,6 +274,7 @@ def load_character(name: str) -> Character:
         audit=[str(item) for item in raw["audit"]],
         background=str(raw.get("background") or "plain white or extremely simple, low-detail background; no scenery, no floor detail beyond a faint contact shadow"),
         reference_images=references,
+        source_sheets=source_sheets,
         views=views,
         settings=settings,
         config_path=path,

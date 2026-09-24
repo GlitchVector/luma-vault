@@ -272,7 +272,7 @@ def starred_files(character: Character, run: str) -> dict[str, int]:
 # Where each kind of view lands under sheets_dir. The body and face names predate the other kinds and every
 # prep script reads them, so they stay; the rest follow the same shape.
 SHEET_FOLDERS = {"body": "{name}-refs-gen", "cowboy": "{name}-cowboy-refs-gen", "upper": "{name}-upper-refs-gen",
-                 "face": "{name}-face-refs-gen", "detail": "{name}-detail-refs-gen"}
+                 "face": "{name}-face-refs-gen", "detail": "{name}-detail-refs-gen", "reference": "{name}-reference"}
 
 
 def sheet_dir(character: Character, kind: str) -> Path:
@@ -330,4 +330,25 @@ def collect_into_sheets(character: Character, state: dict, *, accept_all: bool =
             shutil.copyfile(source, dest)
             dest.with_suffix(".tags.txt").write_text(view.tags + "\n", encoding="utf-8")
             counts[view.kind] = counts.get(view.kind, 0) + 1
+    counts["reference"] = collect_references(character)
     return counts, missing
+
+
+def collect_references(character: Character) -> int:
+    """File the reference images and the owner's source sheets beside the dataset.
+
+    The reference only existed in the character folder and the sheets only in the owner's folder on the
+    share (owner, 2026-09-24: "collect/store reference images too"); the dataset is what gets kept, so
+    the pictures it was made from go with it. Copies only - owner inputs are never altered.
+    """
+    dest_dir = sheet_dir(character, "reference")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for label, sources in (("reference", character.reference_images), ("sheet", character.source_sheets)):
+        for index, source in enumerate(sources):
+            if not source.is_file():
+                continue
+            extra = "" if len(sources) == 1 else f"-{index + 1}"
+            shutil.copyfile(source, dest_dir / f"{slug(character.name)}-{label}{extra}{source.suffix.lower()}")
+            copied += 1
+    return copied

@@ -21,6 +21,9 @@
   "reference_images": [
     "reference.png"
   ],
+  "source_sheets": [
+    "X:\\AI\\LoRA\\Ari space leotard\\A8DCA32E-E82A-4D42-99C0-4A006EE866C0.png"
+  ],
   "views": [
     "body/01-front",
     "body/02-three-quarter-front",

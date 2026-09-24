@@ -97,7 +97,9 @@ vault (permanent on a network folder; it is our own superseded copy, the frame l
 
 `pnpm refs collect <name>` copies the STARRED frames into one folder per kind under `D:/AI/lora-train/sheets/`:
 `<name>-refs-gen/` (body), `<name>-cowboy-refs-gen/`, `<name>-upper-refs-gen/`, `<name>-face-refs-gen/` and
-`<name>-detail-refs-gen/` (a `.tags.txt` beside each carries the caption the prep will write) and names every
+`<name>-detail-refs-gen/` (a `.tags.txt` beside each carries the caption the prep will write), files the
+reference and the owner's source sheets (`source_sheets` in `character.json`) under `<name>-reference/` so the
+dataset keeps the pictures it was made from (the prep never reads that folder), and names every
 view still open or unstarred; `generate <name> --only <view> --redo` fills those. From there the training
 recipe in `D:/AI/lora-train/TRAINING-A-CHARACTER.md` applies: the prep takes the cowboy and upper folders as
 they are instead of cutting those rungs out of the body frames, and the detail folder as its own low-repeat

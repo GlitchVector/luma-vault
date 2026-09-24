@@ -19,6 +19,9 @@
   "reference_images": [
     "reference.png"
   ],
+  "source_sheets": [
+    "X:\\AI\\LoRA\\Ari space dress\\A2441BC0-DC94-4844-BEAB-9B74F8CC451E.png"
+  ],
   "views": [
     "body/01-front",
     "body/02-three-quarter-front",
