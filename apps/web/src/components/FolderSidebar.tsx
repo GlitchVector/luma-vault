@@ -28,7 +28,7 @@ export const COMIC_COMMAND = 'comic'
  * (2026-09-21): a pill in the filter bar is a filter or a grid tool, never a
  * page — pages are navigation, and navigation lives here.
  */
-export type Page = 'library' | 'loras' | 'comics' | 'chat'
+export type Page = 'library' | 'characters' | 'loras' | 'comics' | 'chat'
 
 interface FolderSidebarProps {
   folders: Folder[]
@@ -184,6 +184,13 @@ export function FolderSidebar({
           title="The grid: every picture and video in the watched folders"
         />
         <NavEntry
+          label="Characters"
+          count={null}
+          active={page === 'characters'}
+          onClick={() => onPage('characters')}
+          title="Your characters: each with the LoRA that renders her, her outfits and variants, and everything about each LoRA"
+        />
+        <NavEntry
           label="LoRAs"
           count={CUSTOM_LORAS.length}
           active={page === 'loras'}
@@ -294,7 +301,9 @@ export function FolderSidebar({
         {characters.length > 0 ? (
           <Section
             id="characters"
-            label="Characters"
+            // "Detected", because the Characters page is the owner's own characters (2026-09-24); this
+            // list is what the tagger found in prompts, franchise names and all.
+            label="Detected characters"
             count={characters.length}
             open={shownList === 'characters'}
             onToggle={() => toggleList('characters')}

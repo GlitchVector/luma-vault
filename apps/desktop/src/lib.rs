@@ -17,6 +17,7 @@
 //! see `remote.rs`.
 
 mod api;
+mod characters;
 mod chat;
 mod classifier;
 mod comic;
@@ -424,6 +425,24 @@ async fn patreon_unmark(state: State<'_, AppState>, ids: Vec<i64>) -> Result<usi
 #[tauri::command(async)]
 async fn comic_list(state: State<'_, AppState>) -> Result<Vec<types::ComicSummary>, String> {
     api::comic_list(&state)
+}
+
+#[tauri::command(async)]
+async fn custom_character_list(state: State<'_, AppState>) -> Result<Vec<types::CustomCharacter>, String> {
+    api::custom_character_list(&state)
+}
+
+#[tauri::command(async)]
+async fn custom_character_save(
+    state: State<'_, AppState>,
+    character: types::CustomCharacterInput,
+) -> Result<types::CustomCharacter, String> {
+    api::custom_character_save(&state, character)
+}
+
+#[tauri::command(async)]
+async fn custom_character_remove(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    api::custom_character_remove(&state, id)
 }
 
 #[tauri::command(async)]
@@ -1063,6 +1082,9 @@ pub fn run() {
             patreon_unmark,
             comic_list,
             lora_dataset,
+            custom_character_list,
+            custom_character_save,
+            custom_character_remove,
             lora_image_preview,
             comic_read,
             comic_create,

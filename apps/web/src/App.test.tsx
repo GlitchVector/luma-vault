@@ -2471,7 +2471,7 @@ describe('the character leaderboard', () => {
   it('shows nothing when the library has no detected characters', async () => {
     render(<App />)
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
-    expect(screen.queryByText('Characters')).toBeNull()
+    expect(screen.queryByText('Detected characters')).toBeNull()
   })
 })
 
@@ -2707,7 +2707,7 @@ describe('browsing by set', () => {
     await screen.findByTitle(`image-${LIBRARY_SIZE}.png`)
 
     expect(screen.queryByRole('button', { name: /^Sets/ })).toBeNull()
-    expect(screen.getByRole('button', { name: /^Characters/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Detected characters/ })).toBeTruthy()
   })
 
   it('keeps the whole list when a set is picked, and only marks it selected', async () => {

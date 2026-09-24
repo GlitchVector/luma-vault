@@ -219,12 +219,15 @@ export type {
   ChatFeed,
   ChatIndex,
 } from './schemas.ts'
+export type { CustomCharacter, CustomCharacterInput } from './schemas.ts'
 export {
   chatEventSchema,
   chatFeedSchema,
   chatIndexSchema,
   chatSessionInfoSchema,
   comicSummarySchema,
+  customCharacterSchema,
+  customCharacterInputSchema,
   loraDatasetSchema,
   loraImageSchema,
   loraSubsetSchema,
