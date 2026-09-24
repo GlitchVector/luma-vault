@@ -142,3 +142,11 @@ describe('a comic overriding one field of a character', () => {
     expect(config.characters['ari']!.trigger).toBe('ari')
   })
 })
+
+describe('a script written before the config changed', () => {
+  it("draws her with the config's body, not the script's copy", async () => {
+    const { loadScript } = await import('../project.ts')
+    const changed = project({ characters: { ari: { body: '(huge breasts:1.3)' } } })
+    expect(loadScript(changed).characters['ari']!.body).toBe('(huge breasts:1.3)')
+  })
+})

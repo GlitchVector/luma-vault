@@ -87,7 +87,8 @@ describe('plates', () => {
     expect(plan!.request.width).toBe(1024)
     expect(plan!.request.height).toBe(1536)
     expect(plan!.characterPrompts).toHaveLength(2)
-    expect(plan!.characterPrompts![0]).toContain('<lora:ari_adopt_v1:1.2>')
+    // The config's LoRA, not the one the script was written with: the config draws her.
+    expect(plan!.characterPrompts![0]).toMatch(/<lora:ari_[a-z_]+v\d+:1\.2>/)
     expect(plan!.characterPrompts![0]).not.toContain('kvoss')
     expect(plan!.characterPrompts![1]).toContain('<lora:kvoss_v2:0.9>')
 

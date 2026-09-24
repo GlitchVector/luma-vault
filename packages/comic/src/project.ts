@@ -68,7 +68,7 @@ export function loadConfig(projectDir: string): Config {
     // "…"}}` dropped `backend` and rendered with no plates at all, saying
     // nothing. Depth matters since `forge.hires`: `{"forge":{"hires":{
     // "denoise":0.5}}}` must not throw away the checkpoint.
-    for (const key of ['forge', 'prompt', 'page', 'qa', 'writer', 'plates'] as const) {
+    for (const key of ['forge', 'prompt', 'page', 'qa', 'writer', 'plates', 'sketch'] as const) {
       if (isPlain(base[key]) && isPlain(override[key])) merged[key] = deepMerge(base[key], override[key])
     }
   }
@@ -123,7 +123,16 @@ export function loadScript(project: Project): Script {
   if (!parsed.success) {
     throw new Error(`${project.scriptPath} is not a valid script:\n${formatIssues(parsed.error.issues)}`)
   }
-  return parsed.data
+  // How a character is DRAWN comes from the config, at every render. The
+  // script keeps a copy of the cast from when it was written, and reading
+  // that copy is how the owner's body answers never reached a single render
+  // (2026-09-24): the script predated them. The script decides who is in a
+  // panel; the config decides what she looks like.
+  const script = parsed.data
+  const characters = Object.fromEntries(
+    Object.entries(script.characters).map(([id, written]) => [id, { ...written, ...project.config.characters[id] }]),
+  )
+  return { ...script, characters }
 }
 
 export function writeJson(path: string, value: unknown): void {
