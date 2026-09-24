@@ -23,14 +23,14 @@ afterEach(() => {
 
 describe('ChatView', () => {
   it('starts a new conversation from the prefilled draft, with its topic, on one Enter', async () => {
-    native.chatStart.mockResolvedValue({ id: 's1', title: '/story first-light', status: 'running', model: null, topic: 'comic:first-light', createdAt: 1, lastActivityAt: 1, turns: 0 })
-    native.chatFeed.mockResolvedValue({ session: { id: 's1', title: '/story first-light', status: 'done', model: null, topic: 'comic:first-light', createdAt: 1, lastActivityAt: 2, turns: 1 }, events: [], next: 0 })
+    native.chatStart.mockResolvedValue({ id: 's1', title: '/comic first-light', status: 'running', model: null, topic: 'comic:first-light', createdAt: 1, lastActivityAt: 1, turns: 0 })
+    native.chatFeed.mockResolvedValue({ session: { id: 's1', title: '/comic first-light', status: 'done', model: null, topic: 'comic:first-light', createdAt: 1, lastActivityAt: 2, turns: 1 }, events: [], next: 0 })
     const onSession = vi.fn()
-    render(<ChatView sessionId={null} onSession={onSession} initialDraft="/story first-light" topic="comic:first-light" available />)
+    render(<ChatView sessionId={null} onSession={onSession} initialDraft="/comic first-light" topic="comic:first-light" available />)
     const input = screen.getByLabelText('Message') as HTMLTextAreaElement
-    expect(input.value).toBe('/story first-light')
+    expect(input.value).toBe('/comic first-light')
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(native.chatStart).toHaveBeenCalledWith('/story first-light', null, 'comic:first-light'))
+    await waitFor(() => expect(native.chatStart).toHaveBeenCalledWith('/comic first-light', null, 'comic:first-light'))
     await waitFor(() => expect(onSession).toHaveBeenCalledWith('s1'))
   })
 

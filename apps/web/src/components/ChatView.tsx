@@ -10,7 +10,7 @@ import { toast } from '#/lib/toasts.ts'
 /**
  * One conversation with Claude Code: the feed and the composer, nothing about
  * which conversation. The Chat page wraps it with a list; the Comics panel
- * drops it into its first step with `/story <name>` already typed. Every
+ * drops it into its first step with `/comic <name>` already typed. Every
  * message is one `claude -p` turn on the Rust side; this only draws the feed
  * those turns produce and polls it with the sequence number it has.
  */

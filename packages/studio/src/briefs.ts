@@ -61,7 +61,7 @@ Do not write prose for the comic. Do not decide: the author chooses. "title" is 
 }
 
 /**
- * A page of the comic's prose, for /story's page step. storyBrief forbids prose and invites
+ * A page of the comic's prose, for /comic's page step. storyBrief forbids prose and invites
  * "what it costs / contradicts canon" notes, which is right for outline asks and made every page
  * come back as two paragraphs of commentary (Beanpole p.1, 2026-09-24). The pipeline cuts pages
  * on exactly three paragraphs, so the count is part of the brief.

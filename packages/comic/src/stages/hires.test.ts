@@ -133,3 +133,12 @@ describe('the mock renderer', () => {
     expect([png.width, png.height]).toEqual([256, 384])
   })
 })
+
+describe('a comic overriding one field of a character', () => {
+  it("keeps the rest of her from the book's config", () => {
+    const config = project({ characters: { ari: { body: '(huge breasts:1.3)' } } }).config
+    expect(config.characters['ari']!.body).toBe('(huge breasts:1.3)')
+    expect(config.characters['ari']!.lora).toMatch(/^ari_/)
+    expect(config.characters['ari']!.trigger).toBe('ari')
+  })
+})

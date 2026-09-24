@@ -54,9 +54,14 @@ export function loadConfig(projectDir: string): Config {
   if (existsSync(overridePath)) {
     const override = readJson(overridePath) as Record<string, unknown>
     merged = { ...base, ...override }
-    merged['characters'] = {
-      ...((base['characters'] as Record<string, unknown> | undefined) ?? {}),
-      ...((override['characters'] as Record<string, unknown> | undefined) ?? {}),
+    // By id, and field by field inside an id: a comic that sets only Ari's
+    // body keeps her LoRA, trigger and seed family from the book's config
+    // (it used to replace her whole entry and fail on the missing LoRA).
+    const baseCast = (base['characters'] as Record<string, Record<string, unknown>> | undefined) ?? {}
+    const overCast = (override['characters'] as Record<string, Record<string, unknown>> | undefined) ?? {}
+    merged['characters'] = { ...baseCast }
+    for (const [id, fields] of Object.entries(overCast)) {
+      ;(merged['characters'] as Record<string, unknown>)[id] = { ...baseCast[id], ...fields }
     }
     // Every nested section, at every depth, or a project that overrides one
     // field of a section silently loses the rest of it — `{"plates":{"style":

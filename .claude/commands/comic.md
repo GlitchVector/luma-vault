@@ -14,7 +14,7 @@ proposes, he clicks, `story approve` writes. His own words go in as they are.
 ## 0. Where this runs
 
 Two places. In a terminal, `AskUserQuestion` is the way he clicks. **In the app's Comics panel** the
-first step opens a chat on the comic with `/story <name>` already typed, and every message of his is
+first step opens a chat on the comic with `/comic <name>` already typed, and every message of his is
 one turn of `claude -p` (`apps/desktop/src/chat.rs`): `AskUserQuestion` is not available, and a turn
 that waits for an answer hangs. The turn's `<task-context>` says which it is and names the project
 folder. In the app: put the options in the message as a numbered list, one line each, end the turn,
@@ -22,8 +22,8 @@ and read his next message as the click. Everything else below is the same.
 
 ## 1. The seed
 
-He gives one to three paragraphs (one is enough). If `/story` came with a comic name from the app
-(`/story testing`), the seed is that project's `prose.md` in
+He gives one to three paragraphs (one is enough). If `/comic` came with a comic name from the app
+(`/comic testing`), the seed is that project's `prose.md` in
 `%LOCALAPPDATA%\net.glitchvector.luma-vault\comics\<name>\prose.md`; if it came with text, that is
 the seed; if it came with nothing, ask for the text in the chat — this is the one input that is his
 and it should be typed, not clicked.
@@ -106,6 +106,26 @@ pnpm studio story brainstorm <id> --page "page N of M as three paragraphs of pro
 Three options, each a whole page. He clicks one (or types "none, more like X"); approve it into
 `story`. The next page's ask names the pages already approved in one line each so the model
 continues rather than restarts. A page he rewrites in his own words goes in under `## Author`.
+
+## 4b. Her body, asked before anything is rendered
+
+Every cast member who is drawn with a LoRA gets the shape questions, always,
+never assumed (owner, 2026-09-24: her shape changed from page to page). One
+`AskUserQuestion`, the same four axes and rules as `/photostory` §1: thickness,
+breasts, hips/thighs, rear ass; the character's own build recommended first;
+the front hips pinned to the rear ass weight or above. Write the answers into
+the app project's `comic.config.json`, merged per field over the book's config:
+
+```json
+{ "characters": { "ari": {
+  "body": "<front: breasts, curvy, hips, thighs, narrow waist, (huge ass:1.2), skin>",
+  "body_rear": "<the same with the answered rear ass>",
+  "negative": "<her own bans, e.g. bracelet>, plump, fat, belly, big belly"
+} } }
+```
+
+The pipeline then puts `body` on every prompt that draws her (`body_rear` on
+back views); a page or panel `body` only adds words, never replaces hers.
 
 ## 5. Into the app
 

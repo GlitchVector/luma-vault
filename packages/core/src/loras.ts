@@ -126,6 +126,21 @@ export const CUSTOM_LORAS: readonly LoraEntry[] = [
     note: 'Second outfit variant through the reference pipeline; every body and cowboy view passed in sheet mode at the first attempt. The pack was the one thing the generator fought: three rounds of front poses drew it at the hip or beside the shoulder until the text made it hidden in front views. Dataset rebuilt 2026-09-24 without body-frame cuts: 28 body, 26 native cowboys, 24 native uppers (22 poses per rung), 13 face, 8 details + 4 mirrors; nothing with the badge mirrored. Stage 1 not yet trained.',
   },
   {
+    name: 'ari_gen_alt_cleavage_s1',
+    dataset: 'ari-alt-cleavage',
+    outfit: 'Alt-cleavage',
+    parent: 'ari_gen_v5',
+    trigger: 'arialtcleavage',
+    character: 'Ari',
+    kind: 'outfit',
+    description:
+      "Ari in the cheeky cleavage outfit (2026-09-24): glossy teal strapless bandeau with a sweetheart V, detached puffy teal off-shoulder sleeves with ribbed cuffs, white high-waisted shorts with six buttons on the front panel only and a brazilian cut behind, white platform sneakers with teal bows; her standard plain teal headband, teardrop earrings and gold chain with the round blue pendant.",
+    status: 'wip',
+    weight: null,
+    olderVersions: [],
+    note: 'Built from the owner-starred reference set (85 of 88 views, 123 frames, nothing mirrored): 36 body, 34 native cowboys, 25 native uppers, 14 face, 14 details - 34 of the body/cowboy/upper frames are back or three-quarter-back views. The generator copied the sheet\'s back-waist buttons until the description said to ignore them. Stage 1 not yet trained.',
+  },
+  {
     name: 'celoracle_v3',
     dataset: 'oracle',
     outfit: null,

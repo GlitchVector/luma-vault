@@ -850,9 +850,9 @@ export function ComicsPanel({ onClose, onOpenLibrary, listInto = null }: ComicsP
                 {step === 'story' ? (
                   <section className="flex h-full flex-col gap-3">
                     {/* Two faces, one at a time (owner, 2026-09-23): the chat that writes the story with
-                        Claude, and the prose it wrote. Chat first, `/story <name>` already typed so one
+                        Claude, and the prose it wrote. Chat first, `/comic <name>` already typed so one
                         Enter starts it; the editor is where the result lands, re-read after every turn
-                        because `/story` writes prose.md at its last step. */}
+                        because `/comic` writes prose.md at its last step. */}
                     <div role="tablist" aria-label="Story step" className="flex items-center gap-1 border-b border-white/10">
                       {(
                         [
@@ -881,7 +881,7 @@ export function ComicsPanel({ onClose, onOpenLibrary, listInto = null }: ComicsP
                           <ChatView
                             sessionId={storyChat}
                             onSession={(id) => setStoryChat(id)}
-                            initialDraft={`/story ${selected}`}
+                            initialDraft={`/comic ${selected}`}
                             topic={`comic:${selected}`}
                             available={chatAvailable}
                             onTurnEnd={() => {

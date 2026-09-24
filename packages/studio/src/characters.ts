@@ -3,7 +3,7 @@
  * at once: the studio holds a developed canon for her, and Forge holds a
  * LoRA that draws her. Either alone is not a character the pipeline can use
  * — a canon without a LoRA cannot be rendered, a LoRA without a canon has
- * no voice — so `/story` offers only the ones that have both, and says why
+ * no voice — so `/comic` offers only the ones that have both, and says why
  * the others are missing.
  *
  * The LoRA catalogue names characters by display name ("Celestial Oracle")

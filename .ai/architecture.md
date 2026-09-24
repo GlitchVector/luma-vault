@@ -257,10 +257,10 @@ holds the whole mechanism; the panel is `apps/web/src/components/ChatPanel.tsx`.
   saying so.
 - **The Comics panel's first step is a story chat.** `ChatView` (the feed and
   composer without the list) opens on the conversation tagged `comic:<name>`,
-  or a new one with `/story <name>` already typed; the Rust side gives that
+  or a new one with `/comic <name>` already typed; the Rust side gives that
   topic's first turn the project folder and the rule that questions go in the
   message as a numbered list, since `AskUserQuestion` cannot run in `-p` mode.
-  When a turn ends the panel re-reads the comic, because `/story` writes
+  When a turn ends the panel re-reads the comic, because `/comic` writes
   `prose.md` at its last step.
 - `cargo test a_real_turn -- --ignored` runs two real turns against the
   installed CLI; it is outside the gate because it needs a sign-in and the
