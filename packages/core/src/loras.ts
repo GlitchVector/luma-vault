@@ -111,6 +111,21 @@ export const CUSTOM_LORAS: readonly LoraEntry[] = [
     note: 'First outfit variant built through the reference pipeline in sheet mode (the gate refused single figures of this sheet). Dataset prepped 2026-09-23: 24 body, 6 cowboy + 22 cuts, 8 upper + 22 cuts, 13 face, 9 details; nothing with the badge or the strap mirrored. Stage 1 not yet trained.',
   },
   {
+    name: 'ari_gen_space_dress_s1',
+    dataset: 'ari-space-dress',
+    outfit: 'Space-dress',
+    parent: 'ari_gen_v4',
+    trigger: 'arispacedress',
+    character: 'Ari',
+    kind: 'outfit',
+    description:
+      'Ari in the retro-futuristic space dress from her third sheet (2026-09-23): glossy white vinyl mini-dress with a centre zip between red stripes, dark ring collar with red piping, rocket badge on her left breast, hip belt with an O-ring at each hip, opera gloves with red-edged arm bands, a small white hard-shell backpack high on the back, white knee boots with a front stripe, ear discs; her white bob fades to coral-red tips with this outfit; no headband, earrings or necklace.',
+    status: 'wip',
+    weight: null,
+    olderVersions: [],
+    note: 'Second outfit variant through the reference pipeline; every body and cowboy view passed in sheet mode at the first attempt. The pack was the one thing the generator fought: three rounds of front poses drew it at the hip or beside the shoulder until the text made it hidden in front views. Dataset prepped 2026-09-24: 28 body, 11 cowboy + 26 cuts, 10 upper + 26 cuts, 13 face, 8 details + 4 mirrors; nothing with the badge mirrored. Stage 1 not yet trained.',
+  },
+  {
     name: 'celoracle_v3',
     dataset: 'oracle',
     outfit: null,
