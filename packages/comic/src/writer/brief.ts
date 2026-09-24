@@ -50,6 +50,7 @@ PLACES
 - Each panel names its place in "location". A panel with no fixed place may leave it out.
 
 PAGES AND LAYOUTS
+- A page may arrive as a STORYBOARD: numbered panels, each with its picture and its text. Then the storyboard is the script: one panel per numbered panel, in that order, with exactly its dialogue (speaker and words unchanged) and its picture turned into camera, scene, setting, pose, characters and figures. Do not add, merge, drop or reorder panels, and do not rewrite a line.
 - The prose arrives cut into pages by "[Page N]" lines: three paragraphs make a page. Produce exactly those pages, in that order, each telling what its own paragraphs tell — never merge two pages or split one.
 - 3 to 5 panels per page unless the prose is very short. Choose "layout" from these presets; its panel count must equal the page's number of panels:
 - ONE ESTABLISHING PANEL PER PAGE, whenever the page's place can be shown (skip it only for a page that stays in one tight close moment): camera "wide shot" (optionally with an angle), the place and the event as the subject — the party, the market, the farmyard — with the cast small in it or absent. Prefer it with "characters" empty and "figures" counting the crowd; a lead in it is a small figure among the others, never the frame. Put it where the page's place first matters, usually the first panel. This is the panel that shows the crowd, the guests, the room.

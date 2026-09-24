@@ -1,12 +1,13 @@
 ---
-description: Write the prose for a comic with the owner, one question at a time — three paragraphs make a page
+description: Develop a comic with the owner, one question at a time — seed, outline, then every page as a panel storyboard
 ---
 
-# Writing the story for a comic
+# Developing a comic
 
-The Comics panel's first step wants prose: `# Title`, then paragraphs, and **three paragraphs make a
-page** — the picture pipeline now cuts the prose into pages on exactly that rule and holds the writer
-to it. This develops those paragraphs with him, from a seed of his, one question at a time.
+The Comics panel's first step wants `prose.md`: `# Title`, then one `## Page N` storyboard per page
+(numbered panels, picture and lines). The picture pipeline cuts pages at those headings and follows
+each storyboard panel for panel. This develops them with him, from a seed of his, one question at a
+time.
 
 Same shape as `/canon`, same one rule that outranks the rest: **I never approve.** The story model
 proposes, he clicks, `story approve` writes. His own words go in as they are.
@@ -95,17 +96,31 @@ his own words instead of a number, that is canon: write it into `outline.md` und
 `## Author <date>` and continue from it. Stop asking when he says the outline is enough, or after
 the five.
 
-## 4. The pages
+## 4. The pages, as storyboards
 
-One brainstorm per page, in order, with the outline as context and the page count he chose:
+Every page is written as a **storyboard**, never as prose (owner, 2026-09-24: literary prose
+chopped into panels "makes no sense"). One brainstorm per page, in order:
 
 ```
-pnpm studio story brainstorm <id> --page "page N of M as three paragraphs of prose, each paragraph one beat that can be drawn as one or two panels; show the story visually, dialogue only where a picture cannot carry it; pages so far: <one line each>" [--explicit] --count 3
+pnpm studio story brainstorm <id> --page "page N of M: <what happens on this page, from the outline>; pages so far: <one line each>" [--explicit] --count 3
 ```
 
-Three options, each a whole page. He clicks one (or types "none, more like X"); approve it into
-`story`. The next page's ask names the pages already approved in one line each so the model
-continues rather than restarts. A page he rewrites in his own words goes in under `## Author`.
+`--page` makes each option a storyboard: 4 to 6 numbered panels, one per line,
+`N. <picture> — <Speaker>: "<line>"`. Before showing the options, check each against the
+readability rules and say where one fails, the same way contradictions with canon are named:
+
+- **Cause before effect.** A reaction's cause is visible in the same or the previous panel;
+  someone who stares is shown with what they stare at.
+- **Every speaker is in the picture** of their panel; no reply without its setup on the page.
+- **The line that turns the page** is spoken by a visible person, never a caption.
+- **A silent reaction panel** after every hit.
+- **Short, natural dialogue**; subtext stays in the pictures.
+
+He clicks one; approve it into `story`. The next page's ask names the approved pages in one line
+each. A panel he rewrites in his own words is written into the storyboard as he wrote it.
+
+A page where a character is **under 18** is never explicit, and she is rendered with **no LoRA**:
+her age's story sheet is the sketch's reference instead (see `.ai/comics.md`, "Young characters").
 
 ## 4b. Her body, asked before anything is rendered
 
@@ -133,7 +148,7 @@ back views); a page or panel `body` only adds words, never replaces hers.
 pnpm studio story prose <id> --out "%LOCALAPPDATA%\net.glitchvector.luma-vault\comics\<name>\prose.md"
 ```
 
-writes `# Title` and the approved paragraphs, nothing else, over the project's `prose.md`. Tell him
+writes `# Title` and the approved storyboards as `## Page N` blocks over the project's `prose.md`; the pipeline cuts pages at those headings and follows each storyboard panel for panel. Tell him
 to open the comic again in the Comics panel — it reads `prose.md` when the comic is opened — and
 that "Write the script again" turns it into the script. Before writing, say how many pages the
 paragraph count makes; if it is not what he chose, say which page is short.
@@ -148,6 +163,5 @@ paragraph count makes; if it is not what he chose, say which page is short.
   clicks. (She was quiet until 2026-09-24; drafts older than that have her wrong.)
 - **The explicit pages keep the book's tone.** `boundaries.md` says what is never drawn and that the
   joke stays in the hall; a page that crosses it is named as such, and it is his call.
-- **Three paragraphs make a page, and nothing else does.** A page of two paragraphs is a short page;
-  four is a page and a third of the next. Count before writing `prose.md`.
+- **A page is its storyboard.** 4 to 6 panels; the readability rules in §4 hold on every page.
 - **Never approve from praise.** "They're all good" gets the question again.

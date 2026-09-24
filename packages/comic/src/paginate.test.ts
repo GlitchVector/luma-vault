@@ -21,3 +21,14 @@ describe('paginate', () => {
     expect(paged.text).toContain('line one\nline two')
   })
 })
+
+describe('storyboard pages', () => {
+  it('cuts at the page headings and keeps every panel line', () => {
+    const board = '# Beanpole\n\n## Page 1\n\n1. Wide: the roof. — Caption: "Hotel roof."\n2. Close: her face.\n3. Him, shouting. — Man: "Beanpole!"\n4. Her hand on her wrist.\n\n## Page 2\n\n1. The farm at dawn.'
+    const paged = paginate(board)
+    expect(paged.pages).toBe(2)
+    expect(paged.title).toBe('Beanpole')
+    expect(paged.text).toContain('[Page 1]\n\n1. Wide: the roof.')
+    expect(paged.text).toContain('4. Her hand on her wrist.\n\n[Page 2]')
+  })
+})

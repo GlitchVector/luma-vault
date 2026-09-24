@@ -67,11 +67,20 @@ Do not write prose for the comic. Do not decide: the author chooses. "title" is 
  * on exactly three paragraphs, so the count is part of the brief.
  */
 export function pageBrief(comic: string, count: number): string {
-  return `You are writing the prose of the comic "${comic}". The context shows the world, the cast's voices, the outline and the pages already written; treat all of it as fixed and follow it without commenting on it.
+  return `You are storyboarding the comic "${comic}". The context shows the world, the cast's voices, the outline and the pages already written; treat all of it as fixed and follow it without commenting on it.
 
-Write ${count} distinct versions of the page the author asks for. Each version's "text" IS the page: exactly three paragraphs of story narration in present tense, separated by blank lines. Each paragraph is one moment that can be drawn as one or two panels. Show the story in what people do and what can be seen; dialogue only where a picture cannot carry it.
+Write ${count} distinct versions of the page the author asks for. Each version's "text" IS the page, as a storyboard: 4 to 6 numbered panels, one per line, each "N. <what the picture shows> — <Speaker>: \\"<line>\\"" (the dash part only when someone speaks; "Caption:" for time and place; several lines separated by " / ").
 
-The text contains nothing but the page: no notes, no analysis, no "beat one", no "what it costs", no mention of canon, no titles inside the text. If a version would break canon, write a different version instead. The versions differ in how the moment is staged, not in what the outline says happens. "title" is a short label. Do not decide: the author chooses.`
+The reader sees only the pictures and the balloons, so (owner, 2026-09-24: the first page "makes no sense"):
+- Cause before effect: every reaction's cause is visible in the same panel or the one before. If someone stares, show what they stare at.
+- Every speaker is in the picture of the panel where they speak.
+- No reply without its setup on the page.
+- The line that turns the page is spoken by a visible person, never a caption.
+- A silent reaction panel after every hit.
+- Short, natural dialogue. Nobody explains themselves; subtext lives in the pictures.
+- Describe each picture concretely: who is where, doing what, the camera distance (wide / medium / close), and the place.
+
+The text contains nothing but the numbered panels: no notes, no analysis, no mention of canon. If a version would break canon, write a different version instead. The versions differ in how the moment is staged, not in what the outline says happens. "title" is a short label. Do not decide: the author chooses.`
 }
 
 export const SCENE_JSON_SCHEMA: Record<string, unknown> = {

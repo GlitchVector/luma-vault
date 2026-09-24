@@ -311,3 +311,11 @@ describe('json from a chatty model', () => {
     expect(extractJson('{"patch":{"x":"{"}} trailing')).toEqual({ patch: { x: '{' } })
   })
 })
+
+describe('storyboard pages to prose.md', () => {
+  it('exports approved storyboards as ## Page blocks', () => {
+    const story = '# Beanpole — story\n\n## Approved 2026-09-24 (from a.md)\n\n**The arrival.** 1. Wide: the roof at dusk. — Caption: "Hotel roof."\n2. Close: her grin.\n\n## Approved 2026-09-24 (from b.md)\n\n**The farm.** 1. The farm at dawn.\n2. The hens.'
+    const prose = proseFromStory(story, 'Beanpole')
+    expect(prose).toBe('# Beanpole\n\n## Page 1\n\n1. Wide: the roof at dusk. — Caption: "Hotel roof."\n2. Close: her grin.\n\n## Page 2\n\n1. The farm at dawn.\n2. The hens.\n')
+  })
+})

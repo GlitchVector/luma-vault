@@ -10,8 +10,21 @@
 const HEADING = /^#/
 const NOTE = /^_.*_$/
 
-/** Approved items only: a `**Title.** text` item becomes its text, a page's paragraphs stay paragraphs. */
+/** A storyboard item: its text starts with numbered panels. */
+const STORYBOARD = /^\*\*[^*]+\*\*\s*1\.\s/
+
+/**
+ * Approved items only: a `**Title.** text` item becomes its text, a page's
+ * paragraphs stay paragraphs. When the approved pages are storyboards, each
+ * becomes a `## Page N` block with its panel lines, which the pipeline cuts
+ * at the heading and follows panel for panel.
+ */
 export function proseFromStory(storyMd: string, title: string): string {
+  const items = storyMd.split(/^## Approved .*$/m).map((item) => item.trim()).filter((item) => item && !NOTE.test(item) && !/^# /.test(item))
+  if (items.length > 0 && items.every((item) => STORYBOARD.test(item))) {
+    const pages = items.map((item, index) => `## Page ${index + 1}\n\n${item.replace(/^\*\*[^*]+\*\*\s*/, '').trim()}`)
+    return `# ${title}\n\n${pages.join('\n\n')}\n`
+  }
   const paragraphs = storyMd
     .split(/\n\s*\n/)
     .map((block) => block.trim())
