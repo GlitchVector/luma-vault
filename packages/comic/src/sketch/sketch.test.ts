@@ -78,3 +78,35 @@ suite('the sketch route', () => {
     expect((toPayload(request, { save_to_forge: false }) as { alwayson_scripts?: unknown }).alwayson_scripts).toBeUndefined()
   })
 })
+
+suite('which panels the sketch route draws in one pass', () => {
+  it('keeps the LoRA and skips the repaint when at most one cast member is in the panel', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { loadScript, openProject } = await import('../project.ts')
+    const { planPanel } = await import('../stages/panels.ts')
+    const dir = mkdtempSync(join(tmpdir(), 'comic-onepass-'))
+    try {
+      const cast = { ari: { lora: 'ari_adopt_v4:1.2', trigger: 'ari', look: 'white hair', body: 'wide hips', subject: '1girl', seed_family: 1 },
+        tom: { lora: 'tom_v1:1', trigger: 'tom', look: 'short hair', body: '', subject: '1boy', seed_family: 2 } }
+      const panel = (characters: string[]) => ({ id: 'p1-1', camera: 'full body', scene: 'rooftop, night', characters })
+      const script = { title: 't', characters: cast, locations: {}, pages: [{ layout: 'splash', panels: [panel(['ari'])] }, { layout: 'splash', panels: [{ ...panel(['ari', 'tom']), id: 'p2-1' }] }] }
+      writeFileSync(join(dir, 'script.json'), JSON.stringify(script))
+      writeFileSync(join(dir, 'comic.config.json'), JSON.stringify({ renderer: 'mock', sketch: { backend: 'forge' }, characters: cast }))
+      const project = openProject(dir)
+      const parsed = loadScript(project)
+      const prepared = { checkpoint: 'c', control: 'lineart [x]' }
+      const solo = planPanel(project, parsed, prepared, { pageIndex: 0, panelIndex: 0 }).request
+      expect(solo.prompt).toContain('<lora:ari_adopt_v4:1.2>')
+      expect(solo.control).toBeDefined()
+      expect(solo.repaint).toBeUndefined()
+      expect(solo.unify).toBeUndefined()
+      const duo = planPanel(project, parsed, prepared, { pageIndex: 1, panelIndex: 0 }).request
+      expect(duo.prompt).not.toContain('<lora:')
+      expect(duo.repaint?.cast.map((c) => c.id)).toEqual(['ari', 'tom'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

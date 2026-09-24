@@ -107,7 +107,13 @@ export function planPanel(
   // The sketch route draws the first pass with nobody's LoRA: the LoRA is what
   // pulled every panel onto her, and each character gets hers in the repaint.
   const sketched = sketchEnabled(project) && !!prepared.control && sketchable(project, panel)
-  const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: !sketched })
+  // One pass whenever at most one cast member is in the panel: her LoRA over
+  // the whole panel, the sketch only guiding the layout, so she and the place
+  // are one render with one light (the repaint route read as pasted-in). Two
+  // or more cast members still need the multi-pass route, or their LoRAs
+  // would share a prompt.
+  const multi = sketched && panel.characters.length > 1
+  const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: !multi })
   // With a plate, each character is painted alone into her own mask, so
   // each gets a prompt naming only her - the panel prompt names them all.
   // No `figures` here: a mask holds one character, never the crowd around her.
@@ -125,7 +131,7 @@ export function planPanel(
     // On the sketch route the face pass is a plain one, no LoRA: it only
     // cleans up small faces in the crowd (a guest's face came back as a teal
     // block). The cast's faces are redrawn by the repaint with their LoRAs.
-    face: sketched ? plainFaceFor(project, negative) : faceFor(project, panel, script),
+    face: multi ? plainFaceFor(project, negative) : faceFor(project, panel, script),
     steps: forge.steps,
     cfg: forge.cfg,
     sampler: forge.sampler,
@@ -136,7 +142,7 @@ export function planPanel(
     ...(sketched
       ? {
           control: { sketch: '', ...project.config.sketch.control, model: prepared.control! },
-          repaint: panel.characters.length
+          repaint: multi
             ? {
                 denoise: project.config.sketch.character_denoise,
                 mask_blur: project.config.sketch.mask_blur,
@@ -154,7 +160,7 @@ export function planPanel(
               }
             : undefined,
           unify:
-            panel.characters.length && project.config.sketch.unify.enabled
+            multi && project.config.sketch.unify.enabled
               ? {
                   prompt:
                     project.config.sketch.unify.lora_scale === 0

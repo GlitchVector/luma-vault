@@ -269,8 +269,12 @@ export const sketchConfigSchema = z.object({
     .object({
       module: z.string().default('lineart_anime'),
       model: z.string().default('noob-sdxl-controlnet-lineart_anime'),
-      weight: z.number().min(0).max(2).default(0.85),
-      end: z.number().min(0).max(1).default(0.8),
+      /** A guide for the start, not a stencil: at 0.85 to 0.8 of the steps it pressed
+       *  the sketch's figure outline onto her (a caricature from one sketch, a
+       *  slim girl from the next). 0.6 to 0.35 keeps the layout and lets her LoRA
+       *  and body words shape her (owner: "brilliant", 2026-09-24). */
+      weight: z.number().min(0).max(2).default(0.6),
+      end: z.number().min(0).max(1).default(0.35),
     })
     .prefault({}),
   /** Strength of the per-character repaint. Enough for the LoRA to take the face, body and outfit; low enough to keep the pose.
