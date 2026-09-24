@@ -123,6 +123,10 @@ the flow above applies with these differences:
 - **The catalogue entry** is `kind: 'outfit'` with `outfit: '<label>'` and `parent: '<main LoRA>'`, so the
   page lists it under that card with one render, not as a card of its own. A new LINE of the same
   character (a rebuild, `ari_gen` beside `ari_adopt`) has no parent: it is a new LoRA and a new card.
+  Write it in the same step as `refs init`, not at training time - the card is how the owner sees the
+  outfit exists. The parent may be any version of the line (the current file or one in its
+  `olderVersions`), so a version bump of the main LoRA never needs the outfits edited; the catalogue
+  test fails if any `kind: 'outfit'` entry would stand as a card of its own.
 
 ## Rules that bind here
 

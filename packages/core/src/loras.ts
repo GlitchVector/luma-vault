@@ -580,15 +580,26 @@ export interface LoraGroup {
   variants: LoraEntry[]
 }
 
-/** Cards in catalogue order; a variant whose parent is not in the catalogue stands as its own card rather than vanishing. */
+/**
+ * Cards in catalogue order; a variant whose parent is not in the catalogue stands as its own card rather than vanishing.
+ *
+ * A parent resolves through the main's `olderVersions` too: an outfit added while the line was at v4 still
+ * belongs to the card once v5 replaces v4, without anyone editing its entry (owner, 2026-09-24: every new
+ * outfit must land under its character's card). The line is what an outfit belongs to, not one file of it.
+ */
 export function loraCards(entries: readonly LoraEntry[] = CUSTOM_LORAS): LoraGroup[] {
-  const names = new Set(entries.map((entry) => entry.name))
-  const mains = entries.filter((entry) => entry.parent === null || !names.has(entry.parent))
+  const owner = new Map<string, LoraEntry>()
+  for (const entry of entries) {
+    if (entry.parent !== null) continue
+    for (const name of [entry.name, ...entry.olderVersions]) owner.set(name, entry)
+  }
+  const mainOf = (entry: LoraEntry) => (entry.parent === null ? undefined : owner.get(entry.parent))
+  const mains = entries.filter((entry) => mainOf(entry) === undefined)
   return mains.map((main) => ({
     character: main.character,
     line: loraLineBase(main.name),
     main,
-    variants: entries.filter((entry) => entry.parent === main.name),
+    variants: entries.filter((entry) => mainOf(entry) === main),
   }))
 }
 

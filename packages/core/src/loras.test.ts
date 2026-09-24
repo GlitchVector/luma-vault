@@ -126,8 +126,9 @@ describe('one card per LoRA line', () => {
     expect(cards.reduce((sum, card) => sum + 1 + card.variants.length, 0)).toBe(CUSTOM_LORAS.length)
   })
 
-  it('every parent named in the catalogue exists and is a full-character LoRA', () => {
-    const byName = new Map(CUSTOM_LORAS.map((entry) => [entry.name, entry]))
+  it('every parent named in the catalogue is a full-character LoRA, current or superseded', () => {
+    const byName = new Map<string, (typeof CUSTOM_LORAS)[number]>()
+    for (const entry of CUSTOM_LORAS) for (const name of [entry.name, ...entry.olderVersions]) byName.set(name, entry)
     for (const entry of CUSTOM_LORAS) {
       if (entry.parent === null) continue
       const parent = byName.get(entry.parent)
@@ -135,6 +136,22 @@ describe('one card per LoRA line', () => {
       expect(parent!.kind).toBe('full')
       expect(parent!.character).toBe(entry.character)
     }
+  })
+
+  it('every outfit in the catalogue lists under a card, never as a card of its own', () => {
+    const variants = new Set(loraCards().flatMap((card) => card.variants.map((entry) => entry.name)))
+    for (const entry of CUSTOM_LORAS) {
+      if (entry.kind === 'outfit') expect(variants.has(entry.name), `${entry.name} has no card to list under`).toBe(true)
+    }
+  })
+
+  it('keeps an outfit under its card when the main LoRA moves on a version', () => {
+    // The outfit was added at v4; v5 replaced v4 and v4 went to olderVersions. Nobody edits the outfit.
+    const main = { ...CUSTOM_LORAS.find((entry) => entry.name === 'ari_gen_v5')!, name: 'ari_gen_v6', olderVersions: ['ari_gen_v5', 'ari_gen_v4'] }
+    const outfit = { ...CUSTOM_LORAS.find((entry) => entry.name === 'ari_gen_space_dress_s1')!, parent: 'ari_gen_v4' }
+    const cards = loraCards([main, outfit])
+    expect(cards).toHaveLength(1)
+    expect(cards[0]!.variants.map((entry) => entry.name)).toEqual(['ari_gen_space_dress_s1'])
   })
 
   it('an outfit entry always says which outfit', () => {
