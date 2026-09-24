@@ -932,6 +932,39 @@ pub struct ComicStatus {
 // LoRA training data
 // ---------------------------------------------------------------------------
 
+/// A character the owner created on the Characters page: who she is, and which
+/// of the catalogue's LoRAs render her. Stored by `characters.rs`; the LoRAs
+/// themselves stay in the catalogue in `packages/core`, named here, never copied.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomCharacter {
+    /// Built from the name when she is created and never changed after, so a
+    /// rename does not orphan anything that points at her.
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// The catalogue LoRA her example picture comes from.
+    pub default_lora: String,
+    /// Her other LoRAs - outfits, variants - in the order they were added.
+    #[serde(default)]
+    pub loras: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// What the form sends: no `id` for a new character, hers for an edit.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomCharacterInput {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    pub description: String,
+    pub default_lora: String,
+    #[serde(default)]
+    pub loras: Vec<String>,
+}
+
 /// One character LoRA's training data, as kohya read it. Built by `lora::read`
 /// from the dataset's own `.toml`, on request, never stored.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

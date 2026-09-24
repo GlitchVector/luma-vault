@@ -215,8 +215,11 @@ export type {
   ComicPanelStatus,
   ComicSettings,
 } from './schemas.ts'
+export type { CustomCharacter, CustomCharacterInput } from './schemas.ts'
 export {
   comicSummarySchema,
+  customCharacterSchema,
+  customCharacterInputSchema,
   loraDatasetSchema,
   loraImageSchema,
   loraSubsetSchema,

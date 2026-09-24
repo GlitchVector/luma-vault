@@ -994,6 +994,33 @@ pub fn patreon_unmark(state: &AppState, ids: Vec<i64>) -> Result<usize, String> 
 // LoRA training data
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Characters - see `characters.rs`
+// ---------------------------------------------------------------------------
+
+fn characters_file(state: &AppState) -> PathBuf {
+    crate::characters::file(&state.data_dir)
+}
+
+pub fn custom_character_list(state: &AppState) -> Result<Vec<crate::types::CustomCharacter>, String> {
+    crate::characters::list(&characters_file(state)).map_err(stringify)
+}
+
+pub fn custom_character_save(
+    state: &AppState,
+    character: crate::types::CustomCharacterInput,
+) -> Result<crate::types::CustomCharacter, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    crate::characters::save(&characters_file(state), character, now).map_err(stringify)
+}
+
+pub fn custom_character_remove(state: &AppState, id: String) -> Result<bool, String> {
+    crate::characters::remove(&characters_file(state), &id).map_err(stringify)
+}
+
 /// The training data behind a character LoRA, for the LoRAs page. Thumbnails
 /// are written under the app's own thumbs root, so the protocol serves them
 /// without any change to what it serves.
@@ -1403,6 +1430,11 @@ pub async fn dispatch(
         // The datasets are on the machine that trains, which is the one with
         // the library; a phone reading the LoRAs page asks it like anything else.
         "lora_dataset" => ok(lora_dataset(state, arg(args, "name")?)?),
+        // The characters file is the library machine's, like the datasets; a phone
+        // reading or editing the Characters page asks it.
+        "custom_character_list" => ok(custom_character_list(state)?),
+        "custom_character_save" => ok(custom_character_save(state, arg(args, "character")?)?),
+        "custom_character_remove" => ok(custom_character_remove(state, arg(args, "id")?)?),
         "lora_image_preview" => ok(lora_image_preview(state, arg(args, "dataset")?, arg(args, "path")?)?),
         "comic_read" => ok(comic_read(state, arg(args, "name")?)?),
         "comic_create" => ok(comic_create(state, arg(args, "name")?)?),
