@@ -194,7 +194,7 @@ export function buildPrompt(
   config: Pick<Config, 'prompt'>,
   pageBody?: string,
   pageLighting?: string,
-  options: { lora?: boolean } = {},
+  options: { lora?: boolean; body?: boolean } = {},
 ): BuiltPrompt {
   const cast = panel.characters.map((id) => {
     const character = characters[id]
@@ -219,7 +219,7 @@ export function buildPrompt(
     // sketch route's first pass on a wide shot, which only composes the
     // panel and is repainted with her body afterwards: body words name what
     // fills a frame and pulled a planned wide shot into a full-frame figure.
-    const body = wide && options.lora === false ? '' : bodyFor(character, pageBody, panel.body, panel.camera)
+    const body = options.body === false || (wide && options.lora === false) ? '' : bodyFor(character, pageBody, panel.body, panel.camera)
     parts.push(...who, character.look, body)
   }
   if (wide && !/\bscenery\b/.test(panel.scene)) parts.push('scenery')
