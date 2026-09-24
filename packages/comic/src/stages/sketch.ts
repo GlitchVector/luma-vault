@@ -1,33 +1,59 @@
 /**
- * The sketch route's first step: a hosted model's picture of the whole panel,
- * cached in `sketches/` by the hash of what was asked, exactly like a plate.
- * The picture is a composition guide only — Forge redraws the panel from its
+ * The sketch route's first step: a picture of the whole panel, cached in
+ * `sketches/` by the hash of what was asked, exactly like a plate. The picture
+ * is a composition guide only — the renderer redraws the panel from its
  * lines, so nothing of it reaches the page.
+ *
+ * Two sources. OpenAI stages from sentences ("a hotel rooftop party, a water
+ * tank on the lift housing"); a local tag model cannot say "on a roof" and
+ * drew a night market and an endless floor of people instead (2026-09-24).
+ * The local one is free, stays on the machine and may sketch anything. With
+ * `auto`, the place-and-crowd panels go to OpenAI and everything else stays
+ * local.
  */
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MockPlates } from '../plates/mock.ts'
-import { ForgeRenderer } from '../render/forge.ts'
-import { buildPrompt } from '../prompt.ts'
-import { familyFor, panelSeed } from '../seed.ts'
-import { ForgeSketches } from '../sketch/forge.ts'
 import { OpenAiPlates } from '../plates/openai.ts'
 import type { PlateBackend, PlateRequest } from '../plates/plate.ts'
+import { buildPrompt, isWideShot } from '../prompt.ts'
 import type { Project } from '../project.ts'
+import { ForgeRenderer } from '../render/forge.ts'
 import type { Reporter } from '../report.ts'
 import type { Panel, Script } from '../schema.ts'
+import { familyFor, panelSeed } from '../seed.ts'
+import { ForgeSketches } from '../sketch/forge.ts'
 import { describe, isExplicit, sketchPrompt } from '../sketch/prompt.ts'
 import { drawCached, plateSizeForPanel } from './plates.ts'
 
-export function sketchEnabled(project: Project): boolean {
-  return (process.env['COMIC_SKETCH'] ?? project.config.sketch.backend) !== 'none'
+export type SketchSource = 'openai' | 'forge' | 'mock'
+
+function configured(project: Project): string {
+  return process.env['COMIC_SKETCH'] ?? project.config.sketch.backend
 }
 
-export function sketchBackendFor(project: Project): PlateBackend {
-  const name = process.env['COMIC_SKETCH'] ?? project.config.sketch.backend
-  if (name === 'mock') return new MockPlates()
-  if (name === 'forge') return new ForgeSketches(new ForgeRenderer(project.config.forge), project.config.sketch.checkpoint, project.config.forge)
+export function sketchEnabled(project: Project): boolean {
+  return configured(project) !== 'none'
+}
+
+/**
+ * Where this panel's sketch comes from. `auto`: OpenAI for a panel whose
+ * subject is the place or a crowd — nobody from the cast, a wide shot, or
+ * more strangers than cast — and never for an explicit one; local otherwise.
+ */
+export function sketchSourceFor(project: Project, panel: Panel): SketchSource {
+  const name = configured(project)
+  if (name === 'mock' || name === 'forge' || name === 'openai') return name
+  const explicit = isExplicit(panel.scene, panel.setting, ...panel.pose)
+  const figures = panel.figures ?? panel.characters.length
+  const staged = panel.characters.length === 0 || isWideShot(panel.camera) || figures - panel.characters.length >= 2
+  return !explicit && staged ? 'openai' : 'forge'
+}
+
+export function sketchBackendFor(project: Project, source: SketchSource): PlateBackend {
+  if (source === 'mock') return new MockPlates()
+  if (source === 'forge') return new ForgeSketches(new ForgeRenderer(project.config.forge), project.config.sketch.checkpoint, project.config.forge)
   return new OpenAiPlates(project.config.sketch.model)
 }
 
@@ -37,15 +63,14 @@ export function sketchPaths(project: Project, id: string): { png: string; sideca
 
 /** Whether this panel may be sketched: never an explicit one by a hosted model. Locally, any. */
 export function sketchable(project: Project, panel: Panel): boolean {
-  const backend = process.env['COMIC_SKETCH'] ?? project.config.sketch.backend
-  return backend === 'forge' || !isExplicit(panel.scene, panel.setting, ...panel.pose)
+  return sketchSourceFor(project, panel) !== 'openai' || !isExplicit(panel.scene, panel.setting, ...panel.pose)
 }
 
 export function sketchRequestFor(project: Project, script: Script, where: { pageIndex: number; panelIndex: number }, variation = 0): PlateRequest {
   const page = script.pages[where.pageIndex]!
   const panel = page.panels[where.panelIndex]!
   const size = plateSizeForPanel(project, page, where.panelIndex)
-  if ((process.env['COMIC_SKETCH'] ?? project.config.sketch.backend) === 'forge') {
+  if (sketchSourceFor(project, panel) !== 'openai') {
     // A tag model gets the panel's own prompt, minus every LoRA, her body and
     // her look: the composition only. Her body words made NoobAI draw a
     // caricature the ControlNet then pressed onto every render, and her colour
@@ -73,17 +98,39 @@ export function sketchRequestFor(project: Project, script: Script, where: { page
   }
 }
 
+/** One backend per source, made on first use and prepared once. */
+export class SketchBackends {
+  private readonly made = new Map<SketchSource, PlateBackend>()
+  private readonly project: Project
+
+  constructor(project: Project) {
+    this.project = project
+  }
+
+  async for(panel: Panel): Promise<PlateBackend> {
+    const source = sketchSourceFor(this.project, panel)
+    let backend = this.made.get(source)
+    if (!backend) {
+      backend = sketchBackendFor(this.project, source)
+      await backend.prepare()
+      this.made.set(source, backend)
+    }
+    return backend
+  }
+}
+
 export async function ensureSketch(
   project: Project,
   script: Script,
-  backend: PlateBackend,
+  backends: SketchBackends,
   where: { pageIndex: number; panelIndex: number },
   report: Reporter,
   force = false,
 ): Promise<{ png: Buffer; hash: string }> {
   const panel = script.pages[where.pageIndex]!.panels[where.panelIndex]!
   const paths = sketchPaths(project, panel.id)
+  const backend = await backends.for(panel)
   const { hash, status } = await drawCached(backend, sketchRequestFor(project, script, where), paths, null, 0, force)
-  report.emit({ event: 'plate', id: panel.id, status, message: 'sketch' })
+  report.emit({ event: 'plate', id: panel.id, status, message: `sketch by ${backend.name}` })
   return { png: readFileSync(paths.png), hash }
 }

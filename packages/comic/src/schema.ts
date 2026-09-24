@@ -258,7 +258,7 @@ export const sketchConfigSchema = z.object({
   /** `forge` sketches locally on `checkpoint` from the panel's own tags, no LoRA,
    *  nothing leaving the machine; `openai` stages from sentences, which a
    *  tag model cannot, at a price and never for an explicit panel. */
-  backend: z.enum(['none', 'openai', 'forge', 'mock']).default('none'),
+  backend: z.enum(['none', 'auto', 'openai', 'forge', 'mock']).default('none'),
   model: z.string().default('gpt-image-2.5-sunburst'),
   /** The composing checkpoint for the `forge` backend. The house pair: NoobAI composes, delburry75 refines. */
   checkpoint: z.string().default('noobaiXLNAIXL_epsilonPred11Version'),

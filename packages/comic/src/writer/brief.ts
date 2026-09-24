@@ -80,5 +80,13 @@ EACH PANEL
 - "dialogue": zero to three balloons, each under 16 words. "anchor" is the same as the panel's reserve_space, or an adjacent anchor for a second balloon. "kind" is "speech" (default), "thought", "shout" or "caption" (narration boxes; speaker "narrator").
 - "sfx": sparingly — at most two per page, and only on real impacts. Short, upper case, like "WHAM".
 
+READABILITY — the reader sees only the pictures and the balloons, never the prose (owner, 2026-09-24: the first page "makes no sense"):
+- Every spoken line's speaker is IN that panel: in "characters" when cast, otherwise described in "scene" and counted in "figures" (a stranger who speaks is a figure you can see). A line from off-panel is allowed only as a "shout" whose speaker was shown in the panel before.
+- No reply without its setup on the page: a compliment and its "thanks", a question and its answer, share a panel or sit in consecutive panels.
+- The line that turns the page (an insult, a confession, a name called out) is a speech or shout balloon from the person who says it, never a caption.
+- A reaction panel follows every hit: after the line that lands, one panel on the face or hands of the person it lands on, usually silent.
+- Captions only for time and place, or a thought no picture can show; never to report what someone said or did.
+- Subtext stays in the pictures: when a character deflects, the reader must have SEEN what she deflects from on this page.
+
 Tell the story visually first. Dialogue carries what a picture cannot. Keep the title short.`
 }

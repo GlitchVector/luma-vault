@@ -110,3 +110,17 @@ suite('which panels the sketch route draws in one pass', () => {
     }
   })
 })
+
+suite('where a sketch comes from with backend auto', () => {
+  it('sends the place and the crowd to OpenAI, the cast and anything explicit stay local', async () => {
+    const { sketchSourceFor } = await import('../stages/sketch.ts')
+    const project = { config: { sketch: { backend: 'auto' } } } as never
+    const panel = (over: Record<string, unknown>) => ({ id: 'p1-1', camera: 'cowboy shot', scene: 'rooftop, night', characters: ['ari'], pose: [], ...over }) as never
+    expect(sketchSourceFor(project, panel({ characters: [], figures: 3 }))).toBe('openai')
+    expect(sketchSourceFor(project, panel({ camera: 'wide shot' }))).toBe('openai')
+    expect(sketchSourceFor(project, panel({ figures: 4 }))).toBe('openai')
+    expect(sketchSourceFor(project, panel({}))).toBe('forge')
+    expect(sketchSourceFor(project, panel({ camera: 'close-up', figures: 2 }))).toBe('forge')
+    expect(sketchSourceFor(project, panel({ characters: [], scene: 'bed, nude, sex' }))).toBe('forge')
+  })
+})

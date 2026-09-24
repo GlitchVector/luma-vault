@@ -25,7 +25,7 @@ import type { Page, Panel, Script } from '../schema.ts'
 import { familyFor, panelSeed } from '../seed.ts'
 import { assignFigures, findPeople } from '../sketch/people.ts'
 import { ensurePlate, plateBackendFor, platesEnabled } from './plates.ts'
-import { ensureSketch, sketchable, sketchBackendFor, sketchEnabled } from './sketch.ts'
+import { ensureSketch, SketchBackends, sketchable, sketchEnabled } from './sketch.ts'
 import type { PanelFilter } from './select.ts'
 import { selectPanels } from './select.ts'
 
@@ -289,8 +289,8 @@ export interface RenderContext {
   script: Script
   renderer: Renderer
   plates: PlateBackend | null
-  /** The sketch backend when the sketch route is on. */
-  sketch: PlateBackend | null
+  /** The sketch backends, one per source, when the sketch route is on. */
+  sketch: SketchBackends | null
   report: Reporter
 }
 
@@ -299,8 +299,7 @@ export async function contextFor(project: Project, report: Reporter, renderer?: 
   const chosen = renderer ?? rendererFor(project)
   const backend = plates === undefined ? (platesEnabled(project) ? plateBackendFor(project) : null) : plates
   if (backend) await backend.prepare()
-  const sketch = sketchEnabled(project) ? sketchBackendFor(project) : null
-  if (sketch) await sketch.prepare()
+  const sketch = sketchEnabled(project) ? new SketchBackends(project) : null
   return { project, script, renderer: chosen, plates: backend, sketch, report }
 }
 
