@@ -167,14 +167,24 @@
 
     // Measure each width once, not once per candidate position: a reflow per
     // position would be hundreds of forced layouts for one balloon.
+    // A floor under the ladder. In a tall thin panel 46% of the natural width
+    // was narrower than one word, and overflow-wrap broke words in half: the
+    // owner's first Beanpole pages had "The re's a tank" stacked a syllable a
+    // line, and "Beanpole" as B/ea/np/ol/e (2026-09-24). Never narrower than
+    // about seven and a half characters, and never a column: a narrowed shape
+    // taller than it is wide is worse than covering some of the picture.
+    const em = parseFloat(getComputedStyle(balloon).fontSize) || 20
+    const floor = em * 7.5
     const shapes = []
     for (let i = 0; i < WIDTHS.length; i++) {
       const wanted = Math.round(full * WIDTHS[i])
+      if (i > 0 && wanted < floor) break
       balloon.style.maxWidth = wanted + 'px'
       const measured = { width: balloon.offsetWidth, height: balloon.offsetHeight, share: WIDTHS[i] }
       // Text that cannot wrap any narrower stops the ladder: two identical
       // shapes are one shape, and the taller one is never better.
       if (i > 0 && measured.width >= shapes[shapes.length - 1].width) break
+      if (i > 0 && measured.height > measured.width * 1.25) break
       shapes.push(measured)
     }
     balloon.style.maxWidth = ''

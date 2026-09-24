@@ -117,7 +117,10 @@ body {
 
 .balloon {
   position: absolute;
-  max-width: var(--balloon-max);
+  /* 46% of a narrow third-of-a-page panel is about five words wide at this
+   * size, which is where the one-word columns came from. At least 11em, never
+   * past the panel's edges. */
+  max-width: min(92%, max(var(--balloon-max), 11em));
   font-family: var(--font-balloon);
   font-size: var(--balloon-size);
   font-weight: 700;

@@ -82,6 +82,11 @@ describe('the panel prompt', () => {
     const close = buildPrompt({ ...panel, camera: 'close-up' }, { ari }, scaled).prompt
     expect(close).toContain('<lora:ari_adopt_v1:1.2>')
 
+    // Body words fill the frame; a wide shot leaves them out and names the scenery.
+    expect(wide).not.toContain('large breasts')
+    expect(wide).toContain('scenery')
+    expect(close).toContain('large breasts')
+
     expect(isWideShot('wide shot, from below')).toBe(true)
     expect(isWideShot('establishing shot')).toBe(true)
     expect(isWideShot('close-up, from above')).toBe(false)

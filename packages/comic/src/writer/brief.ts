@@ -52,7 +52,8 @@ PLACES
 PAGES AND LAYOUTS
 - The prose arrives cut into pages by "[Page N]" lines: three paragraphs make a page. Produce exactly those pages, in that order, each telling what its own paragraphs tell — never merge two pages or split one.
 - 3 to 5 panels per page unless the prose is very short. Choose "layout" from these presets; its panel count must equal the page's number of panels:
-- ONE ESTABLISHING PANEL PER PAGE, whenever the page's place can be shown (skip it only for a page that stays in one tight close moment): camera "wide shot" (optionally with an angle), the place and the event as the subject — the party, the market, the farmyard — with the cast small in it or absent. Put it where the page's place first matters, usually the first panel. This is the panel that shows the crowd, the guests, the room; the other panels may then stay on faces and hands.
+- ONE ESTABLISHING PANEL PER PAGE, whenever the page's place can be shown (skip it only for a page that stays in one tight close moment): camera "wide shot" (optionally with an angle), the place and the event as the subject — the party, the market, the farmyard — with the cast small in it or absent. Prefer it with "characters" empty and "figures" counting the crowd; a lead in it is a small figure among the others, never the frame. Put it where the page's place first matters, usually the first panel. This is the panel that shows the crowd, the guests, the room.
+- VARY THE DISTANCE. The lead does not fill every panel: on a page, at most two panels are "close-up", "portrait" or "upper body"; the rest are "full body" or "wide shot", with the place around her. A close-up is for the moment that needs a face or a hand.
 ${layouts}
 - Panel ids are "p<page>-<n>", 1-based.
 

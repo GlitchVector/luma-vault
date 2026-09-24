@@ -203,8 +203,13 @@ export function buildPrompt(
     // the hips, which is the very thing the framing weight below exists to
     // fight, and two weights pulling against each other is how `wide shot`
     // became a cowboy shot on the boards.
-    parts.push(loraTag(lora), character.trigger, character.look, bodyFor(character, pageBody, panel.body))
+    // No body block on a wide shot. Body words name what fills a frame, so they
+    // pull the camera in until they do: the Beanpole test's planned wide shot
+    // came back as her full figure edge to edge with the party behind her
+    // (2026-09-24). At that distance the LoRA alone carries her shape.
+    parts.push(loraTag(lora), character.trigger, character.look, wide ? '' : bodyFor(character, pageBody, panel.body))
   }
+  if (wide && !/\bscenery\b/.test(panel.scene)) parts.push('scenery')
   // Framing words are weighted, because unweighted they lose.
   //
   // Measured on this house's own LoRAs long before the comic pipeline

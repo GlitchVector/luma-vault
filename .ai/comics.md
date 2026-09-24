@@ -189,6 +189,19 @@ of it is taste, and re-deriving any of it costs an afternoon.
   where the place and the event are the subject and the cast is small or
   absent, whenever the page's place can be shown. It is where the crowd and
   the room live; the other panels can stay on faces and hands.
+- **The lead does not fill every panel** (owner, 2026-09-24). A wide shot drops
+  the body block and adds `scenery`: body words name what fills a frame and
+  pull the camera in until they do, and the planned establishing shot came
+  back as her figure edge to edge. The brief allows at most two close-up /
+  portrait / upper-body panels per page and prefers the establishing panel
+  with nobody from the cast in it.
+- **Balloons have a floor** (2026-09-24). `balloons.js` narrows a balloon to
+  get it off her face, and in a third-of-a-page panel that went below one word:
+  "Beanpole" lettered B/ea/np/ol/e. Now at least 11em wide (`theme.css`),
+  never narrowed below 7.5em, never narrowed into a column taller than wide.
+- **A per-character negative does not exist yet.** Ari's canon bans bracelets,
+  but a global `bracelet` negative would strip Tom's bearing-ring cuff. It
+  belongs in the cast configuration, per character.
 - **Reserving lettering space by prompt is impossible on this checkpoint.**
   Four wordings, weighted and moved to the front, all scored 4.8-5.3 against
   a limit of 3.4. The assembler works around it instead (below).
