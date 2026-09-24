@@ -104,7 +104,7 @@ export const CUSTOM_LORAS: readonly LoraEntry[] = [
     character: 'Ari',
     kind: 'outfit',
     description:
-      'Ari in the retro-futuristic space leotard from her second sheet (2026-09-23): white vinyl one-piece with light-blue piping and a centre zip, ring collar, open sides and a crossed harness back, rocket badge on her left breast, opera gloves, one O-ring strap on her right thigh, white knee boots with a front stripe, silver discs over the ears; no headband, earrings or necklace with this outfit.',
+      'Ari in the retro-futuristic space leotard from her second sheet (2026-09-23): white vinyl one-piece with light-blue piping and a centre zip, ring collar, open sides and a crossed harness back, rocket badge on her left breast, opera gloves, one O-ring strap on her right thigh, white knee boots with a front stripe, silver discs over the ears; small drop earrings as in the sheet; no headband or necklace with this outfit.',
     status: 'wip',
     weight: null,
     olderVersions: [],
