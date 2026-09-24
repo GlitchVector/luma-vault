@@ -187,6 +187,7 @@ export function buildPrompt(
   config: Pick<Config, 'prompt'>,
   pageBody?: string,
   pageLighting?: string,
+  options: { lora?: boolean } = {},
 ): BuiltPrompt {
   const cast = panel.characters.map((id) => {
     const character = characters[id]
@@ -207,7 +208,11 @@ export function buildPrompt(
     // pull the camera in until they do: the Beanpole test's planned wide shot
     // came back as her full figure edge to edge with the party behind her
     // (2026-09-24). At that distance the LoRA alone carries her shape.
-    parts.push(loraTag(lora), character.trigger, character.look, wide ? '' : bodyFor(character, pageBody, panel.body))
+    // Without the LoRA (the sketch route's first pass) the trigger word means
+    // nothing either; the look tags stay, so the figure already wears the
+    // right hair and clothes and the repaint has less to change.
+    const who = options.lora === false ? [] : [loraTag(lora), character.trigger]
+    parts.push(...who, character.look, wide ? '' : bodyFor(character, pageBody, panel.body))
   }
   if (wide && !/\bscenery\b/.test(panel.scene)) parts.push('scenery')
   // Framing words are weighted, because unweighted they lose.

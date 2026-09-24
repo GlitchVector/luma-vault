@@ -245,6 +245,36 @@ export const platesConfigSchema = z.object({
 })
 export type PlatesConfig = z.infer<typeof platesConfigSchema>
 
+/**
+ * The sketch route (2026-09-24): a hosted model sketches the whole panel,
+ * people and gestures included; Forge redraws it from scratch with
+ * ControlNet reading the sketch, with NO character LoRA, so the crowd, a
+ * stranger's gesture and the place come out as written; then each cast
+ * character is repainted inside her own figure with her own LoRA. The
+ * sketch never reaches the page, only its lines do. Replaces plates, which
+ * failed on the stand-in mannequins; the two are not used together.
+ */
+export const sketchConfigSchema = z.object({
+  backend: z.enum(['none', 'openai', 'mock']).default('none'),
+  model: z.string().default('gpt-image-2.5-sunburst'),
+  quality: z.enum(['low', 'medium', 'high', 'auto']).default('medium'),
+  style: z.string().default('clean comic illustration, clear readable poses, no text, no speech bubbles'),
+  /** The ControlNet that reads the sketch. `model` is matched by substring against Forge's list. */
+  control: z
+    .object({
+      module: z.string().default('lineart_anime'),
+      model: z.string().default('noob-sdxl-controlnet-lineart_anime'),
+      weight: z.number().min(0).max(2).default(0.85),
+      end: z.number().min(0).max(1).default(0.8),
+    })
+    .prefault({}),
+  /** Strength of the per-character repaint. Enough for the LoRA to take the face, body and outfit; low enough to keep the pose. */
+  character_denoise: z.number().min(0).max(1).default(0.6),
+  mask_blur: z.number().int().min(0).default(12),
+  inpaint_padding: z.number().int().min(0).default(96),
+})
+export type SketchConfig = z.infer<typeof sketchConfigSchema>
+
 export const writerConfigSchema = z.object({
   backend: z.enum(['claude-cli', 'anthropic']).default('claude-cli'),
   model: z.string().default('claude-opus-5'),
@@ -258,6 +288,7 @@ export const configSchema = z.object({
   qa: qaConfigSchema.prefault({}),
   writer: writerConfigSchema.prefault({}),
   plates: platesConfigSchema.prefault({}),
+  sketch: sketchConfigSchema.prefault({}),
   /**
    * Where a finished comic is copied so the vault can see it as a set.
    *

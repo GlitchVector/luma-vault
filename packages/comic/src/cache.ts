@@ -48,6 +48,11 @@ export interface RenderRequest {
   /** Set when the panel is painted into a plate: the plate's hash and the
    *  inpaint settings, so a new plate or a new strength is a new picture. */
   plate?: { hash: string; denoise: number; mask_grow: number; mask_tolerance: number; mask_blur: number; padding: number }
+  /** Set on the sketch route: which sketch the ControlNet read, and how. The
+   *  picture itself travels beside the request, never inside it. */
+  control?: { sketch: string; module: string; model: string; weight: number; end: number }
+  /** Set on the sketch route: the per-character repaint that follows the first pass. */
+  repaint?: { denoise: number; mask_blur: number; padding: number; prompts: string[] }
 }
 
 export function canonical(value: unknown): string {

@@ -70,7 +70,7 @@ function plateHash(request: Omit<PlateRequest, 'references'> & { master: string 
   return createHash('sha256').update(canonical(request)).digest('hex').slice(0, 16)
 }
 
-async function drawCached(
+export async function drawCached(
   backend: PlateBackend,
   request: PlateRequest,
   paths: { png: string; sidecar: string },

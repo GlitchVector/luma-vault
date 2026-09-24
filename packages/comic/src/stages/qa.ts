@@ -19,6 +19,7 @@ import type { Renderer } from '../render/renderer.ts'
 import type { Reporter } from '../report.ts'
 import { inspectPixels, type PixelVerdict } from '../qa/pixels.ts'
 import { PythonTagger, judgeFigures, type Tagger, type Tags } from '../qa/tagger.ts'
+import { sketchEnabled } from './sketch.ts'
 import { contextFor, finalizePlan, isCached, loraNames, planPanel, renderPlan, selectPanels, type PanelFilter, type PanelPlan } from './panels.ts'
 import type { PlateBackend } from '../plates/plate.ts'
 
@@ -114,7 +115,11 @@ export async function runQa(project: Project, report: Reporter, filter: PanelFil
   }
   report.emit({ event: 'stage', stage: 'qa', status: 'start', message: tagger ? 'pixels + tagger' : 'pixels only' })
 
-  const prepared = await renderer.prepare({ checkpoint: project.config.forge.checkpoint, loras: loraNames(script) })
+  const prepared = await renderer.prepare({
+    checkpoint: project.config.forge.checkpoint,
+    loras: loraNames(script),
+    control: sketchEnabled(project) ? project.config.sketch.control.model : undefined,
+  })
   const verdicts: Verdict[] = []
   for (const where of selectPanels(script, filter)) {
     // Panel by panel, attempt by attempt: each render decides the next.

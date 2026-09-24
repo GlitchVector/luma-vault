@@ -22,6 +22,8 @@ export interface RenderResult {
 export interface Needs {
   /** A substring of the checkpoint's name, from the config. */
   checkpoint: string
+  /** A substring of a ControlNet model's name, for the sketch route. */
+  control?: string
   /** LoRA names (without weights) the script's characters use. */
   loras: string[]
 }
@@ -29,6 +31,8 @@ export interface Needs {
 export interface Prepared {
   /** The checkpoint as the backend names it — this is what gets hashed. */
   checkpoint: string
+  /** The ControlNet model as the backend names it, when one was asked for. */
+  control?: string
 }
 
 export type Progress = (fraction: number, etaSeconds: number | undefined) => void
@@ -41,6 +45,8 @@ export interface InpaintRequest extends RenderRequest {
   mask_blur: number
   /** Pixels of context around the mask rendered at full resolution. */
   padding: number
+  /** The picture the ControlNet reads, when `control` is set. */
+  controlImage?: Buffer
 }
 
 export interface Renderer {
@@ -53,6 +59,6 @@ export interface Renderer {
   upscale?(png: Buffer, scale: number, model: string): Promise<Buffer>
   /** Confirm the backend can serve the script, or throw naming what it lacks. */
   prepare(needs: Needs): Promise<Prepared>
-  render(request: RenderRequest, onProgress?: Progress): Promise<RenderResult>
+  render(request: RenderRequest, onProgress?: Progress, controlImage?: Buffer): Promise<RenderResult>
   inpaint(request: InpaintRequest, onProgress?: Progress): Promise<RenderResult>
 }

@@ -21,7 +21,9 @@ import type { InpaintRequest, Prepared, Renderer } from '../render/renderer.ts'
 import type { Reporter } from '../report.ts'
 import type { Page, Panel, Script } from '../schema.ts'
 import { familyFor, panelSeed } from '../seed.ts'
+import { castFigures, findPeople } from '../sketch/people.ts'
 import { ensurePlate, plateBackendFor, platesEnabled } from './plates.ts'
+import { ensureSketch, sketchable, sketchBackendFor, sketchEnabled } from './sketch.ts'
 import type { PanelFilter } from './select.ts'
 import { selectPanels } from './select.ts'
 
@@ -29,6 +31,8 @@ export interface PanelPlan {
   id: string
   /** The plate and one mask per character, once `finalizePlan` has run. */
   plate?: { png: Buffer; masks: Buffer[] }
+  /** The sketch route: the hosted sketch the ControlNet reads, once `finalizePlan` has run. */
+  sketch?: { png: Buffer; python: string }
   /** One prompt per character in the panel, for painting each alone. */
   characterPrompts?: string[]
   pageIndex: number
@@ -99,7 +103,10 @@ export function planPanel(
     width = w
     height = h
   }
-  const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting)
+  // The sketch route draws the first pass with nobody's LoRA: the LoRA is what
+  // pulled every panel onto her, and each character gets hers in the repaint.
+  const sketched = sketchEnabled(project) && !!prepared.control && sketchable(panel)
+  const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: !sketched })
   // With a plate, each character is painted alone into her own mask, so
   // each gets a prompt naming only her - the panel prompt names them all.
   // No `figures` here: a mask holds one character, never the crowd around her.
@@ -114,7 +121,9 @@ export function planPanel(
     width,
     height,
     hires: platesEnabled(project) ? undefined : hiresFor(project, page, where.panelIndex, width),
-    face: faceFor(project, panel, script),
+    // No face pass on the sketch route: the repaint already redraws each
+    // character's face with her LoRA, at full resolution.
+    face: sketched ? undefined : faceFor(project, panel, script),
     steps: forge.steps,
     cfg: forge.cfg,
     sampler: forge.sampler,
@@ -122,6 +131,19 @@ export function planPanel(
     checkpoint: prepared.checkpoint,
     clip_skip: forge.clip_skip,
     backend,
+    ...(sketched
+      ? {
+          control: { sketch: '', ...project.config.sketch.control, model: prepared.control! },
+          repaint: panel.characters.length
+            ? {
+                denoise: project.config.sketch.character_denoise,
+                mask_blur: project.config.sketch.mask_blur,
+                padding: project.config.sketch.inpaint_padding,
+                prompts: characterPrompts,
+              }
+            : undefined,
+        }
+      : {}),
   }
   return {
     id: panel.id,
@@ -192,6 +214,8 @@ export interface RenderContext {
   script: Script
   renderer: Renderer
   plates: PlateBackend | null
+  /** The sketch backend when the sketch route is on. */
+  sketch: PlateBackend | null
   report: Reporter
 }
 
@@ -200,7 +224,9 @@ export async function contextFor(project: Project, report: Reporter, renderer?: 
   const chosen = renderer ?? rendererFor(project)
   const backend = plates === undefined ? (platesEnabled(project) ? plateBackendFor(project) : null) : plates
   if (backend) await backend.prepare()
-  return { project, script, renderer: chosen, plates: backend, report }
+  const sketch = sketchEnabled(project) ? sketchBackendFor(project) : null
+  if (sketch) await sketch.prepare()
+  return { project, script, renderer: chosen, plates: backend, sketch, report }
 }
 
 /** How many stand-in retries a panel gets when the hosted model drew none. */
@@ -216,6 +242,11 @@ const PLATE_VARIATIONS = 2
  * painting a character over nothing.
  */
 export async function finalizePlan(plan: PanelPlan, context: RenderContext): Promise<PanelPlan> {
+  if (context.sketch && plan.request.control) {
+    const sketch = await ensureSketch(context.project, context.script, context.sketch, plan, context.report)
+    const request: RenderRequest = { ...plan.request, control: { ...plan.request.control, sketch: sketch.hash } }
+    return { ...plan, request, hash: requestHash(request), sketch: { png: sketch.png, python: context.project.config.qa.python } }
+  }
   if (!context.plates) return plan
   const { plates: config } = context.project.config
   const figures = plan.panel.figures ?? plan.panel.characters.length
@@ -266,7 +297,11 @@ export async function renderPlan(plan: PanelPlan, renderer: Renderer, report: Re
   report.emit({ event: 'panel', id: plan.id, status: 'rendering', seed: plan.seed, attempt: plan.attempt })
   const onProgress = (progress: number, eta: number | undefined) =>
     report.tick({ event: 'panel', id: plan.id, status: 'rendering', progress, eta, seed: plan.seed, attempt: plan.attempt })
-  const result = plan.plate ? await paintCharacters(plan, plan.plate, renderer, onProgress) : await renderer.render(plan.request, onProgress)
+  const result = plan.sketch
+    ? await paintFromSketch(plan, plan.sketch, renderer, report, onProgress)
+    : plan.plate
+      ? await paintCharacters(plan, plan.plate, renderer, onProgress)
+      : await renderer.render(plan.request, onProgress)
   mkdirSync(dirname(plan.pngPath), { recursive: true })
   archive(plan)
   writeFileSync(plan.pngPath, result.png)
@@ -304,6 +339,48 @@ export function archive(plan: PanelPlan): void {
   if (existsSync(kept)) return
   copyFileSync(plan.pngPath, kept)
   if (sidecar) writeJson(join(dir, `${stamp}.json`), sidecar)
+}
+
+/**
+ * The sketch route, after the sketch exists: the whole panel from the sketch's
+ * lines with nobody's LoRA, then each cast character repainted inside her own
+ * figure with her own prompt and LoRA — the N largest figures, left to right,
+ * which is the order the sketch placed the cast in. A two-character panel is
+ * two solo repaints, so the LoRAs never share a prompt.
+ */
+async function paintFromSketch(
+  plan: PanelPlan,
+  sketch: { png: Buffer; python: string },
+  renderer: Renderer,
+  report: Reporter,
+  onProgress: (progress: number, eta: number | undefined) => void,
+): Promise<{ png: Buffer; info?: unknown }> {
+  const first = await renderer.render(plan.request, onProgress, sketch.png)
+  const repaint = plan.request.repaint
+  if (!repaint || repaint.prompts.length === 0) return first
+  const figures = castFigures(await findPeople(sketch.python, first.png), repaint.prompts.length)
+  if (figures.length < repaint.prompts.length) {
+    report.emit({ event: 'note', message: `${plan.id}: found ${figures.length} of ${repaint.prompts.length} cast figures; the rest keep the first pass` })
+  }
+  let current = first.png
+  const infos: unknown[] = [first.info]
+  for (const [index, figure] of figures.entries()) {
+    const request: InpaintRequest = {
+      ...plan.request,
+      prompt: repaint.prompts[index]!,
+      init: current,
+      mask: figure.mask,
+      denoise: repaint.denoise,
+      mask_blur: repaint.mask_blur,
+      padding: repaint.padding,
+      controlImage: sketch.png,
+    }
+    // eslint-disable-next-line no-await-in-loop
+    const result = await renderer.inpaint(request, onProgress)
+    current = result.png
+    infos.push(result.info)
+  }
+  return { png: current, info: infos }
 }
 
 /**
@@ -363,7 +440,11 @@ export async function runPanels(
   if (options.seed !== undefined && where.length !== 1) {
     throw new Error('--seed applies to exactly one panel; give --page and --panel')
   }
-  const prepared = await renderer.prepare({ checkpoint: project.config.forge.checkpoint, loras: loraNames(script) })
+  const prepared = await renderer.prepare({
+    checkpoint: project.config.forge.checkpoint,
+    loras: loraNames(script),
+    control: sketchEnabled(project) ? project.config.sketch.control.model : undefined,
+  })
   const plans = where.map((w) => planPanel(project, script, prepared, w, options, renderer.name))
   if (options.dryRun) {
     for (const plan of plans) {

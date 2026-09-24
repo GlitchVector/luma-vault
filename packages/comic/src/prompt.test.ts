@@ -130,6 +130,13 @@ describe('the panel prompt', () => {
     expect(prompt).not.toMatch(/\bsolo,/)
   })
 
+  it('drops the LoRA and trigger but keeps the look for the sketch route first pass', () => {
+    const { prompt } = buildPrompt(panel, { ari }, config, undefined, undefined, { lora: false })
+    expect(prompt).not.toContain('<lora:')
+    expect(prompt).not.toMatch(/(^|, )ari(,|$)/)
+    expect(prompt).toContain(ari.look.split(',')[0]!.trim())
+  })
+
   it('names a character the script does not define', () => {
     expect(() => buildPrompt({ ...panel, characters: ['bob'] }, { ari }, config)).toThrow(/"bob"/)
   })

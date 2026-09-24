@@ -72,11 +72,13 @@ export class ForgeRenderer implements Renderer {
           `  Installed: ${[...names].sort().join(', ')}`,
       )
     }
-    return { checkpoint }
+    if (!needs.control) return { checkpoint }
+    const { model_list: controls } = await this.call<{ model_list: string[] }>('/controlnet/model_list')
+    return { checkpoint, control: resolveControl(controls, needs.control) }
   }
 
-  async render(request: RenderRequest, onProgress?: Progress): Promise<RenderResult> {
-    return this.generate('/sdapi/v1/txt2img', toPayload(request, this.config), onProgress)
+  async render(request: RenderRequest, onProgress?: Progress, controlImage?: Buffer): Promise<RenderResult> {
+    return this.generate('/sdapi/v1/txt2img', toPayload(request, this.config, controlImage), onProgress)
   }
 
   async inpaint(request: InpaintRequest, onProgress?: Progress): Promise<RenderResult> {
@@ -179,7 +181,39 @@ export function resolveCheckpoint(models: SdModel[], wanted: string): string {
   )
 }
 
-export function toPayload(request: RenderRequest, config: Pick<ForgeConfig, 'save_to_forge'>): Record<string, unknown> {
+/**
+ * The ControlNet model Forge lists under a name containing `wanted`. Forge
+ * lists them with a hash suffix (`noob-sdxl-controlnet-lineart_anime
+ * [f0e048f8]`) and only scans its folder at startup: a model copied in while
+ * it runs is simply absent, and a request naming it renders WITHOUT the
+ * ControlNet and no error at all (2026-09-24), so absence throws here.
+ */
+export function resolveControl(listed: string[], wanted: string): string {
+  const needle = wanted.toLowerCase()
+  const matches = listed.filter((name) => name !== 'None' && name.toLowerCase().includes(needle))
+  if (matches.length === 1) return matches[0]!
+  if (matches.length === 0) {
+    throw new Error(`no ControlNet model matches "${wanted}" (Forge lists: ${listed.join(', ')}). A model added while Forge runs needs a Forge restart.`)
+  }
+  throw new Error(`"${wanted}" matches ${matches.length} ControlNet models (${matches.join(', ')}); name one exactly`)
+}
+
+/** One ControlNet unit reading `image`, in the shape this Forge's API takes. */
+export function controlUnit(control: NonNullable<RenderRequest['control']>, image: Buffer): Record<string, unknown> {
+  return {
+    enabled: true,
+    module: control.module,
+    model: control.model,
+    image: image.toString('base64'),
+    weight: control.weight,
+    guidance_start: 0,
+    guidance_end: control.end,
+    resize_mode: 'Crop and Resize',
+    processor_res: 1024,
+  }
+}
+
+export function toPayload(request: RenderRequest, config: Pick<ForgeConfig, 'save_to_forge'>, controlImage?: Buffer): Record<string, unknown> {
   const overrides: Record<string, unknown> = { sd_model_checkpoint: request.checkpoint }
   if (request.clip_skip !== undefined) overrides['CLIP_stop_at_last_layers'] = request.clip_skip
   // `hr_resize_x/y` rather than `hr_scale`, because the panel has to come
@@ -201,52 +235,15 @@ export function toPayload(request: RenderRequest, config: Pick<ForgeConfig, 'sav
         denoising_strength: request.hires.denoise,
       }
     : {}
-  // ADetailer is an always-on script, so it rides in `alwayson_scripts`
-  // rather than the payload proper. Its args are positional: enabled, skip
-  // img2img, then one object per unit. The shape came from this Forge's own
-  // `/sdapi/v1/script-info`, not from a guess.
-  const scripts = request.face
-    ? {
-        alwayson_scripts: {
-          ADetailer: {
-            args: [
-              true,
-              false,
-              {
-                ad_model: request.face.model,
-                ad_prompt: request.face.prompt,
-                ad_negative_prompt: request.face.negative,
-                ad_confidence: request.face.confidence,
-                // The gate that makes this a SMALL-face pass: a face larger
-                // than this share of the picture is left alone.
-                ad_mask_max_ratio: request.face.max_area,
-                ad_denoising_strength: request.face.denoise,
-                ad_mask_blur: request.face.mask_blur,
-                ad_inpaint_only_masked: true,
-                ad_inpaint_only_masked_padding: request.face.padding,
-                // The face gets its own step count and guidance, both above
-                // what the panel used. Measured off 97 of his own 2023
-                // renders, where the face pass ran at 30 steps and CFG 7
-                // over bodies drawn at fewer of both.
-                ad_use_steps: true,
-                ad_steps: request.face.steps,
-                ad_use_cfg_scale: true,
-                ad_cfg_scale: request.face.cfg,
-                ad_use_inpaint_width_height: true,
-                ad_inpaint_width: request.face.size,
-                ad_inpaint_height: request.face.size,
-                ...(request.face.checkpoint
-                  ? { ad_use_checkpoint: true, ad_checkpoint: request.face.checkpoint }
-                  : {}),
-              },
-            ],
-          },
-        },
-      }
-    : {}
+  // ADetailer and ControlNet are always-on scripts, so they ride in
+  // `alwayson_scripts` rather than the payload proper. The shapes came from
+  // this Forge's own `/sdapi/v1/script-info`, not from a guess.
+  const scripts: { alwayson_scripts: Record<string, unknown> } = { alwayson_scripts: {} }
+  if (request.control && controlImage) scripts.alwayson_scripts['ControlNet'] = { args: [controlUnit(request.control, controlImage)] }
+  if (request.face) scripts.alwayson_scripts['ADetailer'] = adetailerFor(request.face)
   return {
     ...hires,
-    ...scripts,
+    ...(Object.keys(scripts.alwayson_scripts).length > 0 ? scripts : {}),
     prompt: request.prompt,
     negative_prompt: request.negative,
     seed: request.seed,
@@ -266,6 +263,41 @@ export function toPayload(request: RenderRequest, config: Pick<ForgeConfig, 'sav
   }
 }
 
+/** The face pass as ADetailer's always-on args: enabled, skip img2img, then one unit. */
+function adetailerFor(face: NonNullable<RenderRequest['face']>): Record<string, unknown> {
+  return {
+    args: [
+      true,
+      false,
+      {
+        ad_model: face.model,
+        ad_prompt: face.prompt,
+        ad_negative_prompt: face.negative,
+        ad_confidence: face.confidence,
+        // The gate that makes this a SMALL-face pass: a face larger
+        // than this share of the picture is left alone.
+        ad_mask_max_ratio: face.max_area,
+        ad_denoising_strength: face.denoise,
+        ad_mask_blur: face.mask_blur,
+        ad_inpaint_only_masked: true,
+        ad_inpaint_only_masked_padding: face.padding,
+        // The face gets its own step count and guidance, both above
+        // what the panel used. Measured off 97 of his own 2023
+        // renders, where the face pass ran at 30 steps and CFG 7
+        // over bodies drawn at fewer of both.
+        ad_use_steps: true,
+        ad_steps: face.steps,
+        ad_use_cfg_scale: true,
+        ad_cfg_scale: face.cfg,
+        ad_use_inpaint_width_height: true,
+        ad_inpaint_width: face.size,
+        ad_inpaint_height: face.size,
+        ...(face.checkpoint ? { ad_use_checkpoint: true, ad_checkpoint: face.checkpoint } : {}),
+      },
+    ],
+  }
+}
+
 /**
  * The inpaint call: the plate as the init image, the stand-in's mask as the
  * mask, painted at high strength. `inpaint_full_res` renders the masked
@@ -277,7 +309,7 @@ export function toInpaintPayload(request: InpaintRequest, config: Pick<ForgeConf
   return {
     // Without `hires`: this pass is already an img2img at the plate's size,
     // and the hires fields would only fight its denoising strength.
-    ...toPayload({ ...request, hires: undefined, face: undefined }, config),
+    ...toPayload({ ...request, hires: undefined, face: undefined }, config, request.controlImage),
     init_images: [request.init.toString('base64')],
     mask: request.mask.toString('base64'),
     denoising_strength: request.denoise,

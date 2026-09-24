@@ -123,7 +123,7 @@ export class PythonFigureFinder implements FigureFinder {
   }
 }
 
-function run(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+export function run(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
