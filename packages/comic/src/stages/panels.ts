@@ -156,9 +156,13 @@ export function planPanel(
           unify:
             panel.characters.length && project.config.sketch.unify.enabled
               ? {
-                  prompt: buildPrompt(panel, withLoraScaled(script.characters, project.config.sketch.unify.lora_scale), project.config, page.body, page.lighting).prompt,
+                  prompt:
+                    project.config.sketch.unify.lora_scale === 0
+                      ? buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: false }).prompt
+                      : buildPrompt(panel, withLoraScaled(script.characters, project.config.sketch.unify.lora_scale), project.config, page.body, page.lighting).prompt,
                   denoise: project.config.sketch.unify.denoise,
                   control_weight: project.config.sketch.unify.control_weight,
+                  face: project.config.sketch.unify.face && panel.characters.length === 1 ? faceFor(project, panel, script) : undefined,
                 }
               : undefined,
         }
@@ -437,7 +441,8 @@ async function paintFromSketch(
     const result = await renderer.inpaint(
       {
         ...plan.request,
-        face: undefined,
+        // Her face back with her LoRA, after the light pass drew it without one.
+        face: unify.face,
         prompt: unify.prompt,
         width,
         height,
@@ -480,6 +485,7 @@ async function paintCharacters(
   for (const [index, mask] of plate.masks.entries()) {
     const request: InpaintRequest = {
       ...plan.request,
+      face: undefined,
       prompt: plan.characterPrompts?.[index] ?? plan.request.prompt,
       init: current,
       mask,

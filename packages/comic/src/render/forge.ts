@@ -309,7 +309,9 @@ export function toInpaintPayload(request: InpaintRequest, config: Pick<ForgeConf
   return {
     // Without `hires`: this pass is already an img2img at the plate's size,
     // and the hires fields would only fight its denoising strength.
-    ...toPayload({ ...request, hires: undefined, face: undefined }, config, request.controlImage),
+    // The face pass rides along when the caller asks for one (the sketch route's
+    // light pass restores her face with it); callers that must not, clear it.
+    ...toPayload({ ...request, hires: undefined }, config, request.controlImage),
     init_images: [request.init.toString('base64')],
     mask: request.mask.toString('base64'),
     denoising_strength: request.denoise,

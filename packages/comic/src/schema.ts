@@ -293,8 +293,14 @@ export const sketchConfigSchema = z.object({
   unify: z
     .object({
       enabled: z.boolean().default(true),
-      denoise: z.number().min(0).max(1).default(0.3),
-      lora_scale: z.number().min(0).max(2).default(0.6),
+      denoise: z.number().min(0).max(1).default(0.45),
+      /** 0 draws the light pass with no LoRA at all: her LoRA carries the glossy
+       *  studio light of her reference sheets and re-applied exactly the
+       *  pasted-in look this pass exists to remove (2026-09-24). Her face is
+       *  then restored by `face`. */
+      lora_scale: z.number().min(0).max(2).default(0),
+      /** A face pass with her LoRA on top of the light pass, for a panel with one cast member. */
+      face: z.boolean().default(true),
       control_weight: z.number().min(0).max(2).default(0.6),
     })
     .prefault({}),

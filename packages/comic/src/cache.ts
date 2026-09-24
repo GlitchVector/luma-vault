@@ -62,7 +62,7 @@ export interface RenderRequest {
     cast: Array<{ id: string; prompt: string; negative: string; hair?: string[] }>
   }
   /** Set on the sketch route: the light pass over the whole finished panel. */
-  unify?: { prompt: string; denoise: number; control_weight: number }
+  unify?: { prompt: string; denoise: number; control_weight: number; face?: RenderRequest['face'] }
 }
 
 export function canonical(value: unknown): string {
