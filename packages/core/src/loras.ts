@@ -123,7 +123,7 @@ export const CUSTOM_LORAS: readonly LoraEntry[] = [
     status: 'wip',
     weight: null,
     olderVersions: [],
-    note: 'Second outfit variant through the reference pipeline; every body and cowboy view passed in sheet mode at the first attempt. The pack was the one thing the generator fought: three rounds of front poses drew it at the hip or beside the shoulder until the text made it hidden in front views. Dataset prepped 2026-09-24: 28 body, 11 cowboy + 26 cuts, 10 upper + 26 cuts, 13 face, 8 details + 4 mirrors; nothing with the badge mirrored. Stage 1 not yet trained.',
+    note: 'Second outfit variant through the reference pipeline; every body and cowboy view passed in sheet mode at the first attempt. The pack was the one thing the generator fought: three rounds of front poses drew it at the hip or beside the shoulder until the text made it hidden in front views. Dataset rebuilt 2026-09-24 without body-frame cuts: 28 body, 26 native cowboys, 24 native uppers (22 poses per rung), 13 face, 8 details + 4 mirrors; nothing with the badge mirrored. Stage 1 not yet trained.',
   },
   {
     name: 'celoracle_v3',
