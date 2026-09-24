@@ -60,6 +60,20 @@ Propose ${count} distinct possibilities for what the author asks. Prefer small c
 Do not write prose for the comic. Do not decide: the author chooses. "title" is a short label; "text" is one or two paragraphs.`
 }
 
+/**
+ * A page of the comic's prose, for /story's page step. storyBrief forbids prose and invites
+ * "what it costs / contradicts canon" notes, which is right for outline asks and made every page
+ * come back as two paragraphs of commentary (Beanpole p.1, 2026-09-24). The pipeline cuts pages
+ * on exactly three paragraphs, so the count is part of the brief.
+ */
+export function pageBrief(comic: string, count: number): string {
+  return `You are writing the prose of the comic "${comic}". The context shows the world, the cast's voices, the outline and the pages already written; treat all of it as fixed and follow it without commenting on it.
+
+Write ${count} distinct versions of the page the author asks for. Each version's "text" IS the page: exactly three paragraphs of story narration in present tense, separated by blank lines. Each paragraph is one moment that can be drawn as one or two panels. Show the story in what people do and what can be seen; dialogue only where a picture cannot carry it.
+
+The text contains nothing but the page: no notes, no analysis, no "beat one", no "what it costs", no mention of canon, no titles inside the text. If a version would break canon, write a different version instead. The versions differ in how the moment is staged, not in what the outline says happens. "title" is a short label. Do not decide: the author chooses.`
+}
+
 export const SCENE_JSON_SCHEMA: Record<string, unknown> = {
   type: 'object',
   properties: {

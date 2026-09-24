@@ -44,6 +44,7 @@ import {
   panelsBrief,
   sceneBrief,
   storyBrief,
+  pageBrief,
 } from './briefs.ts'
 import { approve, pass, writeProposals } from './canon.ts'
 import { formatCharacters, listCharacters } from './characters.ts'
@@ -90,6 +91,8 @@ const { values, positionals } = parseArgs({
     force: { type: 'boolean', default: false },
     /** Route a brainstorm of the caller's own wording through the explicit model. */
     explicit: { type: 'boolean', default: false },
+    /** A story brainstorm whose answers are pages of prose, not directions. */
+    page: { type: 'boolean', default: false },
     'no-ari': { type: 'boolean', default: false },
     'dry-run': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
@@ -107,7 +110,7 @@ function usage(): never {
   plan <character>                  character brainstorm <id> "<ask>" [--count N] [--explicit]
   context <task> …                  character approve <id> <file|latest> <n,n> --into <file>
   comic new <id> --title "…" --characters a,b
-  story brainstorm <comic> "<ask>" [--explicit]
+  story brainstorm <comic> "<ask>" [--explicit] [--page]   --page: each proposal is a page of prose
                                     story approve <comic> <file|latest> <n,n> --into concept|outline|story|continuity
   story prose <comic> [--out <file>]  the approved story as # Title + paragraphs, for prose.md
   scene draft <comic> "<direction>" panels plan <comic> <scene_NNN> [--count N]
@@ -377,7 +380,8 @@ async function main(): Promise<void> {
         case 'brainstorm': {
           const topic = need(3, 'what to brainstorm')
           const n = count(studio)
-          const reply = await ask(studio, { kind: 'story.brainstorm', comic }, storyBrief(comic, n), topic, PROPOSALS_JSON_SCHEMA(n), proposalsSchema, values.explicit)
+          const brief = values.page ? pageBrief(comic, n) : storyBrief(comic, n)
+          const reply = await ask(studio, { kind: 'story.brainstorm', comic }, brief, topic, PROPOSALS_JSON_SCHEMA(n), proposalsSchema, values.explicit)
           const path = writeProposals(studio, { comic }, topic, reply.proposals)
           console.log(`${reply.proposals.length} proposals → ${path}\n`)
           reply.proposals.forEach((p, i) => console.log(`${i + 1}. ${p.title}\n   ${p.text.replace(/\n/g, '\n   ')}\n`))

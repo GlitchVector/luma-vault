@@ -99,7 +99,7 @@ the five.
 One brainstorm per page, in order, with the outline as context and the page count he chose:
 
 ```
-pnpm studio story brainstorm <id> "page N of M as three paragraphs of prose, each paragraph one beat that can be drawn as one or two panels; show the story visually, dialogue only where a picture cannot carry it; pages so far: <one line each>" [--explicit] --count 3
+pnpm studio story brainstorm <id> --page "page N of M as three paragraphs of prose, each paragraph one beat that can be drawn as one or two panels; show the story visually, dialogue only where a picture cannot carry it; pages so far: <one line each>" [--explicit] --count 3
 ```
 
 Three options, each a whole page. He clicks one (or types "none, more like X"); approve it into
