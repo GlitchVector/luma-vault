@@ -1,0 +1,151 @@
+{
+  "name": "ari-alt-cleavage",
+  "_fill": "description and audit are derived from the reference image BEFORE anything renders; the description is what every prompt says about her, the audit list is what every generated frame is checked against (physics first). Leave `views` out for the whole library, or list keys like body/01-front. `details` are HER garment close-ups: one entry per small part a full-body frame holds at a tenth of the frame (shorts, collar, cuffs, shoes...), each {id, prompt, tags}, tags framing-only (lower body / close-up / feet, never the garment) - see characters/ari/character.json.",
+  "description": "a young woman with a white chin-length bob with straight bangs whose tips fade to aqua, pale skin, large light blue eyes with long lashes, FULL SOFT LIPS, blue teardrop earrings, an hourglass figure with a full bust, a narrow waist, wide hips and a VERY large, full, round buttocks: seen from the side they project far back behind her in a deep, heavy curve well beyond the line of her back, and seen from behind each glute is long and tall, reaching from the small of her back low down to where it meets the top of the thigh, with a deep fold beneath it. Only the buttocks are this big: her thighs are full and shapely but NOT oversized - each thigh is clearly narrower than her waist is wide - and they taper to slim knees, slender calves and narrow ankles; the legs are long and elegant, never heavy or bulky. She wears a plain teal headband with no gems, no trim and no ornaments, visible across the top of her head from every angle including from behind, and a gold chain necklace with one LARGE round blue gem pendant, about the size of a coin in a gold setting resting at the front of her neck - from behind only the bare gold chain crosses the nape, no pendant at the back. The reference sheet's BACK view wrongly shows two black buttons on the back of the shorts' waistband - IGNORE them: the back and both sides of the shorts have NO buttons, NO dots, NO studs and NO fastenings of any kind, from the waistband to the hem, in every view. The reference sheet shows a jewelled headband, no necklace and bracelets - IGNORE those three details and draw the plain headband, the necklace and bare wrists described here. On her body she wears a glossy teal strapless bandeau top: no straps and no collar, a sweetheart neckline that dips in a deep V between the breasts, fitted over the bust and ending in a narrow teal band just above the waistband of the shorts; it wraps all the way around, so from behind it shows as a teal band across the middle of the back, and its lower edge meets the waistband of the shorts directly all the way round - no bare midriff, no strip of skin between the top and the shorts from any angle. Separate from the top, detached puffy glossy teal sleeves sit on each arm from just below the shoulder to the forearm, OFF the shoulder: each starts at the upper arm with a gathered, ruffled elastic edge, balloons out, and ends in a dark teal ribbed cuff above the wrist. Her shoulders, collarbones, upper chest and upper back are bare. White glossy very high-waisted shorts reach from just under the bust to the top of the thighs, made as ONE smooth fitted piece like the bottom of a leotard: the waistband and the sides are solid and unbroken all the way round - NO slits, NO notches, NO side openings, NO laces, NO cut-outs anywhere. The front panel carries two vertical rows of three black buttons near the centre (six buttons in total) and a pocket seam at each front hip. Each leg opening is one single smooth curve cut high over the hip bone, so the front looks like high-cut hotpants; at the back the seat is a small white panel covering only the top and the middle of her buttocks, the hem running diagonally from the hip down to the crotch, so MOST of both glutes is bare, round and plainly visible from behind and from the side, like a cheeky brazilian-cut bikini bottom. The buttons exist ONLY on the front panel: any view from the side, from three-quarter behind or from behind shows plain white fabric with no buttons at all, except that an exact side view may show the front rows edge-on at the very front edge. Her wrists are bare: no bracelets, no bangles, no watch. Chunky white platform sneakers with teal side stripes, teal soles and a small teal bow on the laces; bare legs. She does NOT wear a collar, a choker, bracelets, a jacket or anything over the top; no socks, no tattoos. Views with her back toward the camera - from behind, three-quarter from behind, looking back over a shoulder - never show the pendant or any button: the pendant hangs on her chest and the buttons sit on the front of the shorts, both on the hidden far side of her body, so the back of the shorts is plain white fabric with no buttons down its centre and only the thin gold chain crosses the nape. In a side or profile view only ONE vertical row of three buttons is visible, right at the front edge of the shorts; the second row is hidden behind the curve of her body, so a side view never shows two rows of buttons. Profile views: a view from her LEFT side shows her body facing the viewer's LEFT; a view from her RIGHT side shows her body facing the viewer's RIGHT.",
+  "audit": [
+    "top: glossy teal STRAPLESS bandeau, sweetheart neckline dipping in a deep V between the breasts, no straps, no collar, no halter, nothing around the neck; ends in a narrow teal band just above the shorts; from behind a teal band across mid-back with bare skin above it; the top's lower edge meets the shorts' waistband with no bare midriff",
+    "sleeves: detached puffy teal sleeves, OFF the shoulder - bare shoulders above a gathered ruffled elastic edge on the upper arm, dark teal ribbed cuff above the wrist; never attached to the top, never on the shoulder",
+    "necklace: gold chain with ONE large round blue gem pendant in a gold setting at the FRONT of the neck; from behind only the bare chain at the nape, never a pendant on the back; never missing; no collar, no choker",
+    "headband: PLAIN teal band over the crown - no gems, no gold trim, no ornaments; visible from every angle including the back of the head",
+    "earrings: one blue teardrop on each ear, visible on the side that faces the camera",
+    "hair: white chin-length bob with straight bangs, aqua only at the ends; the fade must not creep up",
+    "shorts: white glossy, very high waist up to just under the bust, ONE smooth piece - no slits, notches, side openings or cut-outs at the hips; exactly 2x3 black buttons on the FRONT panel near the centre - none on the sides, back, back waistband or buttocks - NOT EVEN the two back-waist buttons the reference sheet's back panel shows, and none visible from three-quarter behind; pocket seams at the front hips; each leg opening one smooth high curve over the hip bone; from behind a small panel over the top and middle of the seat, hem diagonal from hip to crotch, MOST of both glutes bare; never a full-coverage seat, never a boyshort leg; side views show only ONE row of three buttons at the front edge",
+    "wrists: BARE - no bracelets, no bangles, no watch",
+    "shoes: chunky white platform sneakers, teal side stripes and soles, a small teal bow on the laces; both feet in frame on body views",
+    "figure: hourglass - full bust, narrow waist, wide hips, full but shapely thighs, each narrower than the waist, tapering to slim knees, calves and ankles - never oversized legs, pale skin; bare shoulders and legs; no tattoos, no socks; buttocks very large - deep projection in profile, long and tall from behind",
+    "frame: body views head to soles with margin; face views head and shoulders WITH the neckline of the top in frame; nothing cropped, no text, no sheet panels"
+  ],
+  "background": "a plain, even, pale mint background with no scenery or shadows",
+  "reference_images": [
+    "reference.png"
+  ],
+  "details": [
+    {
+      "id": "top-front",
+      "prompt": "Close view of her chest from the front, framed from her chin to her natural waist: the glossy teal strapless bandeau top with its sweetheart neckline, the narrow teal band at its lower edge, the top of the white high-waisted shorts with the upper buttons, and the ruffled elastic tops of both detached sleeves on her upper arms, all large and sharp. The gold chain necklace with its round blue gem pendant rests at the front of her neck. Her face is above the frame except the chin. She is fully clothed exactly as in the reference.",
+      "tags": "close-up"
+    },
+    {
+      "id": "top-back",
+      "prompt": "Close view of her upper back from directly behind, framed from the nape to the waist: bare shoulders and upper back, the teal band of the strapless top across the middle of her back, the ruffled tops of both detached sleeves on her upper arms and the plain white waistband of the shorts. She is fully clothed exactly as in the reference.",
+      "tags": "close-up, from behind"
+    },
+    {
+      "id": "sleeve-cuff",
+      "prompt": "Close view of one arm from the bare shoulder to the hand, camera at chest height: the gathered ruffled elastic edge of the detached puffy teal sleeve on the upper arm, the ballooning glossy sleeve, its dark teal ribbed cuff and the bare wrist below it, all large. She is fully clothed exactly as in the reference.",
+      "tags": "close-up"
+    },
+    {
+      "id": "shorts-front",
+      "prompt": "Close view from the front, camera at hip height, framed from just under her bust to mid-thigh: the white glossy high-waisted shorts fill the frame - both vertical rows of three black buttons on the front panel, the pocket seams and the high-cut hems all clearly visible - with the teal band of the top at the upper edge and her bare thighs at the bottom. She is fully clothed exactly as in the reference.",
+      "tags": "lower body"
+    },
+    {
+      "id": "shorts-back",
+      "prompt": "Close view from directly behind, camera at hip height, framed from her waist to mid-thigh: the back of the white glossy high-waisted shorts, plain white with no buttons, cut extremely high and cheeky - a small panel over the top and middle of the seat, the hem running diagonally from the high hip to the crotch so most of both glutes is bare - the waistband and the high-cut hem clearly visible, bare thighs at the bottom. She is fully clothed exactly as in the reference.",
+      "tags": "lower body, from behind"
+    },
+    {
+      "id": "shorts-side",
+      "prompt": "Close view in exact side profile, camera at hip height, framed from her waist to mid-thigh: the side of the white glossy high-waisted shorts, the high waist, the plain side and the smooth, unbroken side with no slit or notch, the high leg curve over the hip bone and most of the glute bare behind it, the front buttons only at the very front edge. She is fully clothed exactly as in the reference.",
+      "tags": "lower body, from side"
+    },
+    {
+      "id": "necklace",
+      "prompt": "Close view of her neck and upper chest from the front, framed from her chin to the top of the bust: the gold chain necklace with its large round blue gem pendant in a gold setting resting at the front of her neck, her bare collarbones and shoulders and the top edge of the strapless teal top, all large and sharp. Her face is above the frame except the chin. She is fully clothed exactly as in the reference.",
+      "tags": "close-up"
+    },
+    {
+      "id": "sneakers",
+      "prompt": "Close view of her feet and lower legs from a low front three-quarter angle, framed from the knees down: both chunky white platform sneakers with teal side stripes, teal soles and a small teal bow on the laces fill the frame, bare shins above. Nothing else in frame.",
+      "tags": "feet"
+    }
+  ],
+  "views_available": [
+    "body/01-front",
+    "body/02-three-quarter-front",
+    "body/03-left-profile",
+    "body/04-right-profile",
+    "body/05-back",
+    "body/06-three-quarter-back",
+    "body/07-back-looking-over-right-shoulder",
+    "body/08-back-looking-over-left-shoulder",
+    "body/09-walking-front",
+    "body/10-walking-back",
+    "body/11-left-profile-walking",
+    "body/12-hands-on-hips",
+    "body/13-hands-on-hips-from-below",
+    "body/14-from-above",
+    "body/15-touching-hair",
+    "body/16-arms-crossed",
+    "body/17-arms-behind-head",
+    "body/18-arms-behind-back",
+    "body/19-contrapposto",
+    "body/20-side-hands-on-hips-looking-back",
+    "body/21-sitting",
+    "body/22-kneeling-one-knee",
+    "body/23-side-looking-back",
+    "cowboy/01-front",
+    "cowboy/02-three-quarter-front",
+    "cowboy/03-side",
+    "cowboy/04-back",
+    "cowboy/05-three-quarter-back",
+    "cowboy/06-hands-on-hips",
+    "cowboy/07-side-hands-on-hips-looking-back",
+    "cowboy/08-side-looking-back",
+    "cowboy/09-walking-front",
+    "cowboy/10-arms-behind-head",
+    "cowboy/11-touching-hair",
+    "cowboy/12-arms-crossed",
+    "cowboy/13-arms-behind-back",
+    "cowboy/14-from-below",
+    "cowboy/15-from-above",
+    "cowboy/16-contrapposto",
+    "cowboy/17-back-looking-over-left-shoulder",
+    "cowboy/18-back-looking-over-right-shoulder",
+    "cowboy/19-other-side",
+    "cowboy/20-leaning-forward",
+    "cowboy/21-three-quarter-hand-on-hip",
+    "cowboy/22-sitting",
+    "upper/01-front",
+    "upper/02-three-quarter-left",
+    "upper/03-three-quarter-right",
+    "upper/04-left-profile",
+    "upper/05-right-profile",
+    "upper/06-back",
+    "upper/07-back-looking-over-shoulder",
+    "upper/08-from-above",
+    "upper/09-arms-behind-head",
+    "upper/10-touching-hair",
+    "upper/11-arms-crossed",
+    "upper/12-hands-on-hips",
+    "upper/13-from-below",
+    "upper/14-three-quarter-back-left",
+    "upper/15-three-quarter-back-right",
+    "upper/16-back-looking-over-other-shoulder",
+    "upper/17-leaning-forward",
+    "upper/18-head-tilt-smile",
+    "upper/19-arms-behind-back",
+    "upper/20-side-looking-back",
+    "upper/21-three-quarter-from-above",
+    "upper/22-hand-on-cheek",
+    "face/01-front",
+    "face/02-front-smile",
+    "face/03-three-quarter-left",
+    "face/04-three-quarter-right",
+    "face/05-profile-left",
+    "face/06-profile-right",
+    "face/07-from-above",
+    "face/08-from-below",
+    "face/09-looking-back",
+    "face/10-eyes-closed",
+    "face/11-laughing",
+    "face/12-surprised",
+    "face/13-back-of-head"
+  ],
+  "settings": {},
+  "_outfit_of": "ari - face, hair and body sentences copied from characters/ari/character.json. Own face views (a jewelled headband instead of the plain one, no necklace, the strapless top). Reference: all four figure panels cut from the owner's sheet by scripts/cut-sheet.py (front, 3/4 front, side, back), nothing mirrored; the back panel swaps the two bracelets, so the description names their sides from the front panels (2026-09-24). 2026-09-24: the owner chose her STANDARD accessories over the sheet's - plain teal headband, teardrop earrings, gold chain with the gem pendant, no bracelets; the sheet's jewelled headband and bangles are not part of this outfit.",
+  "source_sheets": [
+    "X:\\AI\\LoRA\\Ari cheeky cleavage\\D21484DC-C9A5-46C0-AA1A-298B49D79A29.png"
+  ]
+}

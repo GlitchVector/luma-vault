@@ -63,7 +63,7 @@
     },
     {
       "id": "11-left-profile-walking",
-      "prompt": "Full-body walking pose seen exactly from her left side in profile, natural mid-stride motion, camera perpendicular at eye level, the entire figure and both feet inside the frame.",
+      "prompt": "Full-body walking pose seen exactly from her LEFT side in profile: she walks toward the LEFT edge of the frame, her face, chest and leading foot pointing LEFT, natural mid-stride motion, camera perpendicular at eye level, the entire figure and both feet inside the frame.",
       "tags": "full body, walking, from side, profile",
       "background": "a plain, even white background"
     },
@@ -155,7 +155,7 @@
     },
     {
       "id": "03-side",
-      "prompt": "Cowboy-shot view in exact side profile, camera perpendicular to her at waist height, standing straight, looking straight ahead. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
+      "prompt": "Cowboy-shot view in exact side profile from her LEFT side, camera perpendicular to her at waist height, standing straight, looking straight ahead. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, from side, profile",
       "background": "a plain, even white background"
     },
