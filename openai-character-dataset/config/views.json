@@ -391,7 +391,7 @@
     },
     {
       "id": "20-side-looking-back",
-      "prompt": "Upper-body view in side profile, body facing away to the side, camera at chest height, she turns her head to look at the viewer over her shoulder. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
+      "prompt": "Upper-body view in side profile with her LEFT side toward the camera: her body faces toward the LEFT side of the frame, camera at chest height, and she turns her head over her left shoulder to look at the viewer. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, from side, looking back, looking at viewer",
       "background": "a plain, even soft lavender background"
     },
