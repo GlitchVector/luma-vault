@@ -108,14 +108,14 @@ describe('one card per LoRA line', () => {
     const cards = loraCards()
     // Ari twice: the adopt line (final) and the gen line still training (wip) - a new LoRA, not a variant.
     const ari = cards.filter((card) => card.character === 'Ari')
-    expect(ari.map((card) => card.main.name)).toEqual(['ari_adopt_v4', 'ari_gen_v4'])
+    expect(ari.map((card) => card.main.name)).toEqual(['ari_adopt_v4', 'ari_gen_v5'])
     expect(ari.map((card) => card.line)).toEqual(['ari_adopt', 'ari_gen'])
     // The adopt line has no variants; the gen line carries her outfit variants (2026-09-23/24), in catalogue order.
     expect(ari[0]!.variants).toHaveLength(0)
     expect(ari[1]!.variants.map((entry) => entry.name)).toEqual(['ari_gen_space_leotard_s1', 'ari_gen_space_dress_s1'])
     const byStatus = loraGroupsByStatus(cards)
     expect(byStatus.final.map((card) => card.main.name)).toEqual(['ari_adopt_v4'])
-    expect(byStatus.wip.map((card) => card.main.name)).toContain('ari_gen_v4')
+    expect(byStatus.wip.map((card) => card.main.name)).toContain('ari_gen_v5')
 
     const mira = cards.filter((card) => card.character === 'Mira Solen')
     expect(mira).toHaveLength(1)
@@ -145,10 +145,10 @@ describe('one card per LoRA line', () => {
 })
 
 describe('adding an outfit', () => {
-  const ari = CUSTOM_LORAS.find((entry) => entry.name === 'ari_gen_v4')!
+  const ari = CUSTOM_LORAS.find((entry) => entry.name === 'ari_gen_v5')!
 
   it('strips the version to find the line', () => {
-    expect(loraLineBase('ari_gen_v4')).toBe('ari_gen')
+    expect(loraLineBase('ari_gen_v5')).toBe('ari_gen')
     expect(loraLineBase('ari_adopt_v4')).toBe('ari_adopt')
     expect(loraLineBase('msbs_v2e6')).toBe('msbs')
     expect(loraLineBase('celoback_v1')).toBe('celoback')
@@ -175,7 +175,7 @@ describe('adding an outfit', () => {
     expect(prompt).toContain('trigger `arispacesuit`')
     expect(prompt).toContain('D:/refs/ari-space.png')
     expect(prompt).toContain('sheets/ari-face-refs-gen')
-    expect(prompt).toContain("kind 'outfit', outfit 'Space Suit', parent 'ari_gen_v4'")
+    expect(prompt).toContain("kind 'outfit', outfit 'Space Suit', parent 'ari_gen_v5'")
     expect(prompt).toContain('.ai/lora-training.md')
     // Without a path the message points at the attachment instead.
     expect(outfitRequestPrompt(ari, 'Space Suit')).toContain('attached to this message')
