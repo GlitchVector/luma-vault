@@ -3,7 +3,14 @@
  * The LoRA line's own tooling, in the repo rather than in a session's temp folder.
  *
  *     pnpm lora status <name>                       what exists for a training: epochs, log, checks, Forge, trainer
+ *     pnpm lora plan   <name> --dataset <toml>      what the run WILL be, against the reference run's budget
+ *     pnpm lora train  <name> --dataset <toml> --go the gated launch: refuses a run below the reference budget
+ *     pnpm lora diff   [<reference>] <name>         two runs side by side, from their kohya logs
  *     pnpm lora sweep  <name> --trigger <word>      the fixed 32-frame check on saved epochs, then contact sheets
+ *
+ * The gate (plan / train / diff) exists because the ari_gen line trained five times at 62 % of the
+ * reference budget while three of those runs changed captions, and the rule against exactly that sat in
+ * the docs unread (2026-09-24). The numbers live in scripts/lora-recipe.json, nowhere else.
  *
  * The sweep is the rule in `.ai/lora-training.md` §3.12: the same 32 frames
  * (eight framings, dressed and undressed, weights 1.0 and 1.2) on BOTH
@@ -20,8 +27,9 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { compareRuns, dirImageCounter, loadRecipe, planRun, readTrainingLog } from './lib/lora-gate.mjs'
 
 const REPO = resolve(import.meta.dirname, '..')
 const TRAIN = process.env.LUMA_LORA_TRAIN ?? 'D:\\AI\\lora-train'
@@ -63,6 +71,9 @@ function fail(...lines) {
 function usage() {
   fail(
     'usage: pnpm lora status <name>',
+    '       pnpm lora plan   <name> --dataset <toml> [--epochs N] [--stage1]',
+    '       pnpm lora train  <name> --dataset <toml> [--epochs N] [--stage1] [--under-budget "<reason>"] --go',
+    '       pnpm lora diff   [<reference>] <name>     (default reference: the one in scripts/lora-recipe.json)',
     '       pnpm lora sweep  <name> --trigger <word> [--epochs 20,28,final] [--models delburry75,plantmilk]',
     '                        [--weights 1.0,1.2] [--out <dir>] [--passes 3] [--no-sheets] [--dry-run]',
     '',
@@ -292,7 +303,82 @@ async function sweep(trainingName) {
   console.log('the person judges the sheets; the epoch files stay in Forge until the verdict moves one to final/ and the rest to wip/')
 }
 
+
+// --- the gate -----------------------------------------------------------------------
+
+const RECIPE_FILE = join(REPO, 'scripts', 'lora-recipe.json')
+
+function printPlan(trainingName, plan, recipe, stage1) {
+  console.log(`${trainingName}${stage1 ? ' (stage 1)' : ''} against ${recipe.reference.name} (${recipe.reference.epochs} epochs, ${recipe.reference.steps} steps)`)
+  for (const r of plan.rows)
+    console.log(`  ${String(r.images).padStart(4)} x ${String(r.repeats).padEnd(3)} = ${String(r.seen).padStart(5)}  ${r.dir}${r.undressed ? '  (undressed)' : ''}`)
+  console.log(`  per epoch     : ${plan.perEpoch} images -> ${plan.stepsPerEpoch} steps at batch ${plan.batch}`)
+  console.log(`  undressed     : ${(plan.undressedShare * 100).toFixed(1)} % (allowed ${plan.rules.undressedShare.map((x) => x * 100).join('-')} %)`)
+  if (!stage1) console.log(`  needed        : ${plan.neededEpochs} epochs to reach ${plan.rules.minSteps} steps (never below ${plan.rules.minEpochs})`)
+  console.log(`  this run      : ${plan.epochs} epochs = ${plan.steps} steps${stage1 ? '' : ` = ${Math.round((plan.steps / plan.rules.minSteps) * 100)} % of the reference`}`)
+  console.log(`  rank / alpha  : ${plan.rules.dim} / ${plan.rules.alpha}, TE lr ${plan.rules.teLr}`)
+  console.log(plan.problems.length ? `  REFUSED       : ${plan.problems.join('; ')}` : '  OK            : within the recipe')
+}
+
+function makePlan() {
+  const dataset = flag('dataset')
+  if (!dataset || !existsSync(dataset)) fail('--dataset <path to the dataset toml> is required and must exist')
+  const recipe = loadRecipe(RECIPE_FILE)
+  const stage1 = has('stage1')
+  const epochs = flag('epochs') ? Number(flag('epochs')) : undefined
+  const plan = planRun({ toml: readFileSync(dataset, 'utf8'), countImages: dirImageCounter, recipe, epochs, stage1 })
+  return { dataset, recipe, stage1, plan }
+}
+
+function planCommand(trainingName) {
+  const { recipe, stage1, plan } = makePlan()
+  printPlan(trainingName, plan, recipe, stage1)
+  if (plan.problems.length) process.exit(1)
+}
+
+async function trainCommand(trainingName) {
+  const { dataset, recipe, stage1, plan } = makePlan()
+  printPlan(trainingName, plan, recipe, stage1)
+  const reason = flag('under-budget')
+  if (plan.problems.length && !reason)
+    fail('', "Not starting. Fix the dataset or the epochs, or - only with the owner's explicit agreement - pass", '--under-budget "<reason>"; the reason is written beside the run and belongs in its register row.')
+  if (existsSync(join(TRAIN, 'output', trainingName, `${trainingName}.safetensors`))) fail(`output/${trainingName} already has a final file - pick a new name`)
+  if (trainerRunning()) fail('a kohya trainer is already running')
+  if (await forgeUp()) fail('Forge is up: never render while training (2026-09-16). Stop Forge first, then run this again.')
+  if (!has('go')) fail('', "Plan only. A training starts on the owner's explicit go - rerun with --go once he has given it.")
+  const rules = plan.rules
+  const note = {
+    name: trainingName, dataset, startedAt: new Date().toISOString(), stage1, epochs: plan.epochs, steps: plan.steps,
+    stepsPerEpoch: plan.stepsPerEpoch, undressedShare: plan.undressedShare, reference: recipe.reference.name,
+    referenceSteps: recipe.reference.steps, underBudget: reason ?? null, problems: plan.problems,
+  }
+  mkdirSync(join(TRAIN, 'output'), { recursive: true })
+  writeFileSync(join(TRAIN, 'output', `${trainingName}.gate.json`), JSON.stringify(note, null, 2))
+  const args = ['-NoProfile', '-File', join(TRAIN, 'train-oracle.ps1'), '-Name', trainingName, '-Epochs', String(plan.epochs), '-Dim', String(rules.dim), '-Alpha', String(rules.alpha), '-TeLr', rules.teLr, '-Dataset', dataset]
+  if (stage1) args.push('-Stage1')
+  if (reason) args.push('-UnderBudget', reason)
+  const quoted = args.map((a) => `'${a.replace(/'/g, "''")}'`).join(',')
+  const log = join(TRAIN, 'output', `${trainingName}.log`)
+  const err = join(TRAIN, 'output', `${trainingName}.err.log`)
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', `Start-Process powershell -WindowStyle Hidden -ArgumentList ${quoted} -RedirectStandardOutput '${log}' -RedirectStandardError '${err}'`], { encoding: 'utf8' })
+  if (r.status !== 0) fail(`could not start the trainer: ${r.stderr}`)
+  console.log(`started ${trainingName}: ${plan.epochs} epochs, ${plan.steps} steps; logs ${log} and ${err}`)
+}
+
+function diffCommand(first, second) {
+  const recipe = loadRecipe(RECIPE_FILE)
+  const [refName, name] = second ? [first, second] : [recipe.reference.name, first]
+  const ref = readTrainingLog(TRAIN, refName)
+  const run = readTrainingLog(TRAIN, name)
+  if (!ref) fail(`no log for ${refName} in ${join(TRAIN, 'output')}`)
+  if (!run) fail(`no log for ${name} in ${join(TRAIN, 'output')}`)
+  console.log(compareRuns(refName, ref, name, run))
+}
+
 if (!command || !name || has('help')) usage()
 if (command === 'status') await status(name)
 else if (command === 'sweep') await sweep(name)
+else if (command === 'plan') planCommand(name)
+else if (command === 'train') await trainCommand(name)
+else if (command === 'diff') diffCommand(name, argv[2] && !argv[2].startsWith('--') ? argv[2] : undefined)
 else usage()

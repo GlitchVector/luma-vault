@@ -60,9 +60,10 @@ built → 7).
    Audit every frame against the reference and send them individually with the differences listed;
    he stars. Then a second round for the slots that failed if he wants one, into the same set.
 5. **Final train** (rank 64 / alpha 32, >= 40 epochs and at least `ari_adopt_v4`'s 19,840 steps, TE lr 1e-4,
-   undressed folders near 15 % of an epoch). BEFORE starting: print this run's steps, epochs, images x repeats
-   per subset and undressed share beside the reference run's training log; below the reference budget, do not
-   start. After a failed sweep, repeat that diff FIRST - never change captions while the budgets differ. His go, Forge off, saved every 2 epochs.
+   undressed folders near 15 % of an epoch). Start it ONLY with `pnpm lora train <name> --dataset <toml> --go`,
+   and only after the owner's explicit go: the gate computes the epochs from the dataset, shows the budget
+   table (send it to him) and refuses a run below the reference in `scripts/lora-recipe.json`. After a failed
+   sweep, `pnpm lora diff <name>` FIRST - never change captions while the budgets differ. His go, Forge off, saved every 2 epochs.
 6. **Epoch sweep.** `pnpm lora sweep <name> --trigger <word>` on 20 / 28 / final. Open every sheet
    before sending it. For each: what holds on every frame, what drifts, on which checkpoint and
    weight, counted (dressed right of N, undressed clean of N, the recurring garment, the blob

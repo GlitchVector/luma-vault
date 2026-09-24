@@ -1,0 +1,24 @@
+{
+  "_why": "The only source of LoRA training defaults. `pnpm lora train` reads it and refuses a run below `final.minSteps` / `final.minEpochs` unless given --under-budget \"<reason>\"; train-oracle.ps1 refuses fewer than 40 epochs on its own. Change a number only by naming a newer sweep that beats the reference on the same 32-frame check (.ai/lora-training.md, the step budget row).",
+  "reference": {
+    "name": "ari_adopt_v4",
+    "epochs": 40,
+    "steps": 19840,
+    "proof": "2026-09-24, same 32-frame check: ari_adopt_v4 at 40 epochs 3/16 dressed frames wrong; the same file at epoch 24 (~11,900 steps) 7/16; ari_gen_v5 at 30 epochs (12,270 steps) 6/16. The ari_gen line (v1-v5) trained at 62 % of this budget and shuffled garment colours in all five."
+  },
+  "final": {
+    "dim": 64,
+    "alpha": 32,
+    "teLr": "1e-4",
+    "minEpochs": 40,
+    "minSteps": 19840,
+    "undressedShare": [0.1, 0.2]
+  },
+  "stage1": {
+    "dim": 32,
+    "alpha": 16,
+    "teLr": "1e-4",
+    "epochs": 20,
+    "undressedShare": [0, 0]
+  }
+}

@@ -19,7 +19,7 @@ Two documents sit beside this one and stay authoritative for their part:
 | Thing | Path |
 |---|---|
 | trainer | `D:\AI\lora-train\sd-scripts` (kohya, main), venv `D:\AI\lora-train\venv` (Python 3.12, torch cu124) |
-| runner | `D:\AI\lora-train\train-oracle.ps1 -Name -Epochs -Dim -Alpha -TeLr -Dataset [-MaskedLoss] [-Weights]` |
+| runner | **`pnpm lora train <name> --dataset <toml> --go`** - the gate: computes the epochs from the dataset to reach the reference budget in `scripts/lora-recipe.json`, prints the table, refuses below it (or with the undressed share outside 10-20 %) unless `--under-budget "<owner's reason>"`, refuses while Forge is up, and starts nothing without `--go`. `pnpm lora plan` prints the same table without starting; `pnpm lora diff <name>` compares a run's LOG with the reference's. Underneath: `D:\AI\lora-train\train-oracle.ps1`, which itself refuses < 40 epochs without `-Stage1` / `-Weights` / `-UnderBudget` |
 | base model | `D:\AI\Stable Diffusion\webui\models\Stable-diffusion\Illustrious-XL-v1.1.safetensors` (same family as every checkpoint we render on) |
 | output | `D:\AI\lora-train\output\<name>\<name>.safetensors` plus `<name>-0000NN.safetensors` every 2 epochs (a subdirectory, not the output root) |
 | installed LoRAs | `D:\AI\Stable Diffusion\webui\models\Lora\final\`, `wip\`, `external\` (§2) |
@@ -143,7 +143,9 @@ the DATA is wrong and gets fixed there, never with a fourth (stop rule, 2026-09-
 | budget | a full rebuild day: stage 1 ~2.5 h, candidates ~20 min, final ~8-9 h, sweep ~30 min. Training runs by daylight when the owner is home (§8) |
 
 ```
-powershell -File D:\AI\lora-train\train-oracle.ps1 -Name <name> -Epochs <>= 40, from the step budget> -Dim 64 -Alpha 32 -TeLr 1e-4 -Dataset D:\AI\lora-train\datasets\<name>\dataset-<name>.toml
+pnpm lora plan  <name> --dataset <toml>        # the budget table against the reference; exit 1 = refused
+pnpm lora train <name> --dataset <toml> --go   # the only way to start a train; epochs come from the budget
+pnpm lora diff  <name>                         # after ANY failed sweep, first: this run's log vs the reference's
 ```
 
 `-Weights <file>` continues from a saved LoRA (the optimiser restarts, so pass the learning rates the
