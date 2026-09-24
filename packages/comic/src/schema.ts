@@ -255,8 +255,13 @@ export type PlatesConfig = z.infer<typeof platesConfigSchema>
  * failed on the stand-in mannequins; the two are not used together.
  */
 export const sketchConfigSchema = z.object({
-  backend: z.enum(['none', 'openai', 'mock']).default('none'),
+  /** `forge` sketches locally on `checkpoint` from the panel's own tags, no LoRA,
+   *  nothing leaving the machine; `openai` stages from sentences, which a
+   *  tag model cannot, at a price and never for an explicit panel. */
+  backend: z.enum(['none', 'openai', 'forge', 'mock']).default('none'),
   model: z.string().default('gpt-image-2.5-sunburst'),
+  /** The composing checkpoint for the `forge` backend. The house pair: NoobAI composes, delburry75 refines. */
+  checkpoint: z.string().default('noobaiXLNAIXL_epsilonPred11Version'),
   quality: z.enum(['low', 'medium', 'high', 'auto']).default('medium'),
   style: z.string().default('clean comic illustration, clear readable poses, no text, no speech bubbles'),
   /** The ControlNet that reads the sketch. `model` is matched by substring against Forge's list. */
@@ -268,9 +273,14 @@ export const sketchConfigSchema = z.object({
       end: z.number().min(0).max(1).default(0.8),
     })
     .prefault({}),
-  /** Strength of the per-character repaint. Enough for the LoRA to take the face, body and outfit; low enough to keep the pose. */
-  character_denoise: z.number().min(0).max(1).default(0.6),
-  mask_blur: z.number().int().min(0).default(12),
+  /** Strength of the per-character repaint. Enough for the LoRA to take the face, body and outfit; low enough to keep the pose.
+   *  0.6 left the first pass's outfit on her (a strap top, a button shirt), so 0.7. */
+  character_denoise: z.number().min(0).max(1).default(0.7),
+  /** How far a figure's mask grows, as a share of the figure's own height. Her
+   *  LoRA body is curvier than the first pass's figure and an inpaint cannot
+   *  paint outside its mask: a tight one flattens her hips and clips her hair. */
+  mask_grow: z.number().min(0).max(0.5).default(0.08),
+  mask_blur: z.number().int().min(0).default(16),
   inpaint_padding: z.number().int().min(0).default(96),
 })
 export type SketchConfig = z.infer<typeof sketchConfigSchema>

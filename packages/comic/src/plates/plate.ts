@@ -14,6 +14,9 @@ export interface PlateRequest {
   /** Pictures the result must stay consistent with: the location's master. */
   references?: Buffer[]
   input_fidelity?: 'low' | 'high'
+  /** Local sketch backends only: the negative and seed a tag model needs. */
+  negative?: string
+  seed?: number
 }
 
 export interface PlateResult {

@@ -8,6 +8,10 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MockPlates } from '../plates/mock.ts'
+import { ForgeRenderer } from '../render/forge.ts'
+import { buildPrompt } from '../prompt.ts'
+import { familyFor, panelSeed } from '../seed.ts'
+import { ForgeSketches } from '../sketch/forge.ts'
 import { OpenAiPlates } from '../plates/openai.ts'
 import type { PlateBackend, PlateRequest } from '../plates/plate.ts'
 import type { Project } from '../project.ts'
@@ -23,6 +27,7 @@ export function sketchEnabled(project: Project): boolean {
 export function sketchBackendFor(project: Project): PlateBackend {
   const name = process.env['COMIC_SKETCH'] ?? project.config.sketch.backend
   if (name === 'mock') return new MockPlates()
+  if (name === 'forge') return new ForgeSketches(new ForgeRenderer(project.config.forge), project.config.sketch.checkpoint, project.config.forge)
   return new OpenAiPlates(project.config.sketch.model)
 }
 
@@ -30,14 +35,23 @@ export function sketchPaths(project: Project, id: string): { png: string; sideca
   return { png: join(project.dir, 'sketches', `${id}.png`), sidecar: join(project.dir, 'sketches', `${id}.json`) }
 }
 
-/** Whether this panel may be sketched at all: never an explicit one. */
-export function sketchable(panel: Panel): boolean {
-  return !isExplicit(panel.scene, panel.setting, ...panel.pose)
+/** Whether this panel may be sketched: never an explicit one by a hosted model. Locally, any. */
+export function sketchable(project: Project, panel: Panel): boolean {
+  const backend = process.env['COMIC_SKETCH'] ?? project.config.sketch.backend
+  return backend === 'forge' || !isExplicit(panel.scene, panel.setting, ...panel.pose)
 }
 
 export function sketchRequestFor(project: Project, script: Script, where: { pageIndex: number; panelIndex: number }, variation = 0): PlateRequest {
   const page = script.pages[where.pageIndex]!
   const panel = page.panels[where.panelIndex]!
+  const size = plateSizeForPanel(project, page, where.panelIndex)
+  if ((process.env['COMIC_SKETCH'] ?? project.config.sketch.backend) === 'forge') {
+    // A tag model gets the panel's own prompt, minus every LoRA: the
+    // composition without anyone's likeness pulling the frame onto her.
+    const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: false })
+    const seed = panelSeed(familyFor(script.characters, panel.characters), where.pageIndex, where.panelIndex, variation)
+    return { prompt, negative, seed, size, quality: project.config.sketch.quality }
+  }
   const cast = panel.characters.map((id, index) => ({ description: describe(script.characters[id]!), pose: panel.pose[index] }))
   const figures = panel.figures ?? panel.characters.length
   return {
@@ -51,7 +65,7 @@ export function sketchRequestFor(project: Project, script: Script, where: { page
       details: panel.scene,
       variation,
     }),
-    size: plateSizeForPanel(project, page, where.panelIndex),
+    size,
     quality: project.config.sketch.quality,
   }
 }

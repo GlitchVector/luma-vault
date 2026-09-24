@@ -137,6 +137,13 @@ describe('the panel prompt', () => {
     expect(prompt).toContain(ari.look.split(',')[0]!.trim())
   })
 
+  it("adds a character's own negative only when she is alone in the panel", () => {
+    const own = { ...ari, negative: 'bracelet' }
+    expect(buildPrompt(panel, { ari: own }, config).negative).toMatch(/bracelet$/)
+    const other = { ...own, lora: 'kvoss_v2:0.9', trigger: 'kvoss', negative: undefined }
+    expect(buildPrompt({ ...panel, characters: ['ari', 'kira'] }, { ari: own, kira: other }, config).negative).not.toContain('bracelet')
+  })
+
   it('names a character the script does not define', () => {
     expect(() => buildPrompt({ ...panel, characters: ['bob'] }, { ari }, config)).toThrow(/"bob"/)
   })

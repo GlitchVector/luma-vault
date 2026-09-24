@@ -234,7 +234,11 @@ export function buildPrompt(
     .map((part) => part.trim().replace(/,\s*$/, ''))
     .filter(Boolean)
     .join(', ')
-  const negative = [config.prompt.negative, config.prompt.negative_lettering]
+  // A character's own negative only when she is alone in the panel: with two,
+  // Ari's `bracelet` would strip Tom's cuff. The sketch route's repaint
+  // applies it per figure instead.
+  const own = cast.length === 1 ? (cast[0]!.negative ?? '') : ''
+  const negative = [config.prompt.negative, config.prompt.negative_lettering, own]
     .map((part) => part.trim().replace(/,\s*$/, ''))
     .filter(Boolean)
     .join(', ')

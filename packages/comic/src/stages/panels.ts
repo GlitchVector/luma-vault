@@ -21,7 +21,7 @@ import type { InpaintRequest, Prepared, Renderer } from '../render/renderer.ts'
 import type { Reporter } from '../report.ts'
 import type { Page, Panel, Script } from '../schema.ts'
 import { familyFor, panelSeed } from '../seed.ts'
-import { castFigures, findPeople } from '../sketch/people.ts'
+import { assignFigures, findPeople } from '../sketch/people.ts'
 import { ensurePlate, plateBackendFor, platesEnabled } from './plates.ts'
 import { ensureSketch, sketchable, sketchBackendFor, sketchEnabled } from './sketch.ts'
 import type { PanelFilter } from './select.ts'
@@ -105,7 +105,7 @@ export function planPanel(
   }
   // The sketch route draws the first pass with nobody's LoRA: the LoRA is what
   // pulled every panel onto her, and each character gets hers in the repaint.
-  const sketched = sketchEnabled(project) && !!prepared.control && sketchable(panel)
+  const sketched = sketchEnabled(project) && !!prepared.control && sketchable(project, panel)
   const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: !sketched })
   // With a plate, each character is painted alone into her own mask, so
   // each gets a prompt naming only her - the panel prompt names them all.
@@ -121,9 +121,10 @@ export function planPanel(
     width,
     height,
     hires: platesEnabled(project) ? undefined : hiresFor(project, page, where.panelIndex, width),
-    // No face pass on the sketch route: the repaint already redraws each
-    // character's face with her LoRA, at full resolution.
-    face: sketched ? undefined : faceFor(project, panel, script),
+    // On the sketch route the face pass is a plain one, no LoRA: it only
+    // cleans up small faces in the crowd (a guest's face came back as a teal
+    // block). The cast's faces are redrawn by the repaint with their LoRAs.
+    face: sketched ? plainFaceFor(project, negative) : faceFor(project, panel, script),
     steps: forge.steps,
     cfg: forge.cfg,
     sampler: forge.sampler,
@@ -139,7 +140,16 @@ export function planPanel(
                 denoise: project.config.sketch.character_denoise,
                 mask_blur: project.config.sketch.mask_blur,
                 padding: project.config.sketch.inpaint_padding,
-                prompts: characterPrompts,
+                grow: project.config.sketch.mask_grow,
+                cast: panel.characters.map((id, index) => {
+                  const character = script.characters[id]!
+                  return {
+                    id,
+                    prompt: characterPrompts[index]!,
+                    negative: [negative, character.negative].filter(Boolean).join(', '),
+                    ...(character.hair?.length ? { hair: character.hair } : {}),
+                  }
+                }),
               }
             : undefined,
         }
@@ -174,6 +184,29 @@ function hiresFor(project: Project, page: Page, index: number, width: number): R
   const target = targetForCell(page, index, project.config.page, project.config.page.scale, hires.max_megapixels)
   if (target.width <= width * hires.min_factor) return undefined
   return { width: target.width, height: target.height, upscaler, denoise: hires.denoise, steps: hires.steps }
+}
+
+/**
+ * The sketch route's face pass: every small face, with no LoRA and no
+ * character in the prompt. Not `solo_only`: it is for the crowd.
+ */
+function plainFaceFor(project: Project, negative: string): RenderRequest['face'] {
+  const { face } = project.config.forge
+  if (!face.enabled) return undefined
+  return {
+    prompt: `${project.config.prompt.quality}, face, detailed eyes`,
+    negative,
+    model: face.model,
+    confidence: face.confidence,
+    max_area: face.max_area,
+    denoise: face.denoise,
+    size: face.size,
+    padding: face.padding,
+    mask_blur: face.mask_blur,
+    steps: face.steps,
+    cfg: face.cfg,
+    checkpoint: face.checkpoint,
+  }
 }
 
 /**
@@ -357,19 +390,26 @@ async function paintFromSketch(
 ): Promise<{ png: Buffer; info?: unknown }> {
   const first = await renderer.render(plan.request, onProgress, sketch.png)
   const repaint = plan.request.repaint
-  if (!repaint || repaint.prompts.length === 0) return first
-  const figures = castFigures(await findPeople(sketch.python, first.png), repaint.prompts.length)
-  if (figures.length < repaint.prompts.length) {
-    report.emit({ event: 'note', message: `${plan.id}: found ${figures.length} of ${repaint.prompts.length} cast figures; the rest keep the first pass` })
+  if (!repaint || repaint.cast.length === 0) return first
+  const hair = Object.fromEntries(repaint.cast.filter((c) => c.hair?.length).map((c) => [c.id, c.hair!]))
+  const people = await findPeople(sketch.python, first.png, { grow: repaint.grow, hair })
+  const assigned = assignFigures(people, repaint.cast)
+  const missing = repaint.cast.filter((_, index) => !assigned.some((a) => a.castIndex === index)).map((c) => c.id)
+  if (missing.length > 0) {
+    report.emit({ event: 'note', message: `${plan.id}: no figure found for ${missing.join(', ')}; that part keeps the first pass` })
   }
   let current = first.png
   const infos: unknown[] = [first.info]
-  for (const [index, figure] of figures.entries()) {
+  for (const { castIndex, person } of assigned) {
+    const member = repaint.cast[castIndex]!
     const request: InpaintRequest = {
       ...plan.request,
-      prompt: repaint.prompts[index]!,
+      // The face pass belongs to the first pass; the repaint draws her face itself.
+      face: undefined,
+      prompt: member.prompt,
+      negative: member.negative,
       init: current,
-      mask: figure.mask,
+      mask: person.mask,
       denoise: repaint.denoise,
       mask_blur: repaint.mask_blur,
       padding: repaint.padding,

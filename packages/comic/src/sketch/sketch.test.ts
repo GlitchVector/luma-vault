@@ -1,7 +1,7 @@
 import { describe as suite, expect, it } from 'vitest'
 import { controlUnit, resolveControl, toPayload } from '../render/forge.ts'
 import type { RenderRequest } from '../cache.ts'
-import { castFigures } from './people.ts'
+import { assignFigures, castFigures } from './people.ts'
 import { describe, isExplicit, sketchPrompt } from './prompt.ts'
 
 suite('the sketch route', () => {
@@ -44,6 +44,21 @@ suite('the sketch route', () => {
     ]
     expect(castFigures(people, 2).map((p) => p.name)).toEqual(['left', 'right'])
     expect(castFigures(people, 1).map((p) => p.name)).toEqual(['left'])
+  })
+
+  it('repaints every figure with her hair as her, a mirror image included, and the largest rest for the others', () => {
+    const box = (x: number): [number, number, number, number] => [x, 0.1, x + 0.2, 0.9]
+    const people = [
+      { box: box(0.0), area: 0.11, match: { ari: 0.41 }, name: 'ari' },
+      { box: box(0.3), area: 0.2, match: { ari: 0.0 }, name: 'guest' },
+      { box: box(0.7), area: 0.09, match: { ari: 0.37 }, name: 'reflection' },
+      { box: box(0.5), area: 0.02, match: { ari: 0.0 }, name: 'crowd' },
+    ]
+    const cast = [{ id: 'ari', hair: ['#eef1f2'] }, { id: 'tom' }]
+    const assigned = assignFigures(people, cast).map((a) => `${cast[a.castIndex]!.id}:${a.person.name}`)
+    expect(assigned).toEqual(['ari:ari', 'ari:reflection', 'tom:guest'])
+    // No hair colours: the old rule, largest first.
+    expect(assignFigures(people, [{ id: 'ari' }]).map((a) => a.person.name)).toEqual(['guest'])
   })
 
   it('finds the ControlNet by name and refuses one Forge has not loaded', () => {

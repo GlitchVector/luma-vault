@@ -258,6 +258,18 @@ export const comicCharacterSchema = z.object({
   /** `1girl`, `1boy`: the subject tag the checkpoint counts figures with. */
   subject: z.enum(['1girl', '1boy', '1other']).default('1girl'),
   seed_family: z.number().int().min(0),
+  /**
+   * Negative words for THIS character only (`bracelet` for Ari, whose canon
+   * bans one), used when she is painted alone. In the book's negative they
+   * would also strip another character's (Tom's bearing-ring cuff).
+   */
+  negative: z.string().optional(),
+  /**
+   * Her hair colours, as hex, for finding her among the figures on the
+   * sketch route: every figure whose head carries them is repainted as her,
+   * a mirror image included. Unset, she is the largest figure left.
+   */
+  hair: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).optional(),
 })
 export type ComicCharacter = z.infer<typeof comicCharacterSchema>
 

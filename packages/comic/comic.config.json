@@ -75,6 +75,8 @@
   "characters": {
     "ari": {
       "lora": "ari_adopt_v4:1.2",
+      "negative": "bracelet",
+      "hair": ["#eef1f2", "#dfe6ea", "#3fc4c6", "#2fb3b8"],
       "trigger": "ari",
       "subject": "1girl",
       "look": "white hair, aqua hair, colored tips, bob cut, blunt bangs, blue eyes, hairband, earrings, necklace, aqua shirt, off-shoulder shirt, black collar, white shorts, sneakers",

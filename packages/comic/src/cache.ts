@@ -52,7 +52,15 @@ export interface RenderRequest {
    *  picture itself travels beside the request, never inside it. */
   control?: { sketch: string; module: string; model: string; weight: number; end: number }
   /** Set on the sketch route: the per-character repaint that follows the first pass. */
-  repaint?: { denoise: number; mask_blur: number; padding: number; prompts: string[] }
+  repaint?: {
+    denoise: number
+    mask_blur: number
+    padding: number
+    /** Mask margin as a share of each figure's height. */
+    grow: number
+    /** One entry per cast member, in panel order. */
+    cast: Array<{ id: string; prompt: string; negative: string; hair?: string[] }>
+  }
 }
 
 export function canonical(value: unknown): string {
