@@ -112,6 +112,19 @@ describe('the panel prompt', () => {
     expect(prompt).toContain('<lora:kvoss_v2:0.9>, kvoss, pink hair')
   })
 
+  it('lets other people into the picture when the script counts more figures than the cast', () => {
+    // Beanpole p.1: figures 2/2/5 were ignored and every panel said `solo`, so
+    // the rooftop party rendered empty and a stranger's gesture went to Ari.
+    expect(subjectTags(['1girl'], 1)).toBe('1girl, solo')
+    expect(subjectTags(['1girl'], 2)).toBe('1girl, solo focus, multiple others')
+    expect(subjectTags(['1girl'], 6)).toBe('1girl, solo focus, crowd, multiple others')
+    expect(subjectTags(['1girl', '1boy'], 5)).toBe('1girl, 1boy, crowd, multiple others')
+    expect(subjectTags([], 4)).toBe('crowd, multiple others')
+    const { prompt } = buildPrompt({ ...panel, figures: 5 }, { ari }, config)
+    expect(prompt).toContain('1girl, solo focus, crowd')
+    expect(prompt).not.toMatch(/\bsolo,/)
+  })
+
   it('names a character the script does not define', () => {
     expect(() => buildPrompt({ ...panel, characters: ['bob'] }, { ari }, config)).toThrow(/"bob"/)
   })

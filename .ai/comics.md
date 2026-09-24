@@ -168,6 +168,27 @@ of it is taste, and re-deriving any of it costs an afternoon.
   `giantess`, `giant`, `size difference`, `minigirl`, `soles` and
   `foreshortening` in the negative at rising weights were indistinguishable
   from the original. It is geometry, not genre bleed. Do not try this again.
+- **Other people exist only through `figures`** (2026-09-24). A panel's
+  subject tags come from its cast, and one cast member meant `1girl, solo`,
+  which forbids anyone else in the picture. The Beanpole rooftop party came
+  back as Ari alone on an empty roof, and the bully's hand-on-head gesture
+  was drawn on her. Now a panel whose script `figures` exceeds its cast gets
+  `solo focus` plus `multiple others` (or `crowd` at three or more extras);
+  the writer brief says to set `figures` for every guest, stranger or crowd,
+  and to put a stranger's action into `scene` as tags. A non-cast person who
+  recurs across pages (the bully, Tom) needs to become a cast character with
+  a LoRA; `figures` gives you strangers, not the same stranger twice.
+- **The scene opens with its place, in tags** (2026-09-24). The first three
+  scene tags are the place and the event (`rooftop, night, crowd`). A scene
+  that opens on a gesture in prose ("head tipped an inch to clear it") loses
+  its place under the LoRA and the body block; 44 of 62 terms were prose on
+  that page. The script stage now sends a first answer back once when more
+  than half its scene terms are not in the tagger's list; the second answer
+  is kept whatever its count, because that list is not the whole vocabulary.
+- **One establishing panel per page** (owner, 2026-09-24): a `wide shot`
+  where the place and the event are the subject and the cast is small or
+  absent, whenever the page's place can be shown. It is where the crowd and
+  the room live; the other panels can stay on faces and hands.
 - **Reserving lettering space by prompt is impossible on this checkpoint.**
   Four wordings, weighted and moved to the front, all scored 4.8-5.3 against
   a limit of 3.4. The assembler works around it instead (below).

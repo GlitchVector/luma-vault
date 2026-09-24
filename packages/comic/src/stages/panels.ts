@@ -102,7 +102,8 @@ export function planPanel(
   const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting)
   // With a plate, each character is painted alone into her own mask, so
   // each gets a prompt naming only her - the panel prompt names them all.
-  const characterPrompts = panel.characters.map((id) => buildPrompt({ ...panel, characters: [id] }, script.characters, project.config, page.body, page.lighting).prompt)
+  // No `figures` here: a mask holds one character, never the crowd around her.
+  const characterPrompts = panel.characters.map((id) => buildPrompt({ ...panel, characters: [id], figures: undefined }, script.characters, project.config, page.body, page.lighting).prompt)
   const seed = options.seed ?? panelSeed(familyFor(script.characters, panel.characters), where.pageIndex, where.panelIndex, attempt)
 
   const { forge } = project.config

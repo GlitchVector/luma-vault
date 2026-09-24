@@ -58,6 +58,16 @@ export async function runScript(
         if (draft.pages.length !== paged.pages) {
           lastError = `the prose is cut into ${paged.pages} page(s) ([Page N] lines) but the script has ${draft.pages.length}; make exactly ${paged.pages}, in order`
           draft = undefined
+        } else if (round === 0) {
+          // Asked once, never enforced: the tag list is not the whole vocabulary,
+          // but a script that is mostly prose renders its places as nothing at all
+          // (Beanpole p.1: 44 of 62 terms prose, a rooftop party drawn as an empty
+          // hallway). The second answer is kept whatever its count.
+          const vocab = vocabularyCheck(withCast(draft, project.config.characters))
+          if (vocab && vocab.unknown.length > vocab.total / 2) {
+            lastError = `${vocab.unknown.length} of ${vocab.total} scene terms are sentences, not tags the image model knows (e.g. ${vocab.unknown.slice(0, 6).join('; ')}). Rewrite every "scene" as short booru tags, place and event first`
+            draft = undefined
+          }
         }
       } catch (error) {
         lastError = (error as Error).message
@@ -141,7 +151,18 @@ export function withCast(draft: Finished, cast: Record<string, Character>): Scri
  * at when a panel comes out wrong.
  */
 export function vocabularyNotes(script: Script, csvPath = join(REPO_ROOT, 'models', 'anime-tagger', 'selected_tags.csv')): string[] {
-  if (!existsSync(csvPath)) return []
+  const vocab = vocabularyCheck(script, csvPath)
+  if (!vocab || vocab.unknown.length === 0) return []
+  const { unknown, total } = vocab
+  // One line, not one per panel: the count is the signal, the examples say
+  // whether the writer drifted into prose.
+  const shown = unknown.slice(0, 8).join(', ')
+  return [`${unknown.length} of ${total} scene terms are not tags the checkpoint was trained on, e.g. ${shown}${unknown.length > 8 ? ', ...' : ''}`]
+}
+
+/** The scene terms the tagger's list does not contain; undefined when the list is not installed. */
+export function vocabularyCheck(script: Script, csvPath = join(REPO_ROOT, 'models', 'anime-tagger', 'selected_tags.csv')): { unknown: string[]; total: number } | undefined {
+  if (!existsSync(csvPath)) return undefined
   const known = new Set<string>()
   for (const line of readFileSync(csvPath, 'utf8').split('\n').slice(1)) {
     const name = line.split(',')[1]
@@ -159,9 +180,5 @@ export function vocabularyNotes(script: Script, csvPath = join(REPO_ROOT, 'model
       }
     }
   }
-  if (unknown.length === 0) return []
-  // One line, not one per panel: the count is the signal, the examples say
-  // whether the writer drifted into prose.
-  const shown = unknown.slice(0, 8).join(', ')
-  return [`${unknown.length} of ${total} scene terms are not tags the checkpoint was trained on, e.g. ${shown}${unknown.length > 8 ? ', ...' : ''}`]
+  return { unknown, total }
 }

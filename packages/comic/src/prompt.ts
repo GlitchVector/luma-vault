@@ -23,12 +23,26 @@ export function reserveClause(anchor: Anchor): string {
   return `negative space, empty ${place} of the frame, plain uncluttered ${place}, nothing in the ${place}`
 }
 
-/** How the checkpoint counts people: `1girl, solo`, `2girls`, `1girl, 1boy`. */
-export function subjectTags(subjects: Character['subject'][]): string {
+/**
+ * How the checkpoint counts people: `1girl, solo`, `2girls`, `1girl, 1boy`.
+ *
+ * `figures` is the script's head count when it is more than the cast: guests,
+ * a crowd, a stranger with no LoRA. Without it every one-character panel said
+ * `solo`, which forbids anyone else in the picture: the Beanpole rooftop party
+ * rendered as Ari alone on an empty roof, and the bully's gesture went to her
+ * (2026-09-24). `solo focus` is the tag for "one main figure, others around".
+ */
+export function subjectTags(subjects: Character['subject'][], figures?: number): string {
   const girls = subjects.filter((s) => s === '1girl').length
   const boys = subjects.filter((s) => s === '1boy').length
   const others = subjects.length - girls - boys
-  if (subjects.length === 0) return 'no humans, scenery'
+  const extras = figures !== undefined && figures > subjects.length ? figures - subjects.length : 0
+  if (subjects.length === 0) return extras > 0 ? (extras >= 3 ? 'crowd, multiple others' : 'multiple others') : 'no humans, scenery'
+  if (extras > 0) {
+    const around = extras >= 3 ? 'crowd, multiple others' : 'multiple others'
+    if (subjects.length === 1) return `${subjects[0]}, solo focus, ${around}`
+    return `${subjectTags(subjects)}, ${around}`
+  }
   if (subjects.length === 1) return `${subjects[0]}, solo`
   const parts: string[] = []
   if (girls === 1) parts.push('1girl')
@@ -168,7 +182,7 @@ export function facePrompt(character: Character, config: Pick<Config, 'prompt'>)
 }
 
 export function buildPrompt(
-  panel: Pick<Panel, 'camera' | 'scene' | 'characters' | 'reserve_space' | 'body' | 'lighting'>,
+  panel: Pick<Panel, 'camera' | 'scene' | 'characters' | 'reserve_space' | 'body' | 'lighting' | 'figures'>,
   characters: Record<string, Character>,
   config: Pick<Config, 'prompt'>,
   pageBody?: string,
@@ -182,7 +196,7 @@ export function buildPrompt(
 
   const wide = isWideShot(panel.camera)
   const parts: string[] = [config.prompt.quality]
-  parts.push(subjectTags(cast.map((c) => c.subject)))
+  parts.push(subjectTags(cast.map((c) => c.subject), panel.figures))
   for (const character of cast) {
     const lora = wide ? scaleLora(character.lora, config.prompt.wide_lora_scale) : character.lora
     // Unweighted on purpose. A weighted body block drags every shot toward
