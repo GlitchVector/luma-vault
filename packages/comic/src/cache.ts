@@ -61,6 +61,8 @@ export interface RenderRequest {
     /** One entry per cast member, in panel order. */
     cast: Array<{ id: string; prompt: string; negative: string; hair?: string[] }>
   }
+  /** Set on the sketch route: the light pass over the whole finished panel. */
+  unify?: { prompt: string; denoise: number; control_weight: number }
 }
 
 export function canonical(value: unknown): string {

@@ -282,6 +282,22 @@ export const sketchConfigSchema = z.object({
   mask_grow: z.number().min(0).max(0.5).default(0.08),
   mask_blur: z.number().int().min(0).default(16),
   inpaint_padding: z.number().int().min(0).default(96),
+  /**
+   * The third pass: a light img2img over the finished panel, so the light is
+   * computed once for everything in it. The repaint draws her in a crop of
+   * her own and never sees the scene's light, and she came out studio-lit on
+   * an evening rooftop (2026-09-24). A ControlNet reading the panel itself
+   * keeps every shape; her LoRA rides at a reduced weight so her face does
+   * not drift back to a generic one.
+   */
+  unify: z
+    .object({
+      enabled: z.boolean().default(true),
+      denoise: z.number().min(0).max(1).default(0.3),
+      lora_scale: z.number().min(0).max(2).default(0.6),
+      control_weight: z.number().min(0).max(2).default(0.6),
+    })
+    .prefault({}),
 })
 export type SketchConfig = z.infer<typeof sketchConfigSchema>
 

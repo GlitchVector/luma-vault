@@ -11,9 +11,10 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { dirname, join } from 'node:path'
 import { requestHash, type RenderRequest, type Sidecar } from '../cache.ts'
 import { bucketFor, sizeForCellBox, targetForCell } from '../layouts.ts'
-import { buildPrompt, facePrompt } from '../prompt.ts'
+import { buildPrompt, facePrompt, scaleLora } from '../prompt.ts'
 import { DUMMIES, plateSizeFor, type PlateBackend } from '../plates/plate.ts'
 import { maskForColour, maskPng } from '../plates/mask.ts'
+import { PNG } from 'pngjs'
 import { loadScript, writeJson, type Project } from '../project.ts'
 import { ForgeRenderer } from '../render/forge.ts'
 import { MockRenderer } from '../render/mock.ts'
@@ -152,6 +153,14 @@ export function planPanel(
                 }),
               }
             : undefined,
+          unify:
+            panel.characters.length && project.config.sketch.unify.enabled
+              ? {
+                  prompt: buildPrompt(panel, withLoraScaled(script.characters, project.config.sketch.unify.lora_scale), project.config, page.body, page.lighting).prompt,
+                  denoise: project.config.sketch.unify.denoise,
+                  control_weight: project.config.sketch.unify.control_weight,
+                }
+              : undefined,
         }
       : {}),
   }
@@ -420,7 +429,37 @@ async function paintFromSketch(
     current = result.png
     infos.push(result.info)
   }
+  const unify = plan.request.unify
+  if (unify && assigned.length > 0) {
+    // The whole panel under a white mask at its own full size: one light for
+    // everything, the ControlNet reading the panel itself so no shape moves.
+    const { width, height } = PNG.sync.read(current)
+    const result = await renderer.inpaint(
+      {
+        ...plan.request,
+        face: undefined,
+        prompt: unify.prompt,
+        width,
+        height,
+        init: current,
+        mask: maskPng({ width, height, data: new Uint8Array(width * height).fill(255), found: width * height }),
+        denoise: unify.denoise,
+        mask_blur: 0,
+        padding: 0,
+        control: plan.request.control ? { ...plan.request.control, weight: unify.control_weight } : undefined,
+        controlImage: current,
+      },
+      onProgress,
+    )
+    current = result.png
+    infos.push(result.info)
+  }
   return { png: current, info: infos }
+}
+
+/** The cast with every LoRA weight scaled, for the unify pass. */
+function withLoraScaled(characters: Script['characters'], scale: number): Script['characters'] {
+  return Object.fromEntries(Object.entries(characters).map(([id, c]) => [id, { ...c, lora: scaleLora(c.lora, scale) }]))
 }
 
 /**
