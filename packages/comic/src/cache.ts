@@ -64,7 +64,13 @@ export interface RenderRequest {
   /** Set on the sketch route: the light pass over the whole finished panel. */
   unify?: { prompt: string; denoise: number; control_weight: number; face?: RenderRequest['face'] }
   /** Set on a regional render: the place's prompt, and each cast member's, masked to her figure. */
-  regional?: { background: string; cast: Array<{ id: string; prompt: string; hair?: string[] }>; grow: number }
+  regional?: {
+    background: string
+    cast: Array<{ id: string; prompt: string; hair?: string[] }>
+    grow: number
+    fade?: { from: number; to_strength: number }
+    grade?: { lightness: number; colour: number }
+  }
 }
 
 export function canonical(value: unknown): string {

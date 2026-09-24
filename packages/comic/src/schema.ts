@@ -294,6 +294,20 @@ export const sketchConfigSchema = z.object({
    * keeps every shape; her LoRA rides at a reduced weight so her face does
    * not drift back to a generic one.
    */
+  /**
+   * After a regional render: each character's figure takes the colour and
+   * lightness of the scene right around her. Her LoRA carries the even studio
+   * light of its sheets, and the prompt alone could not relight her ("does the
+   * AI paste her in?"); this could (owner: "that looks really good, i want
+   * that", 2026-09-24). Lightness moves less than colour.
+   */
+  grade: z
+    .object({ enabled: z.boolean().default(true), lightness: z.number().min(0).max(1).default(0.45), colour: z.number().min(0).max(1).default(0.7) })
+    .prefault({}),
+  /** Her LoRA eases off over the last part of a regional render, so the last steps light her with the scene's words. */
+  lora_fade: z
+    .object({ from: z.number().min(0).max(1).default(0.6), to_strength: z.number().min(0).max(1).default(0.2) })
+    .prefault({}),
   unify: z
     .object({
       enabled: z.boolean().default(true),

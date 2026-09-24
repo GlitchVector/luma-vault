@@ -157,7 +157,7 @@ export class ComfyRenderer implements Renderer {
    * prompt over the whole picture with no LoRA, each region's prompt with its
    * hook LoRA inside its mask, all combined into one positive.
    */
-  async renderRegional(request: RenderRequest, background: string, regions: Region[], controlImage?: Buffer, onProgress?: Progress): Promise<RenderResult> {
+  async renderRegional(request: RenderRequest, background: string, regions: Region[], controlImage?: Buffer, onProgress?: Progress, fade?: { from: number; to_strength: number }): Promise<RenderResult> {
     const graph: Graph = { ckpt: { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: request.checkpoint } } }
     graph['bg'] = { class_type: 'CLIPTextEncode', inputs: { clip: ['ckpt', 1], text: background } }
     let positive: [string, number] = ['bg', 0]
@@ -172,6 +172,16 @@ export class ComfyRenderer implements Renderer {
         const id = `r${i}hook${j}`
         graph[id] = { class_type: 'CreateHookLora', inputs: { lora_name: this.loraFile(lora.name), strength_model: lora.weight, strength_clip: lora.weight, ...(hooks ? { prev_hooks: hooks } : {}) } }
         hooks = [id, 0]
+      }
+      if (hooks && fade && fade.from < 1) {
+        // Full strength while her shape and face are decided, easing off for
+        // the last steps, where the picture's light is settled.
+        graph[`r${i}kf`] = {
+          class_type: 'CreateHookKeyframesInterpolated',
+          inputs: { strength_start: 1, strength_end: fade.to_strength, interpolation: 'ease_in', start_percent: fade.from, end_percent: 1, keyframes_count: 5, print_keyframes: false },
+        }
+        graph[`r${i}hkf`] = { class_type: 'SetHookKeyframes', inputs: { hooks, hook_kf: [`r${i}kf`, 0] } }
+        hooks = [`r${i}hkf`, 0]
       }
       graph[`r${i}`] = {
         class_type: 'ConditioningSetProperties',

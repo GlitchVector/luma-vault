@@ -68,5 +68,5 @@ export interface Renderer {
   render(request: RenderRequest, onProgress?: Progress, controlImage?: Buffer): Promise<RenderResult>
   inpaint(request: InpaintRequest, onProgress?: Progress): Promise<RenderResult>
   /** One render with each region's LoRA confined to its mask. Only backends that can (ComfyUI). */
-  renderRegional?(request: RenderRequest, background: string, regions: Region[], controlImage?: Buffer, onProgress?: Progress): Promise<RenderResult>
+  renderRegional?(request: RenderRequest, background: string, regions: Region[], controlImage?: Buffer, onProgress?: Progress, fade?: { from: number; to_strength: number }): Promise<RenderResult>
 }

@@ -7,15 +7,17 @@
  * part that touches the GPU.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { run } from '../assemble/faces.ts'
 import { requestHash, type RenderRequest, type Sidecar } from '../cache.ts'
 import { bucketFor, sizeForCellBox, targetForCell } from '../layouts.ts'
 import { buildPrompt, facePrompt, regionPrompt, scaleLora } from '../prompt.ts'
 import { DUMMIES, plateSizeFor, type PlateBackend } from '../plates/plate.ts'
 import { maskForColour, maskPng } from '../plates/mask.ts'
 import { PNG } from 'pngjs'
-import { loadScript, writeJson, type Project } from '../project.ts'
+import { loadScript, PACKAGE_DIR, REPO_ROOT, writeJson, type Project } from '../project.ts'
 import { ComfyRenderer } from '../render/comfy.ts'
 import { ForgeRenderer } from '../render/forge.ts'
 import { MockRenderer } from '../render/mock.ts'
@@ -180,6 +182,8 @@ export function planPanel(
             ? {
                 background,
                 grow: project.config.sketch.mask_grow,
+                fade: project.config.sketch.lora_fade,
+                ...(project.config.sketch.grade.enabled ? { grade: { lightness: project.config.sketch.grade.lightness, colour: project.config.sketch.grade.colour } } : {}),
                 cast: panel.characters.map((id, index) => {
                   const character = script.characters[id]!
                   return {
@@ -450,7 +454,10 @@ async function paintFromSketch(
       if (mine.length === 0) report.emit({ event: 'note', message: `${plan.id}: no figure found for ${member.id} in the sketch; masked by the framing instead` })
       return { prompt: member.prompt, mask: mine.length ? unionMask(mine) : framingMask(width, height, plan.panel.camera) }
     })
-    return renderer.renderRegional(plan.request, regional.background, regions, sketch.png, onProgress)
+    const rendered = await renderer.renderRegional(plan.request, regional.background, regions, sketch.png, onProgress, plan.request.regional?.fade)
+    const grade = plan.request.regional?.grade
+    if (!grade) return rendered
+    return { png: await gradeFigures(sketch.python, rendered.png, regions.map((r) => r.mask), grade), info: rendered.info }
   }
   const first = await renderer.render(plan.request, onProgress, sketch.png)
   const repaint = plan.request.repaint
@@ -529,6 +536,26 @@ export function framingMask(width: number, height: number, camera: string): Buff
   const x1 = width - x0
   for (let y = Math.round(height * top); y < height; y++) data.fill(255, y * width + x0, y * width + x1)
   return maskPng({ width, height, data, found: 1 })
+}
+
+/** The grade.py pass over a finished regional render. */
+async function gradeFigures(python: string, png: Buffer, masks: Buffer[], grade: { lightness: number; colour: number }): Promise<Buffer> {
+  const dir = mkdtempSync(join(tmpdir(), 'comic-grade-'))
+  try {
+    const input = join(dir, 'in.png')
+    const output = join(dir, 'out.png')
+    writeFileSync(input, png)
+    const maskPaths = masks.map((mask, i) => {
+      const path = join(dir, `mask-${i}.png`)
+      writeFileSync(path, mask)
+      return path
+    })
+    const { code, stderr } = await run(resolve(REPO_ROOT, python), [join(PACKAGE_DIR, 'python', 'grade.py'), input, output, ...maskPaths, '--l', String(grade.lightness), '--ab', String(grade.colour)])
+    if (code !== 0) throw new Error(`grade.py exited with ${code}: ${stderr.trim().slice(-400)}`)
+    return readFileSync(output)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 /** Expression and hand words from the scene tags: what her face and hands do in this panel. */
