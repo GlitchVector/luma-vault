@@ -52,16 +52,17 @@ every call reads it as canon.
 ## 2. Which model, decided from the seed
 
 The studio has two: `model` (claude-cli, everything ordinary) and `explicit_model` (Grok, the
-delicate material). `story brainstorm` takes `--explicit` to use the second. **Decide it from what
-the seed and the approved outline actually contain**, and say which in the chat before the first
-call:
+delicate material). `story brainstorm` takes `--explicit` to use the second. **Decide it per
+brainstorm, from what that one ask is about**, and say which in the chat before the call:
 
-- Sex, nudity, kink, or a story that is plainly heading there → `--explicit` on every brainstorm of
-  this story. A refusal from the fallback comes back shaped like an answer and gets written into a
+- The ask itself is about sex, nudity or kink (an explicit page, the sexual turn of an outline) →
+  `--explicit`. A refusal from the fallback comes back shaped like an answer and gets written into a
   proposals file as though the model had nothing to say, which is worse than an error.
-- Anything else → no flag. Claude is free, local, and nothing leaves the machine.
-- If it starts tame and a picked direction turns explicit, switch from that brainstorm on and say so.
-  Never switch the other way to get a "better" answer; the routing is his rule.
+- Everything else → no flag, **even in an explicit book** (owner, 2026-09-24: "Grok should only be
+  taken for NSFW questions"). A gala page, a flashback, an outline ask about what she wants: Claude.
+  Claude is free, and the canon does not go to somebody else's server for it.
+- A page where she is under 18 is never sent with `--explicit`.
+- Never switch to Grok to get a "better" answer; the routing is his rule.
 
 `pnpm studio model` says whether the explicit model can answer right now (key set, service up).
 
