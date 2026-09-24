@@ -114,7 +114,16 @@ export function lock() {
   const path = join(dataDir(), 'render-queue.lock')
   if (existsSync(path)) {
     const held = readFileSync(path, 'utf8').trim()
-    return { ok: false, held }
+    // A drain killed from outside (a paused sweep, 2026-09-23) leaves its lock
+    // behind, and every later drain then refuses until someone deletes the file
+    // by hand - the sweep queued its frames three times and rendered nothing.
+    // A lock whose process is gone is not a lock.
+    const pid = Number(/^pid (\d+)/.exec(held)?.[1])
+    if (pid && !processAlive(pid)) {
+      rmSync(path, { force: true })
+    } else {
+      return { ok: false, held }
+    }
   }
   writeFileSync(path, `pid ${process.pid} since ${new Date().toISOString()}`)
   const release = () => {
@@ -131,4 +140,15 @@ export function lock() {
     process.exit(130)
   })
   return { ok: true, release }
+}
+
+/** Whether a process id is still running. Signal 0 checks without sending anything. */
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // EPERM means it exists but is not ours; ESRCH means it is gone.
+    return error.code === 'EPERM'
+  }
 }

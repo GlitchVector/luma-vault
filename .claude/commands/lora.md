@@ -1,3 +1,7 @@
+---
+description: Train a character LoRA with the owner — references, dataset, stage 1, the candidate round he stars, the final train, the epoch sweep, his verdict, the register
+---
+
 # Training a character LoRA, with the owner
 
 One character, start to finish: references, dataset, stage 1, the candidate round he stars, the
