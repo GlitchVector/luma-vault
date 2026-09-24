@@ -47,7 +47,9 @@ export function sketchSourceFor(project: Project, panel: Panel): SketchSource {
   if (name === 'mock' || name === 'forge' || name === 'openai') return name
   const explicit = isExplicit(panel.scene, panel.setting, ...panel.pose)
   const figures = panel.figures ?? panel.characters.length
-  const staged = panel.characters.length === 0 || isWideShot(panel.camera) || figures - panel.characters.length >= 2
+  // One stranger is enough: a tag model left out the guest who delivers the
+  // compliment, and her "thanks" answered nobody (2026-09-24).
+  const staged = panel.characters.length === 0 || isWideShot(panel.camera) || figures > panel.characters.length
   return !explicit && staged ? 'openai' : 'forge'
 }
 

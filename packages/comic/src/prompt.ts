@@ -195,9 +195,13 @@ export function regionPrompt(
   config: Pick<Config, 'prompt'>,
   pageBody?: string,
   pageLighting?: string,
+  pose = '',
 ): string {
   const light = [...sceneLight(panel.scene), lightingFor(config.prompt.lighting, pageLighting, panel.lighting)]
-  return [config.prompt.quality, character.subject, loraTag(character.lora), character.trigger, character.look, bodyFor(character, pageBody, panel.body, panel.camera), weighted(panel.camera, config.prompt.camera_weight, config.prompt.angle_weight), ...light, config.prompt.style]
+  // Her pose and expression belong in HER region: in the background prompt
+  // alone, "frozen, gripping her wrist" never reached her and the reaction
+  // panel showed her smiling (2026-09-24).
+  return [config.prompt.quality, character.subject, loraTag(character.lora), character.trigger, character.look, bodyFor(character, pageBody, panel.body, panel.camera), weighted(panel.camera, config.prompt.camera_weight, config.prompt.angle_weight), pose, ...light, config.prompt.style]
     .map((part) => (part ?? '').trim().replace(/,\s*$/, ''))
     .filter(Boolean)
     .join(', ')

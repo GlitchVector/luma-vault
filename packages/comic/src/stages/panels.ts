@@ -172,11 +172,11 @@ export function planPanel(
             ? {
                 background,
                 grow: project.config.sketch.mask_grow,
-                cast: panel.characters.map((id) => {
+                cast: panel.characters.map((id, index) => {
                   const character = script.characters[id]!
                   return {
                     id,
-                    prompt: regionPrompt(character, panel, project.config, page.body, page.lighting),
+                    prompt: regionPrompt(character, panel, project.config, page.body, page.lighting, [panel.pose[index], ...actionTags(panel.scene)].filter(Boolean).join(', ')),
                     ...(character.hair?.length ? { hair: character.hair } : {}),
                   }
                 }),
@@ -521,6 +521,12 @@ export function framingMask(width: number, height: number, camera: string): Buff
   const x1 = width - x0
   for (let y = Math.round(height * top); y < height; y++) data.fill(255, y * width + x0, y * width + x1)
   return maskPng({ width, height, data, found: 1 })
+}
+
+/** Expression and hand words from the scene tags: what her face and hands do in this panel. */
+function actionTags(scene: string): string[] {
+  const ACTION = /\b(smile|smiling|grin|frown|closed mouth|open mouth|wide-eyed|surprised|shocked|frozen|blush|crying|tears|angry|laughing|smirk|holding own wrist|hand on own wrist|holding|pointing|waving|arms crossed|looking back|looking at viewer|looking away|talking|biting lip)\b/i
+  return scene.split(',').map((t) => t.trim()).filter((t) => t && ACTION.test(t))
 }
 
 /** Several figure masks as one: her and her reflection are one region. */
