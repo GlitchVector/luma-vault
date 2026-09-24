@@ -68,14 +68,16 @@ describe('stage 1', () => {
     expect(onDisk.title).toBe('First Light')
   })
 
-  it('sends the validation errors back once, then gives up', async () => {
+  it('sends the validation errors back, at most twice, then gives up', async () => {
     const bad = { title: 'x', pages: [{ panels: [{ camera: 'x', scene: 'y', characters: ['bob'] }] }] }
     const writer = new ScriptedWriter([bad, goodDraft])
     await runScript(openProject(dir), quiet, { writer })
     expect(writer.prompts).toHaveLength(2)
     expect(writer.prompts[1]).toMatch(/rejected.*"bob"/s)
 
-    const stubborn = new ScriptedWriter([bad, bad])
+    expect(writer.prompts[1]).toMatch(/Keep exactly 1 page/)
+
+    const stubborn = new ScriptedWriter([bad, bad, bad])
     await expect(runScript(openProject(dir), quiet, { writer: stubborn })).rejects.toThrow(/could not produce a valid script/)
   })
 

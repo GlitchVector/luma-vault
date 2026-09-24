@@ -48,7 +48,10 @@ export async function runScript(
   let prompt = prose
   let draft: Finished | undefined
   let lastError = ''
-  for (let round = 0; round < 2 && !draft; round++) {
+  // Three answers, not two: the vocabulary check below spends the first retry
+  // on prose scenes, and the writer's commonest slip (more pages than the
+  // prose has) must still get one of its own.
+  for (let round = 0; round < 3 && !draft; round++) {
     // eslint-disable-next-line no-await-in-loop
     const raw = await writer.write({ system, prompt, schema, model: project.config.writer.model })
     const parsed = draftScriptSchema.safeParse(raw)
@@ -77,7 +80,9 @@ export async function runScript(
     }
     if (!draft) {
       report.emit({ event: 'note', message: `the draft did not validate, asking again:\n${lastError}` })
-      prompt = `${prose}\n\nYour previous answer was rejected for these reasons; fix them and answer again:\n${lastError}`
+      // The page count is restated every time: fixing one rejection by
+      // re-cutting the story into more pages was how the second answer failed.
+      prompt = `${prose}\n\nYour previous answer was rejected for these reasons; fix them and answer again:\n${lastError}\nKeep exactly ${paged.pages} page(s), one per [Page N] block.`
     }
   }
   if (!draft) throw new Error(`the writer could not produce a valid script:\n${lastError}`)
