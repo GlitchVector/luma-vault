@@ -46,11 +46,12 @@ export function sketchRequestFor(project: Project, script: Script, where: { page
   const panel = page.panels[where.panelIndex]!
   const size = plateSizeForPanel(project, page, where.panelIndex)
   if ((process.env['COMIC_SKETCH'] ?? project.config.sketch.backend) === 'forge') {
-    // A tag model gets the panel's own prompt, minus every LoRA and her body:
-    // the composition only. Her body words without her LoRA made NoobAI draw
-    // a caricature, and the ControlNet then pressed that outline onto every
-    // render of the panel (2026-09-24). Her body comes from the render.
-    const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: false, body: false })
+    // A tag model gets the panel's own prompt, minus every LoRA, her body and
+    // her look: the composition only. Her body words made NoobAI draw a
+    // caricature the ControlNet then pressed onto every render, and her colour
+    // words (aqua hair, aqua shirt) painted the whole sketch teal, which the
+    // render carried over (2026-09-24). She comes from the render.
+    const { prompt, negative } = buildPrompt(panel, script.characters, project.config, page.body, page.lighting, { lora: false, body: false, look: false })
     const seed = panelSeed(familyFor(script.characters, panel.characters), where.pageIndex, where.panelIndex, variation)
     return { prompt, negative, seed, size, quality: project.config.sketch.quality }
   }
