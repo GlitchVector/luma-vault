@@ -126,6 +126,21 @@ export const CUSTOM_LORAS: readonly LoraEntry[] = [
     note: 'Second outfit variant through the reference pipeline; every body and cowboy view passed in sheet mode at the first attempt. The pack was the one thing the generator fought: three rounds of front poses drew it at the hip or beside the shoulder until the text made it hidden in front views. Dataset rebuilt 2026-09-24 without body-frame cuts: 28 body, 26 native cowboys, 24 native uppers (22 poses per rung), 13 face, 8 details + 4 mirrors; nothing with the badge mirrored. Stage 1 not yet trained.',
   },
   {
+    name: 'ari_gen_gala_dress_s1',
+    dataset: 'ari-gala-dress',
+    outfit: 'Gala-dress',
+    parent: 'ari_gen_v6',
+    trigger: 'arigaladress',
+    character: 'Ari',
+    kind: 'outfit',
+    description:
+      'Ari in the gala-dinner gown (2026-09-24): floor-length iridescent pearl-white satin with thin gold seams, high halter collar with a keyhole, bare shoulders, one high slit on her right leg, open back with crossed gold chains, gold strappy stilettos, large gold hoop earrings, the blue gem pendant at the collar; no headband.',
+    status: 'wip',
+    weight: null,
+    olderVersions: [],
+    note: 'Built from the owner-starred reference set (84 of 86 views; cowboy 03 and 17 dropped - the generator kept the slit on the wrong leg from her left side, which the sheet never shows). 23 body, 22 native cowboys, 22 native uppers, 13 face, 6 details, nothing mirrored. The sheet\'s champagne glass and clutch are left out. Stage 1 not yet trained.',
+  },
+  {
     name: 'ari_gen_alt_cleavage_s1',
     dataset: 'ari-alt-cleavage',
     outfit: 'Alt-cleavage',

@@ -112,7 +112,7 @@ describe('one card per LoRA line', () => {
     expect(ari.map((card) => card.line)).toEqual(['ari_adopt', 'ari_gen'])
     // The adopt line has no variants; the gen line carries her outfit variants (2026-09-23/24), in catalogue order.
     expect(ari[0]!.variants).toHaveLength(0)
-    expect(ari[1]!.variants.map((entry) => entry.name)).toEqual(['ari_gen_space_leotard_s1', 'ari_gen_space_dress_s1', 'ari_gen_alt_cleavage_s1'])
+    expect(ari[1]!.variants.map((entry) => entry.name)).toEqual(['ari_gen_space_leotard_s1', 'ari_gen_space_dress_s1', 'ari_gen_gala_dress_s1', 'ari_gen_alt_cleavage_s1'])
     const byStatus = loraGroupsByStatus(cards)
     expect(byStatus.final.map((card) => card.main.name)).toEqual(['ari_adopt_v4'])
     expect(byStatus.wip.map((card) => card.main.name)).toContain('ari_gen_v6')
