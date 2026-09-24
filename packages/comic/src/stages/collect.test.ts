@@ -28,7 +28,7 @@ const panel = (id: string) => ({
 const script: Script = {
   title: 'First Light',
   characters: {
-    ari: { lora: 'ari_adopt_v4:1.2', trigger: 'ari', look: 'white hair', head: '', body: '', subject: '1girl', seed_family: 8812 },
+    ari: { lora: 'ari_adopt_v4:1.2', trigger: 'ari', look: 'white hair', head: '', body: '', subject: '1girl', seed_family: 8812, minor: false },
   },
   locations: {},
   pages: [{ layout: 'two-stack', panels: [panel('p1-1'), panel('p1-2')] }],

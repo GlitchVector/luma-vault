@@ -21,7 +21,7 @@ describe("a character's region is lit like the place", () => {
   })
 
   it('puts her LoRA, look, body and the panel light in her region prompt', () => {
-    const ari = { lora: 'ari_adopt_v4:1.2', trigger: 'ari', look: 'white hair', head: '', body: 'wide hips', subject: '1girl' as const, seed_family: 1 }
+    const ari = { lora: 'ari_adopt_v4:1.2', trigger: 'ari', look: 'white hair', head: '', body: 'wide hips', subject: '1girl' as const, seed_family: 1, minor: false }
     const config = { prompt: { quality: 'masterpiece', style: 'anime coloring', lighting: 'warm light', negative: '', negative_lettering: '', camera_weight: 1.35, angle_weight: 1.1, wide_lora_scale: 0.6 } }
     const prompt = regionPrompt(ari, { camera: 'full body', scene: 'rooftop, night, string lights' }, config as never)
     expect(prompt).toBe('masterpiece, 1girl, <lora:ari_adopt_v4:1.2>, ari, white hair, wide hips, (full body:1.35), night, string lights, warm light, anime coloring')

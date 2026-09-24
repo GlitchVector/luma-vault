@@ -217,10 +217,14 @@ export const comicPageSchema = z.object({
 export type ComicPageSpec = z.infer<typeof comicPageSchema>
 
 export const comicCharacterSchema = z.object({
-  /** `name:weight`, exactly as Forge's `<lora:name:weight>` wants it. */
-  lora: z.string().regex(/^[^:<>]+:\d+(\.\d+)?$/, 'lora must be "name:weight"'),
-  /** The activation word(s) the LoRA was trained on. Goes first, always. */
-  trigger: z.string().min(1),
+  /**
+   * `name:weight`, exactly as Forge's `<lora:name:weight>` wants it. Empty
+   * for a character drawn without one - a child, or anyone who has no LoRA
+   * yet - who is held by `reference` and `look` instead.
+   */
+  lora: z.union([z.literal(''), z.string().regex(/^[^:<>]+:\d+(\.\d+)?$/, 'lora must be "name:weight"')]).default(''),
+  /** The activation word(s) the LoRA was trained on. Goes first, always. Empty without a LoRA. */
+  trigger: z.string().default(''),
   /**
    * The appearance, restated in every panel this character is in.
    *
@@ -273,6 +277,17 @@ export const comicCharacterSchema = z.object({
    * a mirror image included. Unset, she is the largest figure left.
    */
   hair: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).optional(),
+  /**
+   * A character sheet (absolute path) the hosted sketch is drawn from, so a
+   * character with no LoRA still looks the same in every panel.
+   */
+  reference: z.string().optional(),
+  /**
+   * Under 18. Hard rules follow, not preferences: never a LoRA (any LoRA of
+   * this character carries an adult body), never an explicit panel (the
+   * pipeline refuses one), and a safety negative on every render she is in.
+   */
+  minor: z.boolean().default(false),
 })
 export type ComicCharacter = z.infer<typeof comicCharacterSchema>
 

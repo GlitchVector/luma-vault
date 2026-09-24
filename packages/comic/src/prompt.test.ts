@@ -9,9 +9,9 @@ const ari: Character = {
   head: 'white hair, blue eyes',
   body: 'large breasts, wide hips',
   subject: '1girl',
-  seed_family: 8812,
+  seed_family: 8812, minor: false,
 }
-const kira: Character = { ...ari, lora: 'kvoss_v2:0.9', trigger: 'kvoss', look: 'pink hair, black hoodie', seed_family: 1 }
+const kira: Character = { ...ari, lora: 'kvoss_v2:0.9', trigger: 'kvoss', look: 'pink hair, black hoodie', seed_family: 1, minor: false }
 const config = {
   prompt: {
     quality: 'masterpiece, best quality',

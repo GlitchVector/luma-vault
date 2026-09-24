@@ -20,7 +20,7 @@ import { planPanel } from './panels.ts'
 const script: Script = {
   title: 'Test',
   characters: {
-    ari: { lora: 'ari_adopt_v1:1.2', trigger: 'ari', look: 'white hair', head: '', body: '', subject: '1girl', seed_family: 8812 },
+    ari: { lora: 'ari_adopt_v1:1.2', trigger: 'ari', look: 'white hair', head: '', body: '', subject: '1girl', seed_family: 8812, minor: false },
   },
   locations: {},
   pages: [

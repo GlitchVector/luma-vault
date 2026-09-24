@@ -196,7 +196,7 @@ async function doctor(p: Project | undefined): Promise<void> {
       say(false, `script.json: ${(error as Error).message}`)
     }
   } else {
-    loras = Object.values(config.characters).map((c) => c.lora.slice(0, c.lora.lastIndexOf(':')))
+    loras = Object.values(config.characters).filter((c) => c.lora).map((c) => c.lora.slice(0, c.lora.lastIndexOf(':')))
   }
   try {
     const prepared = await forge.prepare({ checkpoint: config.forge.checkpoint, loras })

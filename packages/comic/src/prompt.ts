@@ -56,8 +56,12 @@ export function subjectTags(subjects: Character['subject'][], figures?: number):
 }
 
 export function loraTag(lora: string): string {
-  return `<lora:${lora}>`
+  // A character without a LoRA (a child, anyone not trained yet) has none to name.
+  return lora ? `<lora:${lora}>` : ''
 }
+
+/** The words that keep a picture with a minor in it innocent, on every render she is in. */
+export const MINOR_NEGATIVE = 'nsfw, nude, nudity, sexy, suggestive, cleavage, lingerie, revealing clothes, mature female, large breasts, curvy, seductive'
 
 /**
  * Angle words, which must never be weighted as hard as framing words.
@@ -284,7 +288,8 @@ export function buildPrompt(
   // Ari's `bracelet` would strip Tom's cuff. The sketch route's repaint
   // applies it per figure instead.
   const own = cast.length === 1 ? (cast[0]!.negative ?? '') : ''
-  const negative = [config.prompt.negative, config.prompt.negative_lettering, own]
+  const minor = cast.some((c) => c.minor) ? MINOR_NEGATIVE : ''
+  const negative = [config.prompt.negative, config.prompt.negative_lettering, own, minor]
     .map((part) => part.trim().replace(/,\s*$/, ''))
     .filter(Boolean)
     .join(', ')

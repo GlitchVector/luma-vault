@@ -22,7 +22,7 @@ const ari: Character = {
   head: 'white hair, blue eyes',
   body: 'large breasts, wide hips',
   subject: '1girl',
-  seed_family: 8812,
+  seed_family: 8812, minor: false,
 }
 
 const panel = (id: string, characters: string[], extra: Record<string, unknown> = {}) => ({
@@ -51,7 +51,7 @@ function project(script: Script, overrides: Record<string, unknown> = {}) {
 
 const solo = (extra: Record<string, unknown> = {}, pageExtra: Record<string, unknown> = {}): Script => ({
   title: 'T',
-  characters: { ari, kira: { ...ari, trigger: 'kvoss', seed_family: 1 } },
+  characters: { ari, kira: { ...ari, trigger: 'kvoss', seed_family: 1, minor: false } },
   locations: {},
   pages: [{ layout: 'splash', panels: [panel('p1-1', ['ari'], extra)], ...pageExtra }],
 })

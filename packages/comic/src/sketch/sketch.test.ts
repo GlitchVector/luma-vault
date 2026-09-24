@@ -132,3 +132,31 @@ suite('where a sketch comes from with backend auto', () => {
     expect(sketchSourceFor(project, panel({ characters: [], scene: 'bed, nude, sex' }))).toBe('forge')
   })
 })
+
+suite('a character under 18', () => {
+  it('is never drawn with a LoRA or in an explicit panel, and always with the safety negative', async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { loadScript, openProject } = await import('../project.ts')
+    const { planPanel } = await import('../stages/panels.ts')
+    const dir = mkdtempSync(join(tmpdir(), 'comic-minor-'))
+    try {
+      const kid = { look: 'white hair, hoodie', subject: '1girl', seed_family: 3, minor: true }
+      const panel = (scene: string) => ({ id: 'p1-1', camera: 'full body', scene, characters: ['kid'] })
+      const script = { title: 't', characters: { kid }, locations: {}, pages: [{ layout: 'splash', panels: [panel('farm, hens, laughing')] }, { layout: 'splash', panels: [{ ...panel('bed, nude'), id: 'p2-1' }] }] }
+      writeFileSync(join(dir, 'script.json'), JSON.stringify(script))
+      writeFileSync(join(dir, 'comic.config.json'), JSON.stringify({ renderer: 'mock', characters: { kid } }))
+      const project = openProject(dir)
+      const parsed = loadScript(project)
+      const ok = planPanel(project, parsed, { checkpoint: 'c' }, { pageIndex: 0, panelIndex: 0 }).request
+      expect(ok.prompt).not.toContain('<lora:')
+      expect(ok.negative).toContain('nsfw')
+      expect(() => planPanel(project, parsed, { checkpoint: 'c' }, { pageIndex: 1, panelIndex: 0 })).toThrow(/under 18/)
+      const withLora = { ...parsed, characters: { kid: { ...parsed.characters['kid']!, lora: 'x:1' } } }
+      expect(() => planPanel(project, withLora, { checkpoint: 'c' }, { pageIndex: 0, panelIndex: 0 })).toThrow(/has a LoRA/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

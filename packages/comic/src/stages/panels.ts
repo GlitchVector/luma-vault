@@ -24,6 +24,7 @@ import type { Reporter } from '../report.ts'
 import type { Page, Panel, Script } from '../schema.ts'
 import { familyFor, panelSeed } from '../seed.ts'
 import { assignFigures, findPeople } from '../sketch/people.ts'
+import { isExplicit } from '../sketch/prompt.ts'
 import { ensurePlate, plateBackendFor, platesEnabled } from './plates.ts'
 import { ensureSketch, SketchBackends, sketchable, sketchEnabled } from './sketch.ts'
 import type { PanelFilter } from './select.ts'
@@ -66,7 +67,7 @@ export function rendererFor(project: Project): Renderer {
 }
 
 export function loraNames(script: Script): string[] {
-  return [...new Set(Object.values(script.characters).map((c) => c.lora.slice(0, c.lora.lastIndexOf(':'))))]
+  return [...new Set(Object.values(script.characters).filter((c) => c.lora).map((c) => c.lora.slice(0, c.lora.lastIndexOf(':'))))]
 }
 
 export function readSidecar(path: string): Sidecar | undefined {
@@ -88,6 +89,13 @@ export function planPanel(
 ): PanelPlan {
   const page = script.pages[where.pageIndex]!
   const panel = page.panels[where.panelIndex]!
+  // Hard rules for a character under 18, checked on every plan, never configurable.
+  const minors = panel.characters.filter((id) => script.characters[id]?.minor)
+  if (minors.length > 0) {
+    if (isExplicit(panel.scene, panel.setting, ...panel.pose)) throw new Error(`${panel.id}: ${minors.join(', ')} is under 18 and the panel is explicit; this pipeline never renders that`)
+    const withLora = minors.filter((id) => script.characters[id]!.lora)
+    if (withLora.length > 0) throw new Error(`${panel.id}: ${withLora.join(', ')} is under 18 and has a LoRA; a minor is drawn without one`)
+  }
   const pngPath = join(project.panelsDir, `${panel.id}.png`)
   const sidecarPath = join(project.panelsDir, `${panel.id}.json`)
   const attempt = options.attempt ?? readSidecar(sidecarPath)?.attempt ?? 0
