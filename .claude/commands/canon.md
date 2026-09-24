@@ -70,9 +70,10 @@ type "1,5" when a checkbox would do.
 4. **Then let him click.** One `AskUserQuestion`, `multiSelect: true`, one option per proposal in
    the file's numbering, label = `<n>. <title>`, description = one sentence, the tell or the line.
    A question holds four options, so five proposals are two questions in the same call: the first
-   with 1–4, the second with 5 plus "none of these — ask it differently". Both are multi-select so
-   any combination is one click each. He can always type into "Other"; a typed "none, ask about X
-   instead" is a new ask, not a pick.
+   with 1–4, the second single-select with "5. <title>" and "Not 5". Never make "none — ask it
+   differently" a click there: it forced him to type "done with my previous select" into Other on
+   every round he was happy with 1–4 alone (2026-09-24). Asking again is what he types into Other
+   when he wants it; a typed "none, ask about X instead" is a new ask, not a pick.
 5. **Approve exactly what he clicked.**
    `pnpm studio character approve <id> latest <n,n> --into <facet>`
    Name the proposals file, never `latest`, whenever a second brainstorm may have run since — a
