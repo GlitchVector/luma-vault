@@ -28,3 +28,16 @@ describe("a character's region is lit like the place", () => {
     expect(prompt).not.toContain('rooftop')
   })
 })
+
+describe('the framing mask for a figure the detector missed', () => {
+  it('covers the middle of a close-up and leaves the edges to the place', async () => {
+    const { PNG } = await import('pngjs')
+    const { framingMask } = await import('../stages/panels.ts')
+    const png = PNG.sync.read(framingMask(100, 100, 'close-up'))
+    const at = (x: number, y: number) => png.data[(y * 100 + x) * 4]
+    expect(at(50, 50)).toBe(255)
+    expect(at(5, 50)).toBe(0)
+    expect(at(95, 50)).toBe(0)
+    expect(at(50, 2)).toBe(0)
+  })
+})

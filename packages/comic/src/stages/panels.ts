@@ -440,8 +440,8 @@ async function paintFromSketch(
     const { width, height } = PNG.sync.read(sketch.png)
     const regions = regional.cast.map((member, index) => {
       const mine = assigned.filter((a) => a.castIndex === index).map((a) => a.person.mask)
-      if (mine.length === 0) report.emit({ event: 'note', message: `${plan.id}: no figure found for ${member.id} in the sketch; her LoRA covers the whole panel` })
-      return { prompt: member.prompt, mask: mine.length ? unionMask(mine) : maskPng({ width, height, data: new Uint8Array(width * height).fill(255), found: width * height }) }
+      if (mine.length === 0) report.emit({ event: 'note', message: `${plan.id}: no figure found for ${member.id} in the sketch; masked by the framing instead` })
+      return { prompt: member.prompt, mask: mine.length ? unionMask(mine) : framingMask(width, height, plan.panel.camera) }
     })
     return renderer.renderRegional(plan.request, regional.background, regions, sketch.png, onProgress)
   }
@@ -504,6 +504,24 @@ async function paintFromSketch(
     infos.push(result.info)
   }
   return { png: current, info: infos }
+}
+
+/**
+ * Where she probably is when the detector found nobody: it misses tight crops
+ * (a face, a hand on a wrist), and a whole-panel mask put her LoRA and colours
+ * back over the room (2026-09-24). The framing says how much of the panel she
+ * fills: a centred box, bottom-anchored, wider the closer the shot, leaving
+ * the edges to the place.
+ */
+export function framingMask(width: number, height: number, camera: string): Buffer {
+  const plain = camera.toLowerCase()
+  const share = /close-up|portrait|face/.test(plain) ? 0.7 : /upper body|bust/.test(plain) ? 0.62 : /cowboy/.test(plain) ? 0.5 : 0.4
+  const top = /close-up|portrait|face|upper body|bust/.test(plain) ? 0.06 : 0.1
+  const data = new Uint8Array(width * height)
+  const x0 = Math.round((width * (1 - share)) / 2)
+  const x1 = width - x0
+  for (let y = Math.round(height * top); y < height; y++) data.fill(255, y * width + x0, y * width + x1)
+  return maskPng({ width, height, data, found: 1 })
 }
 
 /** Several figure masks as one: her and her reflection are one region. */
