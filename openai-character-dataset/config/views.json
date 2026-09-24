@@ -155,19 +155,19 @@
     },
     {
       "id": "03-side",
-      "prompt": "Cowboy-shot view in exact side profile from her LEFT side, camera perpendicular to her at waist height, standing straight, looking straight ahead. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
+      "prompt": "Cowboy-shot view in exact side profile from her LEFT side, camera perpendicular to her at waist height, standing straight, looking straight ahead. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its SIDE and its hem, seen in profile (the front of the garment shows only as its edge) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, from side, profile",
       "background": "a plain, even white background"
     },
     {
       "id": "04-back",
-      "prompt": "Cowboy-shot view from directly behind, camera at waist height, standing naturally, arms relaxed; the back of the top and the back of the garment on her hips clearly visible. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
+      "prompt": "Cowboy-shot view from directly behind, camera at waist height, standing naturally, arms relaxed; the back of the top and the back of the garment on her hips clearly visible. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its BACK and its hem, seen from behind (the front of the garment and anything on it is on the far side of her body, out of sight) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, from behind, facing away",
       "background": "a plain, even light grey background"
     },
     {
       "id": "05-three-quarter-back",
-      "prompt": "Cowboy-shot three-quarter rear view, her body about halfway between a side view and a direct back view, head turned slightly toward the viewer, camera at waist height. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
+      "prompt": "Cowboy-shot three-quarter rear view, her body about halfway between a side view and a direct back view, head turned slightly toward the viewer, camera at waist height. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its BACK and its hem, seen from behind (the front of the garment and anything on it is on the far side of her body, out of sight) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, from behind, looking back",
       "background": "a plain, even warm sand-beige background"
     },
@@ -179,13 +179,13 @@
     },
     {
       "id": "07-side-hands-on-hips-looking-back",
-      "prompt": "Cowboy-shot view from her right side with both hands on her hips, head turned to look back at the viewer, camera at waist height. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference. Hands-on-hips means the classic akimbo stance: both elbows bent sharply and pointing OUT and slightly back, away from the body, each palm planted on the hip bone with the fingers forward and the thumb behind; the forearms are horizontal, the upper arms angle outward, and there is clear open space between each arm and the waist.",
+      "prompt": "Cowboy-shot view from her right side with both hands on her hips, head turned to look back at the viewer, camera at waist height. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its SIDE and its hem, seen in profile (the front of the garment shows only as its edge) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference. Hands-on-hips means the classic akimbo stance: both elbows bent sharply and pointing OUT and slightly back, away from the body, each palm planted on the hip bone with the fingers forward and the thumb behind; the forearms are horizontal, the upper arms angle outward, and there is clear open space between each arm and the waist.",
       "tags": "cowboy shot, standing, from side, hands on own hips, looking back, looking at viewer",
       "background": "a plain, even soft lavender background"
     },
     {
       "id": "08-side-looking-back",
-      "prompt": "Cowboy-shot view from her right side, standing relaxed with both arms hanging loosely at her sides, head turned to look back at the viewer over her shoulder, camera at waist height. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
+      "prompt": "Cowboy-shot view from her right side, standing relaxed with both arms hanging loosely at her sides, head turned to look back at the viewer over her shoulder, camera at waist height. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its SIDE and its hem, seen in profile (the front of the garment shows only as its edge) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, from side, arms at sides, looking back, looking at viewer",
       "background": "a plain, even light peach background"
     },
@@ -239,19 +239,19 @@
     },
     {
       "id": "17-back-looking-over-left-shoulder",
-      "prompt": "Cowboy-shot view from behind, body facing away, camera at waist height, she turns her head to look back at the viewer over her left shoulder; the back of the outfit clearly visible. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
+      "prompt": "Cowboy-shot view from behind, body facing away, camera at waist height, she turns her head to look back at the viewer over her left shoulder; the back of the outfit clearly visible. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its BACK and its hem, seen from behind (the front of the garment and anything on it is on the far side of her body, out of sight) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, from behind, looking back, looking at viewer",
       "background": "a plain, even light grey background"
     },
     {
       "id": "18-back-looking-over-right-shoulder",
-      "prompt": "Cowboy-shot view from behind, body facing away, camera at waist height, she turns her head to look back at the viewer over her right shoulder; the back of the outfit clearly visible. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
+      "prompt": "Cowboy-shot view from behind, body facing away, camera at waist height, she turns her head to look back at the viewer over her right shoulder; the back of the outfit clearly visible. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its BACK and its hem, seen from behind (the front of the garment and anything on it is on the far side of her body, out of sight) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, from behind, looking back, looking at viewer",
       "background": "a plain, even warm sand-beige background"
     },
     {
       "id": "19-other-side",
-      "prompt": "Cowboy-shot view in exact side profile from her right side, camera perpendicular to her at waist height, standing straight, arms relaxed, looking straight ahead. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
+      "prompt": "Cowboy-shot view in exact side profile from her right side, camera perpendicular to her at waist height, standing straight, arms relaxed, looking straight ahead. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its SIDE and its hem, seen in profile (the front of the garment shows only as its edge) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, from side, profile",
       "background": "a plain, even pale blue background"
     },
