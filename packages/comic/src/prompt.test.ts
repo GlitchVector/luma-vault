@@ -82,10 +82,13 @@ describe('the panel prompt', () => {
     const close = buildPrompt({ ...panel, camera: 'close-up' }, { ari }, scaled).prompt
     expect(close).toContain('<lora:ari_adopt_v1:1.2>')
 
-    // Body words fill the frame; a wide shot leaves them out and names the scenery.
-    expect(wide).not.toContain('large breasts')
+    // Her body holds on every shot that draws her, wide ones included (owner, 2026-09-24).
+    expect(wide).toContain('large breasts')
     expect(wide).toContain('scenery')
     expect(close).toContain('large breasts')
+    // Only the sketch route's no-LoRA composition pass leaves it out on a wide shot.
+    const composing = buildPrompt({ ...panel, camera: 'wide shot' }, { ari }, scaled, undefined, undefined, { lora: false }).prompt
+    expect(composing).not.toContain('large breasts')
 
     expect(isWideShot('wide shot, from below')).toBe(true)
     expect(isWideShot('establishing shot')).toBe(true)

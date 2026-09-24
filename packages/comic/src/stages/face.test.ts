@@ -62,17 +62,23 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('the body ladder', () => {
-  it('takes the most specific rung that is set', () => {
+  it("keeps her body always; page and panel only add to it", () => {
     expect(bodyFor(ari)).toBe('large breasts, wide hips')
-    expect(bodyFor(ari, 'slim')).toBe('slim')
-    expect(bodyFor(ari, 'slim', 'muscular')).toBe('muscular')
-    expect(bodyFor(ari, undefined, 'muscular')).toBe('muscular')
+    expect(bodyFor(ari, 'wet skin')).toBe('large breasts, wide hips, wet skin')
+    expect(bodyFor(ari, 'wet skin', 'sweat')).toBe('large breasts, wide hips, wet skin, sweat')
+    expect(bodyFor(ari, undefined, 'sweat')).toBe('large breasts, wide hips, sweat')
   })
 
-  it('treats a blank rung as silence, not as an override', () => {
+  it('treats a blank rung as silence', () => {
     expect(bodyFor(ari, '')).toBe('large breasts, wide hips')
     expect(bodyFor(ari, '   ', '')).toBe('large breasts, wide hips')
-    expect(bodyFor(ari, 'slim', '  ')).toBe('slim')
+  })
+
+  it('uses the rear body for a back view', () => {
+    const both = { ...ari, body_rear: 'large breasts, wide hips, (huge ass:1.6)' }
+    expect(bodyFor(both, undefined, undefined, 'full body, from behind')).toBe('large breasts, wide hips, (huge ass:1.6)')
+    expect(bodyFor(both, undefined, undefined, 'cowboy shot')).toBe('large breasts, wide hips')
+    expect(bodyFor(ari, undefined, undefined, 'from behind')).toBe('large breasts, wide hips')
   })
 
   it('reaches the prompt, unweighted, straight after her look', () => {
@@ -82,14 +88,13 @@ describe('the body ladder', () => {
     expect(plan.request.prompt).not.toContain('(large breasts')
   })
 
-  it('lets a page speak for its panels, and a panel speak for itself', () => {
-    const byPage = solo({}, { body: 'slim, small breasts' })
-    expect(planPanel(project(byPage), byPage, prepared, { pageIndex: 0, panelIndex: 0 }).request.prompt).toContain('slim, small breasts')
+  it('lets a page and a panel add to her body, never replace it', () => {
+    const byPage = solo({}, { body: 'wet skin' })
+    expect(planPanel(project(byPage), byPage, prepared, { pageIndex: 0, panelIndex: 0 }).request.prompt).toContain('large breasts, wide hips, wet skin')
 
-    const byPanel = solo({ body: 'muscular' }, { body: 'slim, small breasts' })
+    const byPanel = solo({ body: 'sweat' }, { body: 'wet skin' })
     const prompt = planPanel(project(byPanel), byPanel, prepared, { pageIndex: 0, panelIndex: 0 }).request.prompt
-    expect(prompt).toContain('muscular')
-    expect(prompt).not.toContain('slim, small breasts')
+    expect(prompt).toContain('large breasts, wide hips, wet skin, sweat')
   })
 })
 

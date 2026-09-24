@@ -255,6 +255,9 @@ export const comicCharacterSchema = z.object({
    * which is the whole reason the framing words carry weight here.
    */
   body: z.string().default(''),
+  /** Her body for back views (`from behind`, `back turned`, `facing away`): the
+   *  heavier rear with the same front. Unset, back views use `body`. */
+  body_rear: z.string().optional(),
   /** `1girl`, `1boy`: the subject tag the checkpoint counts figures with. */
   subject: z.enum(['1girl', '1boy', '1other']).default('1girl'),
   seed_family: z.number().int().min(0),

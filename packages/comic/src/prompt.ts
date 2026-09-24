@@ -139,16 +139,23 @@ export function weighted(text: string, weight: number, angleWeight = weight): st
     .join(', ')
 }
 
+/** Camera words that show her from behind, where the rear body applies. */
+const REAR_TERMS = ['from behind', 'back turned', 'facing away', 'back view']
+
 /**
- * Whose body words win: the panel's, else the page's, else the character's.
+ * Her body words: the character's, always, and the page's and panel's added.
  *
- * Three rungs because a book needs all three. The character carries what she
- * is, a page gets an override when a whole sequence should read differently,
- * and a panel gets the last word. A blank at any rung is silence rather than
- * an override, so a page left empty does not wipe what the character says.
+ * The comic's body is the one the author chose for her and holds on every
+ * render (owner, 2026-09-24: "when body tags are set for a comic, they should
+ * always be respected"). Page and panel may add words for a sequence or a
+ * frame; they no longer replace hers, which is how her shape could change
+ * between panels. Back views take `body_rear`, the heavier rear with the same
+ * front.
  */
-export function bodyFor(character: Character, page?: string, panel?: string): string {
-  return panel?.trim() || page?.trim() || character.body
+export function bodyFor(character: Character, page?: string, panel?: string, camera = ''): string {
+  const plain = camera.toLowerCase()
+  const own = character.body_rear && REAR_TERMS.some((t) => plain.includes(t)) ? character.body_rear : character.body
+  return [own, page?.trim(), panel?.trim()].filter(Boolean).join(', ')
 }
 
 /**
@@ -204,15 +211,16 @@ export function buildPrompt(
     // the hips, which is the very thing the framing weight below exists to
     // fight, and two weights pulling against each other is how `wide shot`
     // became a cowboy shot on the boards.
-    // No body block on a wide shot. Body words name what fills a frame, so they
-    // pull the camera in until they do: the Beanpole test's planned wide shot
-    // came back as her full figure edge to edge with the party behind her
-    // (2026-09-24). At that distance the LoRA alone carries her shape.
     // Without the LoRA (the sketch route's first pass) the trigger word means
     // nothing either; the look tags stay, so the figure already wears the
     // right hair and clothes and the repaint has less to change.
     const who = options.lora === false ? [] : [loraTag(lora), character.trigger]
-    parts.push(...who, character.look, wide ? '' : bodyFor(character, pageBody, panel.body))
+    // Her body is on every prompt that draws HER. The one exception is the
+    // sketch route's first pass on a wide shot, which only composes the
+    // panel and is repainted with her body afterwards: body words name what
+    // fills a frame and pulled a planned wide shot into a full-frame figure.
+    const body = wide && options.lora === false ? '' : bodyFor(character, pageBody, panel.body, panel.camera)
+    parts.push(...who, character.look, body)
   }
   if (wide && !/\bscenery\b/.test(panel.scene)) parts.push('scenery')
   // Framing words are weighted, because unweighted they lose.
