@@ -1,3 +1,7 @@
+---
+description: Write the prose for a comic with the owner, one question at a time — three paragraphs make a page
+---
+
 # Writing the story for a comic
 
 The Comics panel's first step wants prose: `# Title`, then paragraphs, and **three paragraphs make a
@@ -6,6 +10,15 @@ to it. This develops those paragraphs with him, from a seed of his, one question
 
 Same shape as `/canon`, same one rule that outranks the rest: **I never approve.** The story model
 proposes, he clicks, `story approve` writes. His own words go in as they are.
+
+## 0. Where this runs
+
+Two places. In a terminal, `AskUserQuestion` is the way he clicks. **In the app's Comics panel** the
+first step opens a chat on the comic with `/story <name>` already typed, and every message of his is
+one turn of `claude -p` (`apps/desktop/src/chat.rs`): `AskUserQuestion` is not available, and a turn
+that waits for an answer hangs. The turn's `<task-context>` says which it is and names the project
+folder. In the app: put the options in the message as a numbered list, one line each, end the turn,
+and read his next message as the click. Everything else below is the same.
 
 ## 1. The seed
 
@@ -108,9 +121,10 @@ paragraph count makes; if it is not what he chose, say which page is short.
 
 - **The model writes the writer's job if allowed to.** Pages are prose, not panel lists, not camera
   words, not tags. If a proposal comes back as "Panel 1: …", pass it and ask again with "as prose".
-- **Canon is the authority.** Ari's rules in `core.md` — six words then stop, never bodies, hands to
-  objects, the tells — apply to every page she is on. A page that has her explaining herself is a
-  contradiction to name before he clicks.
+- **Canon is the authority.** Ari's rules in `core.md` — talkative and outgoing with the swerve,
+  never bodies, hands to objects, the tells — apply to every page she is on. She talks a lot, but a
+  page that has her explaining herself instead of swerving is a contradiction to name before he
+  clicks. (She was quiet until 2026-09-24; drafts older than that have her wrong.)
 - **The explicit pages keep the book's tone.** `boundaries.md` says what is never drawn and that the
   joke stays in the hall; a page that crosses it is named as such, and it is his call.
 - **Three paragraphs make a page, and nothing else does.** A page of two paragraphs is a short page;
