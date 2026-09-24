@@ -116,7 +116,7 @@ trains in between).
     garment negatives, no body words. Set `lora/<name>-candidates/<stamp>`. Audit against the list,
     send individually, the owner stars. Shoes are cut out of every undressed keeper (no footwear
     word in those captions).
-11. **Final train**: rank 64 / alpha 32, ~28-30 epochs, TE lr 1e-4, undressed folders at repeats
+11. **Final train**: rank 64 / alpha 32, >= 40 epochs AND at least the reference run's 19,840 steps (see the step budget row), TE lr 1e-4, undressed folders at repeats
     that put them near 15 % of an epoch. Forge OFF for the whole run.
 12. **Epoch sweep**: the same 32-frame check on the saved epoch files (e.g. 20 / 28 / final), both
     checkpoints — `pnpm lora sweep <name> --trigger <word>`, which queues only missing frames and
@@ -134,7 +134,7 @@ the DATA is wrong and gets fixed there, never with a fourth (stop rule, 2026-09-
 |---|---|
 | base | Illustrious XL 1.1, for every LoRA rendered on delburry75, plantmilk, the pies, NoobAI, delnoob |
 | rank / alpha | **64 / 32** final; 32 / 16 stage 1 |
-| epochs | **28-30** final (Ari v7 sweep: outfit hold 7 / 9 / 13 / 12 of 20 at epochs 12 / 20 / 28 / 40, flat from 28; ~8-9 h at ~630 steps per epoch). 20 for stage 1. Below 20 the outfit is not bound |
+| epochs / step budget | **Match the reference run's total steps: `ari_adopt_v4` = 40 epochs, 19,840 steps.** Compute epochs from the dataset: epochs = 19,840 / (images x repeats per epoch / batch 2), never below 40. The old "28-30" came from the v7 sweep, whose 33 % undressed data capped every epoch at ~13/20 - a data ceiling, not proof that 30 is enough. `ari_gen_v1`-`v5` trained at 30 epochs = 12,270 steps (62 %) and shuffled garment colours in all five; on the same check (2026-09-24) `ari_adopt_v4` got 3/16 dressed frames wrong, `ari_gen_v5` 6/16. 20 epochs for stage 1. Always save every 2 epochs and sweep. **Before ANY train: print the new run's steps, epochs, images x repeats per subset and undressed share next to the reference run's log; below the reference budget = do not start** |
 | learning rates | unet 1e-4, text encoder **1e-4** (`-TeLr 1e-4`; the runner's default 5e-5 is the old value) |
 | optimiser, schedule | AdamW8bit, cosine, min_snr_gamma 5, noise_offset 0.03, bf16, cached latents, sdpa, gradient checkpointing, seed 42 |
 | dataset toml | resolution 1024, batch 2, buckets 512-2048 step 64, `shuffle_caption = true`, `keep_tokens = 1`, `caption_extension = ".txt"` |
@@ -143,7 +143,7 @@ the DATA is wrong and gets fixed there, never with a fourth (stop rule, 2026-09-
 | budget | a full rebuild day: stage 1 ~2.5 h, candidates ~20 min, final ~8-9 h, sweep ~30 min. Training runs by daylight when the owner is home (§8) |
 
 ```
-powershell -File D:\AI\lora-train\train-oracle.ps1 -Name <name> -Epochs 30 -Dim 64 -Alpha 32 -TeLr 1e-4 -Dataset D:\AI\lora-train\datasets\<name>\dataset-<name>.toml
+powershell -File D:\AI\lora-train\train-oracle.ps1 -Name <name> -Epochs <>= 40, from the step budget> -Dim 64 -Alpha 32 -TeLr 1e-4 -Dataset D:\AI\lora-train\datasets\<name>\dataset-<name>.toml
 ```
 
 `-Weights <file>` continues from a saved LoRA (the optimiser restarts, so pass the learning rates the
@@ -179,7 +179,9 @@ ari, 1girl, solo, full body, standing, from behind, completely nude
   clothes, and the trigger absorbed "sometimes bare".
 - A colour shuffle after a trigger-only train means UNDER-TRAINED, not mis-captioned. The same
   captions at rank 32 / 20 epochs shuffled every garment colour; at rank 64 / 40 epochs they held on
-  20/20. Give it rank and epochs before touching the captions.
+  20/20. Give it rank and epochs before touching the captions. **Check this with the training LOGS, not the
+  recipe table**: the whole `ari_gen` line (v1-v5) ran at 62 % of adopt_v4's steps while three trainings
+  (v3-v5) changed captions - the exact thing this rule forbids (2026-09-24).
 - A variant outfit is its own LoRA with its own trigger, trained on the shared head shots plus its own
   body references. Nothing is gained by keeping the main trigger "outfit-neutral". Names follow the
   line (owner, 2026-09-21): `<line>_<outfit>` (`ari_gen_spacesuit`, versions `_s1`/`_v1`), trigger
@@ -352,7 +354,8 @@ trained and cost the owner nothing to shoot; say that in the same sentence as "t
   censor words negated. **Final**, rendered at 1.2.
 - `v6` (undressed raised to 33 %): undressed 12/12, dressed 12/20. `v7` (same, `white shorts` removed
   from topless captions): unchanged, so the caption word was not the lever; the undressed share was.
-  The v7 epoch sweep put the plateau at ~28 epochs.
+  The v7 epoch sweep put a plateau at ~28 epochs - but v7's 33 % undressed data capped it; it is NOT
+  evidence that 28-30 epochs suffice. Do not cite it as the epoch rule.
 - Deleted 2026-09-18: `ari_adopt_v1b`, `v2`, `v3`, `v5`, `v6`, `v7`. Kept: `ari_v1`, `ari_adopt_v1`
   (the comic pipeline's pick, needs the trait words), `ari_adopt_v4`.
 - 2026-09-20/21: the first reference set generated from the owner's own sheet through
@@ -371,3 +374,11 @@ trained and cost the owner nothing to shoot; say that in the same sentence as "t
   name them there), the gen line named them on none. `ari_gen_v3` = v2 + that word on the 42 topless
   captions, nothing else (started 17:37). Until its sweep says otherwise, treat "the bottom is named
   in every topless CAPTION" as part of the recipe, not only of the candidate render prompt.
+- 2026-09-24: **the audit above was wrong.** It compared captions and missed the step count: the whole
+  `ari_gen` line (v1-v5) trained at 30 epochs / 12,270 steps = 62 % of `ari_adopt_v4`'s 40 epochs /
+  19,840 steps, and v3-v5 spent three trainings on caption words. Same 32-frame check, same day:
+  `ari_adopt_v4` 3/16 dressed frames wrong (teal shorts from behind only), `ari_gen_v5` e30 6/16 (teal
+  shorts, a white top, invented stockings and trousers). The "28-30 epochs" rule is retracted (see the
+  step budget row). `ari_adopt_v4` at epoch 24 (~11,900 steps, gen_v5's budget) is rendered on the
+  same check to separate training length from data. Standing order: before any train and after any
+  failed sweep, diff the run's LOG against the reference run's log first.

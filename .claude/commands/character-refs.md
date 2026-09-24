@@ -103,7 +103,7 @@ dataset keeps the pictures it was made from (the prep never reads that folder), 
 view still open or unstarred; `generate <name> --only <view> --redo` fills those. From there the training
 recipe in `D:/AI/lora-train/TRAINING-A-CHARACTER.md` applies: the prep takes the cowboy and upper folders as
 they are instead of cutting those rungs out of the body frames, and the detail folder as its own low-repeat
-subset; then stage 1, undressed candidate round on both checkpoints, stars, final train (~30 epochs,
+subset; then stage 1, undressed candidate round on both checkpoints, stars, final train (>= 40 epochs / the reference step budget,
 undressed ~15 %), epoch sweep.
 
 ## Outfit variants: the same character in a new outfit
