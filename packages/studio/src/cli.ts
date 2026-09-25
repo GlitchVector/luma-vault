@@ -131,7 +131,7 @@ async function describeModel(m: ModelConfig): Promise<void> {
   console.log(`  backend : ${m.backend}`)
   if (m.backend === 'claude-cli') {
     console.log(`  model   : ${m.model}`)
-    console.log('  note    : needs nothing installed and nothing leaves the machine; refuses explicit material.')
+    console.log('  note    : needs nothing installed; runs on the Claude plan, so the canon goes to Anthropic like any Claude chat; refuses explicit material.')
     return
   }
   const remote = !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/.test(m.url)
