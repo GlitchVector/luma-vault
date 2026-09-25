@@ -11,6 +11,7 @@
 
 import type { RenderRequest } from '../cache.ts'
 import type { ForgeConfig } from '../schema.ts'
+import { assertGpuFree } from './gpu.ts'
 import type { InpaintRequest, Needs, Prepared, Progress, RenderResult, Renderer } from './renderer.ts'
 
 interface SdModel {
@@ -60,6 +61,7 @@ export class ForgeRenderer implements Renderer {
   }
 
   async prepare(needs: Needs): Promise<Prepared> {
+    assertGpuFree()
     const models = await this.call<SdModel[]>('/sdapi/v1/sd-models')
     const checkpoint = resolveCheckpoint(models, needs.checkpoint)
 

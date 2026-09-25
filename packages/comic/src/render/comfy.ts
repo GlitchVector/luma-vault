@@ -15,6 +15,7 @@
 import type { RenderRequest } from '../cache.ts'
 import type { ForgeConfig } from '../schema.ts'
 import { resolveCheckpoint, resolveControl } from './forge.ts'
+import { assertGpuFree } from './gpu.ts'
 import type { InpaintRequest, Needs, Prepared, Progress, Region, RenderResult, Renderer } from './renderer.ts'
 
 /** Forge's sampler names to ComfyUI's. */
@@ -75,6 +76,7 @@ export class ComfyRenderer implements Renderer {
   }
 
   async prepare(needs: Needs): Promise<Prepared> {
+    assertGpuFree()
     const files = await this.options('CheckpointLoaderSimple', 'ckpt_name')
     const checkpoint = resolveCheckpoint(
       files.map((f) => ({ title: f, model_name: f.replace(/\.(safetensors|ckpt)$/, '') })),
