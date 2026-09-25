@@ -23,25 +23,25 @@
       "id": "04-right-profile",
       "prompt": "Full-body exact side profile from her right side, camera perpendicular to her at eye level. She stands straight with arms relaxed and looks straight ahead in the direction her body faces. No accidental three-quarter rotation. Silhouette and side construction of the outfit clearly visible, feet fully visible.",
       "tags": "full body, standing, from side, profile",
-      "background": "a plain, even pale blue background"
+      "background": "a plain, even cool light grey background"
     },
     {
       "id": "05-back",
       "prompt": "Full-body straight back view. She faces directly away from the camera, camera at eye level, standing naturally, arms relaxed at her sides, torso not turned toward the camera. The full back construction of the hairstyle and the outfit clearly visible, feet fully visible.",
       "tags": "full body, standing, from behind, facing away",
-      "background": "a plain, even soft lavender background"
+      "background": "a plain, even mid grey background"
     },
     {
       "id": "06-three-quarter-back",
       "prompt": "Full-body three-quarter rear view, her body about halfway between a side view and a direct back view, camera at eye level, natural standing pose. Her head may turn slightly toward the viewer but the body stays oriented away. Back and side outfit construction clearly visible, feet fully visible.",
       "tags": "full body, standing, from behind, looking back",
-      "background": "a plain, even pale mint background"
+      "background": "a plain, even off-white background"
     },
     {
       "id": "07-back-looking-over-right-shoulder",
       "prompt": "Full-body view from directly behind. She turns her head to look back at the viewer over her right shoulder, body facing away, arms relaxed, camera at eye level, feet fully visible.",
       "tags": "full body, standing, from behind, looking back, looking at viewer",
-      "background": "a plain, even light peach background"
+      "background": "a plain, even warm light grey background"
     },
     {
       "id": "08-back-looking-over-left-shoulder",
@@ -53,7 +53,7 @@
       "id": "09-walking-front",
       "prompt": "Full-body walking pose toward the viewer, natural mid-stride motion, arms swinging naturally, camera at eye level, looking generally toward the viewer, outfit construction correct in motion, both feet and the entire figure inside the frame.",
       "tags": "full body, walking, looking at viewer",
-      "background": "a plain, even pale yellow background"
+      "background": "a plain, even pale stone-grey background"
     },
     {
       "id": "10-walking-back",
@@ -83,25 +83,25 @@
       "id": "14-from-above",
       "prompt": "Full-body standing pose facing the viewer with her arms behind her back, seen from a HIGH CAMERA ANGLE clearly looking DOWN at her from above her head height: the camera is above her, her face is tilted up toward it, her feet are small and far away at the bottom of the frame, strong downward perspective. Feet fully visible.",
       "tags": "full body, standing, from above, arms behind back, looking at viewer",
-      "background": "a plain, even pale blue background"
+      "background": "a plain, even cool light grey background"
     },
     {
       "id": "15-touching-hair",
       "prompt": "Full-body relaxed standing pose in three-quarter front orientation. She raises one hand naturally to touch her hair, the other arm relaxed, camera at eye level, looking toward the viewer, believable hand anatomy, outfit clearly visible, feet fully visible.",
       "tags": "full body, standing, hand in own hair, looking at viewer",
-      "background": "a plain, even soft lavender background"
+      "background": "a plain, even mid grey background"
     },
     {
       "id": "16-arms-crossed",
       "prompt": "Full-body standing pose facing the viewer with her ARMS CROSSED OVER HER CHEST - one forearm laid across the other in front of her upper chest, each hand resting near the opposite elbow, NOT resting under her bust. Camera at eye level, looking at the viewer, feet fully visible.",
       "tags": "full body, standing, crossed arms, looking at viewer",
-      "background": "a plain, even pale mint background"
+      "background": "a plain, even off-white background"
     },
     {
       "id": "17-arms-behind-head",
       "prompt": "Full-body standing pose facing the viewer with both arms raised and her hands behind her head, camera at eye level, looking toward the viewer, feet fully visible.",
       "tags": "full body, standing, arms up, arms behind head, looking at viewer",
-      "background": "a plain, even light peach background"
+      "background": "a plain, even warm light grey background"
     },
     {
       "id": "18-arms-behind-back",
@@ -113,7 +113,7 @@
       "id": "19-contrapposto",
       "prompt": "Full-body standing pose facing the viewer with her weight on one leg, arms relaxed at her sides, camera at eye level, looking toward the viewer, feet fully visible.",
       "tags": "full body, standing, arms at sides, looking at viewer",
-      "background": "a plain, even pale yellow background"
+      "background": "a plain, even pale stone-grey background"
     },
     {
       "id": "20-side-hands-on-hips-looking-back",
@@ -145,7 +145,7 @@
       "id": "01-front",
       "prompt": "Cowboy-shot view facing the viewer directly, camera at waist height, standing naturally with arms relaxed, looking toward the viewer. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, looking at viewer",
-      "background": "a plain, even pale yellow background"
+      "background": "a plain, even pale stone-grey background"
     },
     {
       "id": "02-three-quarter-front",
@@ -175,49 +175,49 @@
       "id": "06-hands-on-hips",
       "prompt": "Cowboy-shot view facing the viewer with both hands on her hips, camera at waist height, looking toward the viewer. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference. Hands-on-hips means the classic akimbo stance: both elbows bent sharply and pointing OUT and slightly back, away from the body, each palm planted on the hip bone with the fingers forward and the thumb behind; the forearms are horizontal, the upper arms angle outward, and there is clear open space between each arm and the waist. Not arms hanging at her sides, not hands resting on the thighs.",
       "tags": "cowboy shot, standing, hands on own hips, looking at viewer",
-      "background": "a plain, even pale blue background"
+      "background": "a plain, even cool light grey background"
     },
     {
       "id": "07-side-hands-on-hips-looking-back",
       "prompt": "Cowboy-shot view from her right side with both hands on her hips, head turned to look back at the viewer, camera at waist height. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its SIDE and its hem, seen in profile (the front of the garment shows only as its edge) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference. Hands-on-hips means the classic akimbo stance: both elbows bent sharply and pointing OUT and slightly back, away from the body, each palm planted on the hip bone with the fingers forward and the thumb behind; the forearms are horizontal, the upper arms angle outward, and there is clear open space between each arm and the waist.",
       "tags": "cowboy shot, standing, from side, hands on own hips, looking back, looking at viewer",
-      "background": "a plain, even soft lavender background"
+      "background": "a plain, even mid grey background"
     },
     {
       "id": "08-side-looking-back",
       "prompt": "Cowboy-shot view from her right side, standing relaxed with both arms hanging loosely at her sides, head turned to look back at the viewer over her shoulder, camera at waist height. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its SIDE and its hem, seen in profile (the front of the garment shows only as its edge) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, from side, arms at sides, looking back, looking at viewer",
-      "background": "a plain, even light peach background"
+      "background": "a plain, even warm light grey background"
     },
     {
       "id": "09-walking-front",
       "prompt": "Cowboy-shot view of her walking toward the camera mid-stride, camera at waist height, arms swinging naturally, looking at the viewer. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, walking, looking at viewer",
-      "background": "a plain, even pale blue background"
+      "background": "a plain, even cool light grey background"
     },
     {
       "id": "10-arms-behind-head",
       "prompt": "Cowboy-shot view facing the viewer, camera at waist height, both arms raised with her hands clasped behind her head, elbows out, looking at the viewer. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, arms up, arms behind head, looking at viewer",
-      "background": "a plain, even soft lavender background"
+      "background": "a plain, even mid grey background"
     },
     {
       "id": "11-touching-hair",
       "prompt": "Cowboy-shot view facing the viewer, camera at waist height, one hand raised touching her hair at the side of her head, the other arm relaxed, looking at the viewer. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, hand in own hair, looking at viewer",
-      "background": "a plain, even pale mint background"
+      "background": "a plain, even off-white background"
     },
     {
       "id": "12-arms-crossed",
       "prompt": "Cowboy-shot view facing the viewer, camera at waist height, arms crossed under the bust, looking at the viewer with a slight smile. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, crossed arms, looking at viewer",
-      "background": "a plain, even light peach background"
+      "background": "a plain, even warm light grey background"
     },
     {
       "id": "13-arms-behind-back",
       "prompt": "Cowboy-shot view facing the viewer, camera at waist height, both hands held behind her back, shoulders back, looking at the viewer. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, arms behind back, looking at viewer",
-      "background": "a plain, even pale yellow background"
+      "background": "a plain, even pale stone-grey background"
     },
     {
       "id": "14-from-below",
@@ -253,25 +253,25 @@
       "id": "19-other-side",
       "prompt": "Cowboy-shot view in exact side profile from her right side, camera perpendicular to her at waist height, standing straight, arms relaxed, looking straight ahead. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its SIDE and its hem, seen in profile (the front of the garment shows only as its edge) - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, from side, profile",
-      "background": "a plain, even pale blue background"
+      "background": "a plain, even cool light grey background"
     },
     {
       "id": "20-leaning-forward",
       "prompt": "Cowboy-shot view facing the viewer, camera at chest height, she leans forward slightly from the hips with her hands on her thighs, looking up at the viewer. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, leaning forward, hands on own thighs, looking at viewer",
-      "background": "a plain, even soft lavender background"
+      "background": "a plain, even mid grey background"
     },
     {
       "id": "21-three-quarter-hand-on-hip",
       "prompt": "Cowboy-shot three-quarter front view, her body rotated about 45 degrees, camera at waist height, one hand on her hip, looking at the viewer over her near shoulder. The frame runs from just above her head down to MID-THIGH and ends there, above the knees: the whole top and the whole of the garment on her hips - its waistband, its front, its hem - and the top of her thighs are inside the frame at large scale; feet and lower legs are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, standing, hand on own hip, looking at viewer",
-      "background": "a plain, even pale mint background"
+      "background": "a plain, even off-white background"
     },
     {
       "id": "22-sitting",
       "prompt": "Cowboy-shot view of her sitting on a plain box facing the viewer, camera at chest height, hands resting on her thighs, knees together, looking at the viewer. The frame runs from just above her head down to her knees: the whole top, the garment on her hips and her thighs are inside the frame at large scale; lower legs and feet are out of frame. She is fully clothed exactly as in the reference.",
       "tags": "cowboy shot, sitting, hands on own thighs, looking at viewer",
-      "background": "a plain, even light peach background"
+      "background": "a plain, even warm light grey background"
     }
   ],
   "upper": [
@@ -297,25 +297,25 @@
       "id": "04-left-profile",
       "prompt": "Upper-body view in exact left profile, camera perpendicular to her at chest height, arms relaxed, looking straight ahead; the sleeve and the side seam of the top clearly visible. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, from side, profile",
-      "background": "a plain, even pale blue background"
+      "background": "a plain, even cool light grey background"
     },
     {
       "id": "05-right-profile",
       "prompt": "Upper-body view in exact right profile, camera perpendicular to her at chest height, arms relaxed, looking straight ahead; the sleeve and the side seam of the top clearly visible. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, from side, profile",
-      "background": "a plain, even soft lavender background"
+      "background": "a plain, even mid grey background"
     },
     {
       "id": "06-back",
       "prompt": "Upper-body view from directly behind, camera at chest height, arms relaxed; the back of the hairstyle and the full back construction of the top clearly visible. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, from behind, facing away",
-      "background": "a plain, even pale mint background"
+      "background": "a plain, even off-white background"
     },
     {
       "id": "07-back-looking-over-shoulder",
       "prompt": "Upper-body view from behind, she turns her head to look back at the viewer over one shoulder, body facing away, camera at chest height. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, from behind, looking back, looking at viewer",
-      "background": "a plain, even light peach background"
+      "background": "a plain, even warm light grey background"
     },
     {
       "id": "08-from-above",
@@ -327,31 +327,31 @@
       "id": "09-arms-behind-head",
       "prompt": "Upper-body view facing the viewer, camera at chest height, both arms raised with her hands behind her head, elbows out, looking at the viewer. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, arms up, arms behind head, looking at viewer",
-      "background": "a plain, even pale blue background"
+      "background": "a plain, even cool light grey background"
     },
     {
       "id": "10-touching-hair",
       "prompt": "Upper-body view facing the viewer, camera at chest height, one hand raised touching her hair at the side of her head, looking at the viewer. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, hand in own hair, looking at viewer",
-      "background": "a plain, even soft lavender background"
+      "background": "a plain, even mid grey background"
     },
     {
       "id": "11-arms-crossed",
       "prompt": "Upper-body view facing the viewer, camera at chest height, arms crossed under the bust, looking at the viewer with a slight smile. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, crossed arms, looking at viewer",
-      "background": "a plain, even pale mint background"
+      "background": "a plain, even off-white background"
     },
     {
       "id": "12-hands-on-hips",
       "prompt": "Upper-body view facing the viewer, camera at chest height, both hands on her hips, elbows out, looking at the viewer. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, hands on own hips, looking at viewer",
-      "background": "a plain, even light peach background"
+      "background": "a plain, even warm light grey background"
     },
     {
       "id": "13-from-below",
       "prompt": "Upper-body view from a low camera angle looking up at her, she looks down at the viewer, arms relaxed. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, from below, looking at viewer",
-      "background": "a plain, even pale yellow background"
+      "background": "a plain, even pale stone-grey background"
     },
     {
       "id": "14-three-quarter-back-left",
@@ -387,25 +387,25 @@
       "id": "19-arms-behind-back",
       "prompt": "Upper-body view facing the viewer, camera at chest height, both hands held behind her back, shoulders back, looking at the viewer. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, arms behind back, looking at viewer",
-      "background": "a plain, even pale blue background"
+      "background": "a plain, even cool light grey background"
     },
     {
       "id": "20-side-looking-back",
       "prompt": "Upper-body view in side profile with her LEFT side toward the camera: her body faces toward the LEFT side of the frame, camera at chest height, and she turns her head over her left shoulder to look at the viewer. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, from side, looking back, looking at viewer",
-      "background": "a plain, even soft lavender background"
+      "background": "a plain, even mid grey background"
     },
     {
       "id": "21-three-quarter-from-above",
       "prompt": "Upper-body three-quarter front view from a high camera angle, her body rotated about 45 degrees, she looks up at the viewer. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, from above, looking at viewer",
-      "background": "a plain, even pale mint background"
+      "background": "a plain, even off-white background"
     },
     {
       "id": "22-hand-on-cheek",
       "prompt": "Upper-body view facing the viewer, camera at chest height, one hand raised with the fingertips resting on her cheek, the other arm relaxed, looking at the viewer. The frame runs from just above her head down to her waistband: the whole top of her outfit - collar, neckline, shoulders, sleeves and cuffs - and the waistband of the garment below it are inside the frame at large scale; nothing below the waist is needed. She is fully clothed exactly as in the reference.",
       "tags": "upper body, hand on own cheek, looking at viewer",
-      "background": "a plain, even light peach background"
+      "background": "a plain, even warm light grey background"
     }
   ],
   "face": [
@@ -413,13 +413,13 @@
       "id": "01-front",
       "prompt": "Head-and-shoulders portrait facing the viewer directly with a calm neutral expression; the face fills most of the frame. The frame ends at mid-chest, BELOW the neckline of her top: her head, neck, both shoulders and the top of her garment are all inside the picture - the collar, the neckline, any yoke or straps, and every colour boundary where the garment meets her neck and shoulders, exactly as in the reference. She is fully clothed. The face still fills most of the frame.",
       "tags": "portrait, close-up, looking at viewer",
-      "background": "a plain, even pale mint background"
+      "background": "a plain, even off-white background"
     },
     {
       "id": "02-front-smile",
       "prompt": "Head-and-shoulders portrait facing the viewer with a warm smile; the face fills most of the frame. The frame ends at mid-chest, BELOW the neckline of her top: her head, neck, both shoulders and the top of her garment are all inside the picture - the collar, the neckline, any yoke or straps, and every colour boundary where the garment meets her neck and shoulders, exactly as in the reference. She is fully clothed. The face still fills most of the frame.",
       "tags": "portrait, close-up, smile, looking at viewer",
-      "background": "a plain, even light peach background"
+      "background": "a plain, even warm light grey background"
     },
     {
       "id": "03-three-quarter-left",
@@ -431,7 +431,7 @@
       "id": "04-three-quarter-right",
       "prompt": "Head-and-shoulders portrait, head turned three-quarters to her right, eyes on the viewer; the face fills most of the frame. The frame ends at mid-chest, BELOW the neckline of her top: her head, neck, both shoulders and the top of her garment are all inside the picture - the collar, the neckline, any yoke or straps, and every colour boundary where the garment meets her neck and shoulders, exactly as in the reference. She is fully clothed. The face still fills most of the frame.",
       "tags": "portrait, close-up, looking at viewer",
-      "background": "a plain, even pale yellow background"
+      "background": "a plain, even pale stone-grey background"
     },
     {
       "id": "05-profile-left",
@@ -461,25 +461,25 @@
       "id": "09-looking-back",
       "prompt": "Head-and-shoulders view from behind, she looks back over her shoulder at the viewer; head large in frame. The frame ends at mid-chest, BELOW the neckline of her top: her head, neck, both shoulders and the top of her garment are all inside the picture - the collar, the neckline, any yoke or straps, and every colour boundary where the garment meets her neck and shoulders, exactly as in the reference. She is fully clothed. The face still fills most of the frame.",
       "tags": "portrait, close-up, from behind, looking back, looking at viewer",
-      "background": "a plain, even pale blue background"
+      "background": "a plain, even cool light grey background"
     },
     {
       "id": "10-eyes-closed",
       "prompt": "Head-and-shoulders portrait facing the viewer with her eyes closed, serene; the face fills most of the frame. The frame ends at mid-chest, BELOW the neckline of her top: her head, neck, both shoulders and the top of her garment are all inside the picture - the collar, the neckline, any yoke or straps, and every colour boundary where the garment meets her neck and shoulders, exactly as in the reference. She is fully clothed. The face still fills most of the frame.",
       "tags": "portrait, close-up, closed eyes",
-      "background": "a plain, even soft lavender background"
+      "background": "a plain, even mid grey background"
     },
     {
       "id": "11-laughing",
       "prompt": "Head-and-shoulders portrait facing the viewer, laughing with an open mouth; the face fills most of the frame. The frame ends at mid-chest, BELOW the neckline of her top: her head, neck, both shoulders and the top of her garment are all inside the picture - the collar, the neckline, any yoke or straps, and every colour boundary where the garment meets her neck and shoulders, exactly as in the reference. She is fully clothed. The face still fills most of the frame.",
       "tags": "portrait, close-up, laughing, open mouth, looking at viewer",
-      "background": "a plain, even pale mint background"
+      "background": "a plain, even off-white background"
     },
     {
       "id": "12-surprised",
       "prompt": "Head-and-shoulders portrait facing the viewer with a surprised expression; the face fills most of the frame. The frame ends at mid-chest, BELOW the neckline of her top: her head, neck, both shoulders and the top of her garment are all inside the picture - the collar, the neckline, any yoke or straps, and every colour boundary where the garment meets her neck and shoulders, exactly as in the reference. She is fully clothed. The face still fills most of the frame.",
       "tags": "portrait, close-up, surprised, looking at viewer",
-      "background": "a plain, even light peach background"
+      "background": "a plain, even warm light grey background"
     },
     {
       "id": "13-back-of-head",

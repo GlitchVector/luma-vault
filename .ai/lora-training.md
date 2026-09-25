@@ -172,7 +172,9 @@ ari, 1girl, solo, full body, standing, from behind, completely nude
   its word and the trigger stops owning it: `aqua shirt` on every frame meant every board had to say
   six words to get her; `simple background` on every reference meant every board needed that phrase
   and painted teal walls without it. The references now carry ten different backgrounds precisely so
-  nothing but her is constant.
+  nothing but her is constant. Since 2026-09-25 they are NEUTRAL tones only (whites, greys, one beige, two grey studio
+  walls): ari_gen_v6 trained on yellow/lavender/peach/mint/blue fields next to a teal-and-white outfit and still
+  swapped garment colours (5/16) while adopt_v4 (one fixed field) did 3/16; coloured fields are the suspect, unproven.
 - A state word REMOVES a piece of the outfit (`topless` = top off, `completely nude` = all off). It
   never re-names what stays on: `white shorts` captioned on 420 undressed steps per epoch handed the
   shorts' colour to the word and the dressed frames went teal (v6).
