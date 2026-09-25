@@ -31,22 +31,25 @@ These are decisions, not defaults. Do not re-litigate them.
 2. **Canon never changes silently.** A contradiction is flagged
    (`studio continuity`), then the person keeps the canon, changes the
    document, or changes the canon on purpose.
-3. **RETIRED 2026-09-19.** The rule was "the hosted image model draws the
-   place; the local model draws the people", with OpenAI seeing `locations`,
-   `setting`, `pose` and `camera` and never `scene`. The split was sound and
-   the schema still carries those fields, but the mannequin mechanism that
-   implemented it failed live (see the plates section). Everything is Forge.
-   If a hosted model is ever brought back, keep the field split: it is what
-   lets a comic go where a hosted model will not.
+3. **A hosted model draws the SKETCH, never the page (2026-09-24).** The 2026-09-19 plate
+   mechanism stays retired (see the plates section). What came back is narrower: OpenAI draws a
+   composition guide (`sketch.backend`), which never reaches the page - the local checkpoint
+   redraws everything from its lines. The owner liked the composition ("that's OpenAI right?")
+   but said not to rely on it, so `auto` sends only staged/crowd/stranger panels and characters
+   with a reference sheet to OpenAI and sketches the rest locally (NoobAI in Forge). Nothing
+   explicit (`isExplicit`) is ever sent to a hosted model; no body words go into a sketch prompt.
 4. **Dialogue never enters an image prompt.** Lettering is deterministic
    HTML/CSS, never generated.
-5. **No ControlNet, no pose conditioning.** Camera and pose are words.
+5. **ControlNet only as a LIGHT composition guide (2026-09-24).** Lineart of the sketch at weight
+   0.6, ending at 35 % of the steps, so the sketch sets where people stand and the checkpoint
+   draws them. A heavier guide copied the sketch's caricature bodies. No pose conditioning.
 6. **Deterministic CLI, no agent in the render loop.** Seeds are
    arithmetic, requests are hashed, sidecars hold every parameter.
 7. **The content root is private.** luma-vault on GitHub is public; the
    canon (which includes sexuality) is not. `D:\Development\comic-studio`,
    its own git, never pushed anywhere.
-8. Owner's picks when asked (2026-09-17): checkpoint **delburry75**, lettering
+8. Owner's picks when asked (2026-09-17): checkpoint **delburry75** (since 2026-09-24 **WAI**,
+   `waiNSFWIllustrious_v110`, style `anime coloring`: 2D anime backgrounds with semi-3D characters), lettering
    **Comic Neue + Bangers** (OFL, bundled), example character **ari_adopt_v1**.
 
 ## packages/comic — the picture pipeline
@@ -602,6 +605,103 @@ comics/<id>/       comic.yaml, concept/outline/story/continuity.md,
   the studio, the first real comic) are not started; lettering already works
   in `packages/comic` and the studio feeds it dialogue through `export`.
 
+### Canon and character sheets: what the owner decided (2026-09-22 to 09-25)
+
+- **Two models, routed by content.** `model` = `claude-cli` (the Claude plan; the canon goes to
+  Anthropic like any chat, it does NOT stay on the machine) for everything ordinary; `explicit_model`
+  = Grok only for the explicit facets and `--explicit` brainstorms. The owner: "Grok should only be
+  taken for NSFW questions". NovelAI was dropped for IMAGES only, never for story writing; it needs an
+  Opus subscription for text.
+- **Tidy-up deletes the unpicked options** ("for context hygiene"): approved proposals stay as
+  provenance, passed ones are removed, a proposals file with nothing approved goes.
+- **A later twist goes to `secrets.md`**, never sent to any model (Ari's "experiment"). Do not invent
+  limits there - that file holds only what he put in it.
+- **Output is English**, even when he writes German; his German words appear only as a quoted record
+  beside the English.
+- **His own words are canon**: typed answers go under `## Author <date>`, verbatim. Every change to a
+  character's look is written back into `appearance.md` the same turn, with his words.
+
+**Character sheets are drawn with OpenAI from the canon** (`images.edit`, `gpt-image-2.5-sunburst`,
+Ari's `sheet-aurora.png` attached for STYLE AND LAYOUT only). Approved sheets live in
+`comic-studio/characters/<id>/sheets/`, every earlier round in `sheets/v*`, and the approval is a
+dated section in `appearance.md`. What the rounds taught:
+- Start from HIS designs and colours; mood words of mine ("matte, grime, very long legs") made pale,
+  stretched sheets he hated.
+- Change one thing per round by editing the previous sheet (attach it, "redraw EXACTLY as it is, with
+  ONE change"): the face and outfit survive; a fresh prompt reinvents the person.
+- Training-ready from the start: four views (front, 3/4 at a real 45 degrees, side, back), neutral
+  stance, BOTH HANDS EMPTY, eyes open; expressions only as head shots in the details column.
+- A recognition mark must be big and in every view. A scar, a split nail, a streak of hair on one side
+  were all rejected: "LoRA training will never get such a tiny detail always right". Hernán's mark
+  became bold amber glasses worn on the face.
+- A new character must read different from the cast at a glance: Nev went brown hair -> platinum
+  ("looks like an albino") -> honey blond; clothes neutral (grey/black/white) plus ONE soft pastel
+  garment - bold colours and an all-one-family palette were both rejected.
+- Check every view for side-specific details (a streak visible from the wrong side, phantom shorts
+  under an apron) - the generator mirrors and invents; fix the view, never let it into training.
+- Ages of the same person are separate sheets and, for LoRAs, separate outfit entries with their own
+  head shots.
+- Minors' sheets (Ari 10/14/16, Nev 14/16) are story references only: fully clothed, ordinary, never
+  trained.
+
+## The render route since 2026-09-24/25 (Beanpole)
+
+What the owner called "brilliant" and "crazy good", reached one failure at a time on the origin
+comic `beanpole-b`. Each step exists because the one before it failed visibly; do not drop one to
+"simplify".
+
+**1. Storyboards, not prose.** The first scripts read as a list of pretty pictures ("the reading
+makes no sense", "the joke doesn't work"). `/comic` now writes `## Page N` blocks of numbered panels,
+`N. <picture> — Speaker: "line"`; `paginate.ts` cuts at the headings and the writer follows panel for
+panel. The brief's READABILITY rules: whoever speaks is in the frame; the cause is shown BEFORE the
+reaction, across panels (a line like "I know" needs the "Wow" that provoked it, drawn); a reaction
+panel after a turn; a turning line is a balloon, not a caption; captions only for time and place;
+one establishing image per page when the place changes, and the lead does not fill every panel.
+A stranger may speak if the panel counts them in `figures`.
+
+**2. The sketch** (`src/stages/sketch.ts`, `src/sketch/`). One composition guide per panel: who
+stands where, the crowd, a stranger's gesture - the things the checkpoint got wrong on its own (an
+empty "party", the shouting man's gesture drawn on Ari, two Aris). Backends `openai | forge | mock`,
+`auto` picks per panel (rule 3). The prompt carries look words only, never body words and never the
+LoRA: body words in a sketch became caricatures the ControlNet then copied. A character with a
+`reference` sheet is sketched from it by OpenAI.
+
+**3. One regional render in ComfyUI** (`src/render/comfy.ts`, renderer `comfy`). The background
+prompt with NO LoRA, plus per character a masked conditioning carrying her LoRA as a hook
+(`CreateHookLora` + `ConditioningSetProperties` with the mask) - one pass, so the scene and the
+characters share one image. The masks come from the sketch: `python/people.py` (person-seg ONNX)
+finds the figures and `assignFigures` matches them to the cast by hair colour. Two failed routes
+before it: a second-pass overpaint of her figure ("too harsh", a pasted-on look) and Forge alone
+(the LoRA's look bled over the whole panel: teal spill everywhere).
+- **LoRA fade** (`sketch.lora_fade`): the hook's strength eases from 1.0 to 0.2 over the last 40 % of
+  steps (`CreateHookKeyframesInterpolated`), so the scene's light finishes her.
+- **Colour grade** (`python/grade.py`, `sketch.grade`): after the render each figure is moved toward
+  the ring of scene around her in Lab space, lightness 0.45, colour 0.7. A friend's critique of the
+  earlier pages: "bright white fluorescent on her vs yellow scene - did the AI just paste her in".
+  Variant D of four was the one the owner chose.
+- ComfyUI portable lives in `D:\AI\ComfyUI_windows_portable`, port 8188, reading Forge's model
+  folders through `extra_model_paths.yaml`. Start it with `run_nvidia_gpu.bat`; `comic panels` says
+  so when it is not answering.
+
+**4. The body is the character's, always.** `bodyFor` adds the character's `body` (and `body_rear`
+for back views) to every panel; a page or panel body only adds to it. Pages drifted in shape until
+this was enforced; `/comic` asks the body props once, like `/photostory`.
+
+**Minors (hard rules, `minor: true`).** Ari at 10/14/16 and Nev at 14/16 are children. A minor has
+no LoRA, ever; a panel with a minor in it that is explicit throws in `planPanel`; `MINOR_NEGATIVE` is
+added; the sketch describes "a girl/boy, a child, fully clothed"; they are drawn from their story
+sheets as references. No child LoRA is trained, whatever the request - that was refused and stays
+refused.
+
+**Never beside a training.** `src/render/gpu.ts`: Forge and ComfyUI `prepare()` refuse while any
+`sdxl_train_network` process runs. Before that guard a Beanpole render started beside `ari_gen_v6`
+(2026-09-25) because the rule lived only in memory. The owner's epoch SWEEPS also use the GPU and
+are not detected - ask before rendering when a sweep may be running.
+
+Open on Beanpole: balloon tails sometimes point at the wrong speaker; the ice in the tubs renders
+orange; the bracelet (in her negative) still appears now and then; the full 8-page `beanpole-b`
+render has not run yet (the GPU was busy).
+
 ## Gotchas met along the way
 
 - **`--experimental-strip-types` rejects TypeScript parameter properties**
@@ -652,7 +752,9 @@ comics/<id>/       comic.yaml, concept/outline/story/continuity.md,
   and the staging blocklist.
 - `apps/desktop/src/comic.rs` — projects, the runner, the event parser.
 - `apps/web/src/components/ComicsPanel.tsx` — the workspace.
-- Memories: `comic-pipeline-in-the-app`, `comic-plates-hosted-place-local-people`,
+- `packages/comic/src/stages/sketch.ts`, `src/render/comfy.ts`, `python/people.py`, `python/grade.py`
+  - the 2026-09-24 route above.
+- Memories: `comic-render-recipe`, `comfyui-install`, `comic-pipeline-in-the-app`, `comic-plates-hosted-place-local-people`,
   `comic-studio-stage-1`, `ari-character`.
 
 ## The Story step is a chat (2026-09-23)

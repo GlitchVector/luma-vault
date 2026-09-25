@@ -615,3 +615,20 @@ frames after eleven re-renders and a re-cut). Since then `run_scan` asks `Db::ch
 of the walk's files differ from their row in size or mtime and tears those rows down the way the
 watcher does (`watcher::forget_if_unreferenced`), so the insert makes a fresh row. Only a differing
 size or mtime counts; an unchanged file is never re-read.
+
+## Comic render traps (2026-09-24/25)
+
+**A project's `comic.config.json` merges per field, not per character.** It once replaced the
+whole character entry, so a project override of one field dropped the LoRA. `loadConfig` merges each
+character field by field and `sketch` deeply; `loadScript` then overlays the config's characters on
+the script's copy, because `script.json` freezes the cast at script time and body answers given
+later never reached a render.
+
+**Forge's ControlNet models are listed only after a Forge restart.** Files dropped into the models
+folder while Forge runs do not appear in `/controlnet/model_list`; restart with `START_FORGE.bat`.
+
+**Forge hires-fix without `hr_additional_modules` returns a 500.** Always send it (an empty list).
+
+**ComfyUI must be running for `renderer: comfy`** (`D:\AI\ComfyUI_windows_portable\run_nvidia_gpu.bat`,
+port 8188). A background render started without it fails in the first second with "ComfyUI is not
+answering" - read the task's output before reporting a render as under way.

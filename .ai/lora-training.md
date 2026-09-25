@@ -128,6 +128,18 @@ trains in between).
 A new character gets one stage-1 train, one candidate round, one final train. A third training means
 the DATA is wrong and gets fixed there, never with a fourth (stop rule, 2026-09-18).
 
+**Characters from the comic studio (2026-09-25).** A character whose sheet was drawn in the studio
+(`comic-studio/characters/<id>/sheets/`, approved in `appearance.md`) enters here at REFERENCE time,
+before any data exists, so the LoRAs page shows the card and a later session picks it up:
+`scripts/cut-figures.py <sheet> <refs folder>` cuts the four turnaround figures with the person masks
+(`cut-sheet.py`'s column cuts leak the studio sheets' title letters and neighbours' arms), `refs init`
++ a filled `character.json`, `datasets/<refs>/reference/` with the sheet and the cut, a placeholder
+`dataset-<refs>-reference-only.toml` (the page needs a toml to open a dataset; delete it when the prep
+writes the real one), the catalogue entry and the register row. Several ages of one person are
+separate `outfit` entries under one card, each with its OWN head shots, because the face changes.
+**Men:** `config/views.json` words every prompt she/her; give the generator a per-character pronoun
+setting before generating a man (Tom, Hernán, Nev are waiting on exactly that).
+
 ## 4. The recipe
 
 | | |
@@ -337,6 +349,10 @@ trained and cost the owner nothing to shoot; say that in the same sentence as "t
   -> check Forge is idle (`/sdapi/v1/progress`, `/queue/status`), kill it, `resume`. A reboot while
   paused loses everything after the last epoch file. tqdm's s/it averages the pause in; judge the
   pace from steps between two epoch files.
+- **The comic renderers refuse beside a training** (`packages/comic/src/render/gpu.ts`, since
+  2026-09-25) unless every trainer process is suspended by `pause-training.py pause`. `pnpm lora
+  sweep` has its own check. The owner's sweeps are NOT detected by either - they use the GPU too;
+  ask before rendering while one may run.
 - **Trim every reference to the figure before it enters a dataset.** kohya buckets at constant
   area, so background margins shrink her: the generated Ari refs at 54 % frame width trained at
   ~450 px and lost the white shorts' colour on 8-10 of 32 frames at every epoch (`ari_gen_v1`);
