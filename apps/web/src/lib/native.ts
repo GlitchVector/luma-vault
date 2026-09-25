@@ -42,7 +42,6 @@ import {
   comicProjectSchema,
   comicStatusSchema,
   comicSummarySchema,
-  customCharacterSchema,
   loraDatasetSchema,
   type ChatFeed,
   type ChatIndex,
@@ -54,8 +53,6 @@ import {
   type ComicStatus,
   type ComicSummary,
   type LoraDataset,
-  type CustomCharacter,
-  type CustomCharacterInput,
   patreonSummarySchema,
   setMemberRowSchema,
   deviantArtGallerySchema,
@@ -1238,31 +1235,6 @@ export function onScanProgress(handler: (progress: ScanProgress) => void): () =>
 
 // ---------------------------------------------------------------------------
 // Comics
-
-/**
- * The comics under the app's data directory, newest first. Like a Patreon
- * post, everything here runs where the library is: that machine has Forge,
- * Chrome, the tagger and the repo, and a browser on the iPad has none.
- */
-/**
- * The training data behind a character LoRA, read from its kohya config on the
- * machine that trains. Thumbnails come back under the app's own thumbs root.
- */
-/** The characters made on the Characters page. None without a backend: the page then offers to create one. */
-export async function customCharacters(): Promise<CustomCharacter[]> {
-  if (!(await hasBackend())) return []
-  return z.array(customCharacterSchema).parse(await invoke('custom_character_list'))
-}
-
-/** Create her (no id) or save an edit (her id). The answer is what was stored, id and dates included. */
-export async function saveCustomCharacter(character: CustomCharacterInput): Promise<CustomCharacter> {
-  return customCharacterSchema.parse(await invoke('custom_character_save', { character }))
-}
-
-/** Forget her card. Her LoRAs stay in the catalogue. */
-export async function removeCustomCharacter(id: string): Promise<boolean> {
-  return z.boolean().parse(await invoke('custom_character_remove', { id }))
-}
 
 export async function loraDataset(name: string): Promise<LoraDataset> {
   return loraDatasetSchema.parse(await invoke('lora_dataset', { name }))

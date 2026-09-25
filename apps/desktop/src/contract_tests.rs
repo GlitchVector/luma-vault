@@ -139,13 +139,6 @@ fn patreon_summaries_match_the_shared_fixture() {
 }
 
 #[test]
-fn custom_characters_match_the_shared_fixture() {
-    round_trip::<Vec<crate::types::CustomCharacter>>(include_str!(
-        "../../../contracts/custom-character.json"
-    ));
-}
-
-#[test]
 fn lora_datasets_match_the_shared_fixture() {
     round_trip::<crate::types::LoraDataset>(include_str!("../../../contracts/lora-dataset.json"));
 }

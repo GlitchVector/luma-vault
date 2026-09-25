@@ -28,7 +28,7 @@ export const COMIC_COMMAND = 'comic'
  * (2026-09-21): a pill in the filter bar is a filter or a grid tool, never a
  * page — pages are navigation, and navigation lives here.
  */
-export type Page = 'library' | 'characters' | 'loras' | 'comics' | 'chat'
+export type Page = 'library' | 'loras' | 'comics' | 'chat'
 
 interface FolderSidebarProps {
   folders: Folder[]
@@ -182,13 +182,6 @@ export function FolderSidebar({
           active={page === 'library'}
           onClick={() => onPage('library')}
           title="The grid: every picture and video in the watched folders"
-        />
-        <NavEntry
-          label="Characters"
-          count={null}
-          active={page === 'characters'}
-          onClick={() => onPage('characters')}
-          title="Your characters: each with the LoRA that renders her, her outfits and variants, and everything about each LoRA"
         />
         <NavEntry
           label="LoRAs"

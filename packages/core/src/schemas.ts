@@ -890,35 +890,6 @@ export const loraDatasetSchema = z.object({
 })
 export type LoraDataset = z.infer<typeof loraDatasetSchema>
 
-/**
- * A character the owner created on the Characters page. Her LoRAs are named, not copied: the catalogue
- * in `loras.ts` stays the one place a LoRA is described, and a name it no longer has shows on her card as
- * missing rather than failing the parse.
- */
-export const customCharacterSchema = z.object({
-  /** Built from the name at creation and never changed, so a rename orphans nothing. */
-  id: z.string(),
-  name: z.string(),
-  description: z.string(),
-  /** The LoRA her example picture comes from. */
-  defaultLora: z.string(),
-  /** Her other LoRAs - outfits, variants - in the order they were added. */
-  loras: z.array(z.string()).default([]),
-  createdAt: z.number(),
-  updatedAt: z.number(),
-})
-export type CustomCharacter = z.infer<typeof customCharacterSchema>
-
-/** What the form sends: no id for a new character, hers for an edit. */
-export const customCharacterInputSchema = z.object({
-  id: z.string().nullable().default(null),
-  name: z.string(),
-  description: z.string(),
-  defaultLora: z.string(),
-  loras: z.array(z.string()).default([]),
-})
-export type CustomCharacterInput = z.infer<typeof customCharacterInputSchema>
-
 export const comicSummarySchema = z.object({
   /** The folder name, and the only handle a command takes. */
   name: z.string(),

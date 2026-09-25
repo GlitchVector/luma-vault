@@ -20,7 +20,6 @@ import { DeviantArtPanel } from '#/components/DeviantArtPanel.tsx'
 import { PatreonPanel } from '#/components/PatreonPanel.tsx'
 import { ChatPanel } from '#/components/ChatPanel.tsx'
 import { ComicsPanel } from '#/components/ComicsPanel.tsx'
-import { CharactersPanel } from '#/components/CharactersPanel.tsx'
 import { LorasPanel } from '#/components/LorasPanel.tsx'
 import { DialogHost } from '#/components/DialogHost.tsx'
 import { RemoteDialog } from '#/components/RemoteDialog.tsx'
@@ -334,21 +333,17 @@ export function App() {
   const [showComics, setShowComics] = useState(false)
   const [showLoras, setShowLoras] = useState(false)
   const [showChat, setShowChat] = useState(false)
-  const [showCharacters, setShowCharacters] = useState(false)
   // Both panels cover the whole window, so the back gesture has to be a way out of them.
   useBackCloses(showComics, () => setShowComics(false), 'comics')
   useBackCloses(showLoras, () => setShowLoras(false), 'loras')
   useBackCloses(showChat, () => setShowChat(false), 'chat')
-  useBackCloses(showCharacters, () => setShowCharacters(false), 'characters')
   const page: Page = showComics
     ? 'comics'
     : showLoras
       ? 'loras'
       : showChat
         ? 'chat'
-        : showCharacters
-          ? 'characters'
-          : 'library'
+        : 'library'
   // The sidebar's Comics section, which the Comics page fills by portal.
   const [comicsSlot, setComicsSlot] = useState<HTMLDivElement | null>(null)
   // The same for the Chat page's conversations.
@@ -1015,7 +1010,6 @@ export function App() {
         // One page at a time. Library is the grid with whatever filters are on;
         // going there from a page closes the page and nothing else.
         setShowLoras(next === 'loras')
-        setShowCharacters(next === 'characters')
         setShowComics(next === 'comics')
         setShowChat(next === 'chat')
         setShowLibrary(false)
@@ -1028,7 +1022,6 @@ export function App() {
         setQuery({ sets: runs, set: runs.length === 1 ? (runs[0] ?? null) : null })
         setShowLibrary(false)
         setShowLoras(false)
-        setShowCharacters(false)
       }}
       // Home is the unified grid with nothing narrowing it: every folder, no
       // set, no search. The character list is what the app opens on, so the
@@ -1038,7 +1031,6 @@ export function App() {
         setQuery({ folderId: null, set: null, sets: [], search: '' })
         setShowLibrary(false)
         setShowLoras(false)
-        setShowCharacters(false)
       }}
       // The name is a ready-made search term: detection found it verbatim
       // in the prompt, and search runs over prompts.
@@ -1046,7 +1038,6 @@ export function App() {
         setQuery({ search: name })
         setShowLibrary(false)
         setShowLoras(false)
-        setShowCharacters(false)
       }}
       tileSize={tileSize}
       onTileSize={(size) => {
@@ -1060,7 +1051,6 @@ export function App() {
         setQuery({ folderId })
         setShowLibrary(false)
         setShowLoras(false)
-        setShowCharacters(false)
       }}
       onAdd={() => void actions.addFolder()}
       onRemove={(id) => void actions.removeFolder(id)}
@@ -1138,15 +1128,6 @@ export function App() {
             />
           ) : showChat ? (
             <ChatPanel onClose={() => setShowChat(false)} onOpenLibrary={() => setShowLibrary(true)} listInto={chatSlot} />
-          ) : showCharacters ? (
-            <CharactersPanel
-              onClose={() => setShowCharacters(false)}
-              onOpenLibrary={() => setShowLibrary(true)}
-              onShowRenders={(search) => {
-                setQuery({ search, searchPaths: false })
-                setShowCharacters(false)
-              }}
-            />
           ) : showLoras ? (
             <LorasPanel
               onClose={() => setShowLoras(false)}
@@ -1156,7 +1137,6 @@ export function App() {
                 // step out of the way, rather than opening a second viewer inside the panel.
                 setQuery({ search, searchPaths: false })
                 setShowLoras(false)
-                setShowCharacters(false)
               }}
             />
           ) : (
@@ -1474,7 +1454,6 @@ export function App() {
             // it (owner, 2026-09-21).
             setOpenId(null)
             setShowLoras(false)
-            setShowCharacters(false)
             setShowComics(false)
             setShowChat(false)
             void library.jumpToItem(id).then(() => setFocusId(id))
