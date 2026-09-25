@@ -197,8 +197,6 @@ index.db      SQLite (WAL). A cache of the filesystem, never the source of truth
 thumbs/       ab/cd/<hash>.jpg — content-addressed on the absolute source path,
               sharded two levels so no directory holds more than a few hundred.
 frames/       ab/cdef…/frame_0000.jpg — one directory per video.
-characters.json  Left over from the Characters page, removed 2026-09-25 (the LoRAs page
-              does its job). Nothing reads it; kept because it holds the owner's words.
 ```
 
 `rating` and `is_sexy` are denormalised out of the verdict JSON into indexed
