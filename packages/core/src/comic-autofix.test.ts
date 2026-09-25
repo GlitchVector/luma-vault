@@ -27,6 +27,7 @@ const character = (patch: Partial<ComicCharacter> = {}): ComicCharacter => ({
   body: '',
   subject: '1girl',
   seed_family: 8812,
+  minor: false,
   ...patch,
 })
 

@@ -135,4 +135,6 @@ the flow above applies with these differences:
 - Nothing generated is training data until he has starred it.
 - Retries are capped; an open view is reported, not looped on.
 - Tattoos are out until a generator keeps them consistent across angles.
+- **Men:** `config/views.json` words every prompt she/her. Before generating a male character (Tom, Hernán, Nev - set up 2026-09-25), give the generator a per-character pronoun setting; the description alone does not outvote twenty "she"s.
+- **A studio sheet as the reference:** `scripts/cut-figures.py <sheet> <folder>` cuts the four turnaround figures with the person masks, dropping the title text and the neighbours' arms (`cut-sheet.py`'s column cuts leak both on the studio sheets).
 - Every new character gets a row in `docs/loras.md` at dataset time.
