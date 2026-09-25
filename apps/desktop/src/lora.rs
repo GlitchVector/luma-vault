@@ -65,10 +65,17 @@ pub fn read(root: &Path, name: &str, thumb_root: &Path) -> Result<LoraDataset> {
     }
     let images = subsets.iter().map(|s| s.images.len() as i64).sum();
     let per_epoch = subsets.iter().map(|s| s.images.len() as i64 * s.repeats).sum();
+    // The prep copies the owner's sheet into `reference/` so a dataset keeps the
+    // picture it was made from. No subset names it, so it is shown, never trained;
+    // a subset that did name it would already appear above and is not repeated.
+    let reference_dir = folder.join("reference");
+    let trained = subsets.iter().any(|s| s.dir == "reference");
+    let reference = if trained { Vec::new() } else { read_images(&reference_dir, thumb_root) };
     Ok(LoraDataset {
         name: name.to_string(),
         config: config.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
         subsets,
+        reference,
         images,
         per_epoch,
     })
@@ -235,6 +242,29 @@ mod tests {
         let thumb = first.thumb_path.as_deref().expect("a thumbnail was written");
         assert!(Path::new(thumb).starts_with(&thumbs), "thumbnails go under the app's own root, never beside the data");
         assert!(dataset.subsets[1].images[0].caption.is_none());
+        assert!(dataset.reference.is_empty(), "no reference/ folder, nothing to show");
+    }
+
+    #[test]
+    fn shows_the_reference_sheet_beside_the_data_without_counting_it() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("datasets").join("ari-gala-dress");
+        let refs = folder.join("refs");
+        png(&refs.join("ari-01.png"));
+        png(&folder.join("reference").join("ari-gala-dress-sheet.png"));
+        write(
+            &folder.join("dataset.toml"),
+            &format!("[[datasets]]\n  [[datasets.subsets]]\n  image_dir = \"{}\"\n  num_repeats = 6\n", refs.to_string_lossy().replace('\\', "/")),
+        );
+        let thumbs = root.path().join("thumbs");
+
+        let dataset = read(root.path(), "ari-gala-dress", &thumbs).unwrap();
+        assert_eq!(dataset.reference.len(), 1);
+        assert!(dataset.reference[0].thumb_path.is_some());
+        assert_eq!(dataset.images, 1, "the sheet is not a training image");
+        assert_eq!(dataset.per_epoch, 6);
+        // Inside the dataset folder, so the viewer may open it at full size.
+        assert!(preview(root.path(), "ari-gala-dress", &dataset.reference[0].path, &thumbs).is_ok());
     }
 
     #[test]

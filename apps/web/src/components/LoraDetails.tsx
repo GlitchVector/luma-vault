@@ -317,6 +317,30 @@ export function TrainingImages({ dataset, onView }: { dataset: string | null; on
             {data.images.toLocaleString()} files · {data.perEpoch.toLocaleString()} per epoch ·{' '}
             <code className="text-zinc-400">{data.config}</code>
           </p>
+          {data.reference.length > 0 ? (
+            <section data-testid="lora-reference">
+              <h5 className="mb-1 flex items-baseline gap-2 text-xs">
+                <span className="text-zinc-300">Reference</span>
+                <span className="ml-auto text-zinc-600">what the data was made from · not trained on</span>
+              </h5>
+              <div className="flex flex-wrap gap-1">
+                {data.reference.map((image) =>
+                  image.thumbPath ? (
+                    <button
+                      key={image.path}
+                      type="button"
+                      onClick={() => view(image.thumbPath!, image.path, image.path)}
+                      title={image.path}
+                      style={{ aspectRatio: ratio(image.width, image.height) }}
+                      className="h-32 overflow-hidden rounded bg-black/30 ring-1 ring-amber-300/30 hover:ring-2 hover:ring-amber-300/60"
+                    >
+                      <img src={fileUrl(image.thumbPath)} alt="" loading="lazy" className="size-full object-contain" />
+                    </button>
+                  ) : null,
+                )}
+              </div>
+            </section>
+          ) : null}
           {data.subsets.map((subset) => {
             const shown = subset.images.filter((image) => !image.flipped)
             const mirrored = subset.images.length - shown.length

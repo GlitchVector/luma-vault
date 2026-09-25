@@ -200,6 +200,7 @@ describe('LorasPanel', () => {
     loraDataset.mockResolvedValue({
       name: 'ari-adopt',
       config: 'dataset-adopt.toml',
+      reference: [],
       images: 1,
       perEpoch: 8,
       subsets: [
@@ -225,11 +226,32 @@ describe('LorasPanel', () => {
     await waitFor(() => expect(viewer.querySelector('img')?.getAttribute('src')).toBe('luma://T/a-preview.jpg'))
   })
 
+  it('shows the reference sheet above the training images, marked as not trained on', async () => {
+    queryMedia.mockResolvedValue(page([]))
+    loraDataset.mockResolvedValue({
+      name: 'ari-gala-dress',
+      config: 'dataset.toml',
+      reference: [{ path: 'D:/x/reference/sheet.png', thumbPath: 'T/sheet.jpg', width: 1536, height: 1024, caption: null, flipped: false }],
+      images: 1,
+      perEpoch: 6,
+      subsets: [{ dir: 'refs', repeats: 6, images: [{ path: 'D:/x/refs/a.png', thumbPath: 'T/a.jpg', width: 1024, height: 1536, caption: 'ari', flipped: false }] }],
+    })
+    render(<LorasPanel onClose={() => {}} onShowRenders={() => {}} />)
+
+    fireEvent.click((await screen.findAllByRole('button', { name: /Training images/ }))[0]!)
+    const reference = await screen.findByTestId('lora-reference')
+    expect(reference.textContent).toContain('not trained on')
+    expect(reference.querySelector('img')?.getAttribute('src')).toBe('luma://T/sheet.jpg')
+    // The count above is the training data only.
+    expect(screen.getByText(/1 files · 6 per epoch/)).toBeTruthy()
+  })
+
   it('unfolds the training images on request, one subset at a time, mirrors counted not shown', async () => {
     queryMedia.mockResolvedValue(page([]))
     loraDataset.mockResolvedValue({
       name: 'ari-adopt',
       config: 'dataset-adopt.toml',
+      reference: [],
       images: 3,
       perEpoch: 21,
       subsets: [

@@ -30,6 +30,16 @@
       "images": []
     }
   ],
+  "reference": [
+    {
+      "path": "D:\\AI\\lora-train\\datasets\u0007ri-gen\reference\u0007ri-reference.png",
+      "thumbPath": null,
+      "width": 0,
+      "height": 0,
+      "caption": null,
+      "flipped": false
+    }
+  ],
   "images": 2,
   "perEpoch": 12
 }

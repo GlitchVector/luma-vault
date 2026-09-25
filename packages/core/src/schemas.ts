@@ -881,6 +881,8 @@ export const loraDatasetSchema = z.object({
   name: z.string(),
   config: z.string(),
   subsets: z.array(loraSubsetSchema),
+  /** The owner's sheet(s) the data was generated from: kept beside it, never trained. */
+  reference: z.array(loraImageSchema).default([]),
   /** Files across every subset, mirrors included. */
   images: z.number(),
   /** Files times repeats: what one epoch shows the trainer. */

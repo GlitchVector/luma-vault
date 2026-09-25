@@ -975,6 +975,10 @@ pub struct LoraDataset {
     /// The `.toml` that was read - the newest in the folder.
     pub config: String,
     pub subsets: Vec<LoraSubset>,
+    /// The sheet(s) the dataset was generated from, in its `reference/` folder.
+    /// Kept beside the data for tracing, never named by the `.toml`, so never trained.
+    #[serde(default)]
+    pub reference: Vec<LoraImage>,
     /// Files across every subset, mirrors included.
     pub images: i64,
     /// Files times repeats: what one epoch actually shows the trainer.
