@@ -19,8 +19,8 @@ suite('the sketch route', () => {
       setting: 'a hotel rooftop at dusk',
       camera: 'wide shot',
       cast: [
-        { description: describe({ subject: '1girl', look: 'white hair, aqua shirt' }), pose: 'walking in' },
-        { description: describe({ subject: '1boy', look: 'grey suit' }), pose: 'leaning on the bar' },
+        { description: describe({ subject: '1girl', look: 'white hair, aqua shirt', minor: false }), pose: 'walking in' },
+        { description: describe({ subject: '1boy', look: 'grey suit', minor: false }), pose: 'leaning on the bar' },
       ],
       extras: 5,
       details: 'rooftop, party, crowd',
@@ -121,7 +121,7 @@ suite('which panels the sketch route draws in one pass', () => {
 suite('where a sketch comes from with backend auto', () => {
   it('sends the place and the crowd to OpenAI, the cast and anything explicit stay local', async () => {
     const { sketchSourceFor } = await import('../stages/sketch.ts')
-    const project = { config: { sketch: { backend: 'auto' } } } as never
+    const project = { config: { sketch: { backend: 'auto' }, characters: {} } } as never
     const panel = (over: Record<string, unknown>) => ({ id: 'p1-1', camera: 'cowboy shot', scene: 'rooftop, night', characters: ['ari'], pose: [], ...over }) as never
     expect(sketchSourceFor(project, panel({ characters: [], figures: 3 }))).toBe('openai')
     expect(sketchSourceFor(project, panel({ camera: 'wide shot' }))).toBe('openai')

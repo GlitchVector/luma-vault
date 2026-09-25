@@ -12,7 +12,7 @@
  * local.
  */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MockPlates } from '../plates/mock.ts'
 import { OpenAiPlates } from '../plates/openai.ts'
@@ -46,6 +46,9 @@ export function sketchSourceFor(project: Project, panel: Panel): SketchSource {
   const name = configured(project)
   if (name === 'mock' || name === 'forge' || name === 'openai') return name
   const explicit = isExplicit(panel.scene, panel.setting, ...panel.pose)
+  // A character held by a reference sheet is only consistent when the sketch
+  // is drawn FROM her sheet, which only the hosted model can do.
+  if (!explicit && panel.characters.some((id) => project.config.characters[id]?.reference)) return 'openai'
   const figures = panel.figures ?? panel.characters.length
   // One stranger is enough: a tag model left out the guest who delivers the
   // compliment, and her "thanks" answered nobody (2026-09-24).
@@ -84,6 +87,7 @@ export function sketchRequestFor(project: Project, script: Script, where: { page
   }
   const cast = panel.characters.map((id, index) => ({ description: describe(script.characters[id]!), pose: panel.pose[index] }))
   const figures = panel.figures ?? panel.characters.length
+  const sheets = panel.characters.map((id) => script.characters[id]?.reference).filter((p): p is string => !!p && existsSync(p)).map((p) => readFileSync(p))
   return {
     prompt: sketchPrompt({
       style: project.config.sketch.style,
@@ -97,6 +101,7 @@ export function sketchRequestFor(project: Project, script: Script, where: { page
     }),
     size,
     quality: project.config.sketch.quality,
+    ...(sheets.length ? { references: sheets } : {}),
   }
 }
 

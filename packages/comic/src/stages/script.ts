@@ -108,10 +108,11 @@ export function finishDraft(draft: DraftScript, cast: Record<string, Character>)
       for (const who of panel.characters) {
         if (!cast[who]) throw new Error(`${id} names character "${who}", which comic.config.json does not define`)
       }
-      for (const line of panel.dialogue) {
-        if (line.speaker !== 'narrator' && !cast[line.speaker]) {
-          throw new Error(`${id} has dialogue for "${line.speaker}", who is not in the cast`)
-        }
+      // A speaker outside the cast is a stranger the panel shows (a guest, the
+      // man who shouts): allowed, but the panel must count him among its figures.
+      const strangers = panel.dialogue.filter((line) => line.speaker !== 'narrator' && !cast[line.speaker]).length
+      if (strangers > 0 && (panel.figures ?? panel.characters.length) <= panel.characters.length) {
+        throw new Error(`${id} has a line from someone outside the cast, so "figures" must count them in the picture`)
       }
       if (panel.location && !draft.locations[panel.location]) {
         throw new Error(`${id} is set in "${panel.location}", which is not in locations`)
@@ -136,7 +137,7 @@ export function withCast(draft: Finished, cast: Record<string, Character>): Scri
   for (const page of draft.pages) {
     for (const panel of page.panels) {
       for (const who of panel.characters) used.add(who)
-      for (const line of panel.dialogue) if (line.speaker !== 'narrator') used.add(line.speaker)
+      for (const line of panel.dialogue) if (line.speaker !== 'narrator' && cast[line.speaker]) used.add(line.speaker)
     }
   }
   const characters: Record<string, Character> = {}

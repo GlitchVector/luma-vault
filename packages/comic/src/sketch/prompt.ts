@@ -24,9 +24,12 @@ export function isExplicit(...texts: Array<string | undefined>): boolean {
 }
 
 /** A character as the hosted model should draw her: who, and her look tags. Never her body words. */
-export function describe(character: Pick<Character, 'subject' | 'look'>): string {
-  const who = character.subject === '1boy' ? 'a man' : character.subject === '1girl' ? 'a young woman' : 'a person'
-  return `${who} (${character.look})`
+export function describe(character: Pick<Character, 'subject' | 'look' | 'minor' | 'reference'>): string {
+  const who = character.minor
+    ? character.subject === '1boy' ? 'a boy, a child, fully clothed' : 'a girl, a child, fully clothed'
+    : character.subject === '1boy' ? 'a man' : character.subject === '1girl' ? 'a young woman' : 'a person'
+  const sheet = character.reference ? ', exactly as drawn in the attached character sheet' : ''
+  return `${who} (${character.look})${sheet}`
 }
 
 export interface SketchPromptInput {
